@@ -4,10 +4,13 @@ import { ResultsDisplay } from './components/ResultsDisplay';
 import { LoadingSpinner } from './components/LoadingSpinner';
 import { ErrorMessage } from './components/ErrorMessage';
 import { AnalysisDisplay } from './components/AnalysisDisplay';
-import { fetchResearchPapers, analyzeAndClusterPapers, generateCitations } from './services/geminiService';
-import type { ResearchPaper, Source, SummaryLength, AnalysisResult } from './types';
+import { fetchResearchPapers, analyzeAndClusterPapers, generateCitations, ApiError, ParsingError, ai } from './services/geminiService';
+import type { ResearchPaper, SummaryLength, AnalysisResult, SearchSource, AdvancedSearchOptions, ChatMessage, SummaryStyle } from './types';
 import { ScholarIcon } from './components/icons/ScholarIcon';
 import { ReferenceList } from './components/ReferenceList';
+import { ChatPanel } from './components/ChatPanel';
+import type { Chat } from '@google/genai';
+
 
 // Interface for our cache entry
 interface CacheEntry {
@@ -23,6 +26,8 @@ const App: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [hasSearched, setHasSearched] = useState<boolean>(false);
   const [summaryLength, setSummaryLength] = useState<SummaryLength>('medium');
+  const [summaryStyle, setSummaryStyle] = useState<SummaryStyle>('paragraph');
+  const [searchSource, setSearchSource] = useState<SearchSource>('google_scholar');
   
   const [analysisResult, setAnalysisResult] = useState<AnalysisResult | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState<boolean>(false);
@@ -31,6 +36,12 @@ const App: React.FC = () => {
   const [citations, setCitations] = useState<string[]>([]);
   const [isCiting, setIsCiting] = useState<boolean>(false);
   const [citationError, setCitationError] = useState<string | null>(null);
+
+  // Chat state
+  const [chatSession, setChatSession] = useState<Chat | null>(null);
+  const [chatHistory, setChatHistory] = useState<ChatMessage[]>([]);
+  const [isChatting, setIsChatting] = useState<boolean>(false);
+  const [chatError, setChatError] = useState<string | null>(null);
 
   // Client-side cache for search results
   const searchCache = useRef<Map<string, CacheEntry>>(new Map());
@@ -41,41 +52,69 @@ const App: React.FC = () => {
     if (!text || !text.trim()) {
       return [];
     }
-  
-    return text.split('---')
-      .map(block => {
-        const lines = block.trim().split('\n');
-        const paper: Partial<ResearchPaper> = {};
-  
-        let summaryBuffer = '';
-        let isReadingSummary = false;
-  
-        lines.forEach(line => {
-          if (line.startsWith('**Title:**')) {
-            paper.title = line.substring('**Title:**'.length).trim();
-            isReadingSummary = false;
-          } else if (line.startsWith('**Authors:**')) {
-            paper.authors = line.substring('**Authors:**'.length).trim();
-            isReadingSummary = false;
-          } else if (line.startsWith('**Year:**')) {
-            paper.year = line.substring('**Year:**'.length).trim();
-            isReadingSummary = false;
-          } else if (line.startsWith('**SourceURL:**')) {
-            paper.sourceURL = line.substring('**SourceURL:**'.length).trim();
-            isReadingSummary = false;
-          } else if (line.startsWith('**Summary:**')) {
-            summaryBuffer = line.substring('**Summary:**'.length).trim();
-            isReadingSummary = true;
-          } else if (isReadingSummary) {
-            summaryBuffer += ' ' + line.trim();
-          }
-        });
-  
-        paper.summary = summaryBuffer;
-  
-        return paper as ResearchPaper;
-      })
-      .filter(p => p.title && p.authors && p.year && p.summary);
+
+    const papers: ResearchPaper[] = [];
+    const paperBlocks = text.split('---');
+
+    for (const block of paperBlocks) {
+      const trimmedBlock = block.trim();
+      if (!trimmedBlock) continue;
+
+      const paper: Partial<ResearchPaper> = {};
+      // This regex finds all fields in the block, handling different ordering and multi-line values.
+      const fieldRegex = /\*\*([A-Za-z]+):\*\*\s*([\s\S]*?)(?=\s*\*\*[A-Za-z]+:\*\*|$)/gi;
+      
+      let match;
+      while ((match = fieldRegex.exec(trimmedBlock)) !== null) {
+        const key = match[1].toLowerCase();
+        const value = match[2].trim();
+        
+        switch (key) {
+          case 'title':
+            paper.title = value.split('\n')[0].trim();
+            break;
+          case 'authors':
+            paper.authors = value.split('\n')[0].trim();
+            break;
+          case 'year':
+            paper.year = value.split('\n')[0].trim();
+            break;
+          case 'sourceurl':
+            paper.sourceURL = value.split('\n')[0].trim();
+            break;
+          case 'summary':
+            paper.summary = value; // Keep multi-line content
+            break;
+        }
+      }
+
+      // Ensure all essential fields were found before adding the paper
+      if (paper.title && paper.authors && paper.year && paper.summary) {
+        papers.push(paper as ResearchPaper);
+      }
+    }
+
+    return papers;
+  };
+
+  const initializeChatSession = (foundPapers: ResearchPaper[]) => {
+    if (foundPapers.length === 0) {
+        setChatSession(null);
+        return;
+    }
+    const paperContext = foundPapers.map(p => `Title: ${p.title}\nSummary: ${p.summary}`).join('\n\n');
+    const systemInstruction = `You are an AI research assistant. The user has just found the following academic papers. Your task is to answer the user's questions based on the summaries of these papers. Be concise and helpful. Do not mention that you are basing your answer on the summaries unless the user asks. Here are the papers:\n\n${paperContext}`;
+
+    const newChat: Chat = ai.chats.create({
+        model: 'gemini-2.5-flash',
+        config: {
+            systemInstruction: systemInstruction,
+        },
+    });
+
+    setChatSession(newChat);
+    setChatHistory([]);
+    setChatError(null);
   };
   
   const handleGenerateCitations = useCallback(async (papersToCite: ResearchPaper[]): Promise<string[]> => {
@@ -87,17 +126,23 @@ const App: React.FC = () => {
         setCitations(generatedCitations);
         return generatedCitations; // Return for caching
     } catch (err) {
-        setCitationError(err instanceof Error ? err.message : 'An unknown error occurred while generating citations.');
+        if (err instanceof ParsingError || err instanceof ApiError) {
+            setCitationError(err.message);
+        } else if (err instanceof Error) {
+            setCitationError(`An unexpected client-side error occurred: ${err.message}`);
+        } else {
+            setCitationError('An unknown error occurred while generating citations.');
+        }
         return []; // Return empty array on error
     } finally {
         setIsCiting(false);
     }
   }, []);
 
-  const handleSearch = useCallback(async (searchQuery: string) => {
+  const handleSearch = useCallback(async (searchQuery: string, advancedOptions: AdvancedSearchOptions) => {
     if (!searchQuery.trim()) return;
 
-    const cacheKey = searchQuery.trim().toLowerCase();
+    const cacheKey = `${searchQuery.trim().toLowerCase()}|${searchSource}|${summaryLength}|${summaryStyle}|${advancedOptions.startYear}-${advancedOptions.endYear}|${advancedOptions.authors}|${advancedOptions.excludeKeywords}`;
     const cachedData = searchCache.current.get(cacheKey);
 
     // Check for a valid, non-expired cache entry
@@ -111,6 +156,7 @@ const App: React.FC = () => {
       setAnalysisResult(null);
       setAnalysisError(null);
       setCitationError(null);
+      initializeChatSession(cachedData.papers);
       return; // Use cached data and skip API call
     }
 
@@ -124,12 +170,15 @@ const App: React.FC = () => {
     setAnalysisError(null);
     setCitations([]);
     setCitationError(null);
+    setChatSession(null);
+    setChatHistory([]);
 
     try {
-      const result = await fetchResearchPapers(searchQuery, summaryLength);
+      const result = await fetchResearchPapers(searchQuery, summaryLength, summaryStyle, searchSource, advancedOptions);
       if (result) {
         const parsedPapers = parseGeminiResponse(result.text);
         setPapers(parsedPapers);
+        initializeChatSession(parsedPapers);
         
         let newCitations: string[] = [];
         if (parsedPapers.length > 0) {
@@ -152,11 +201,17 @@ const App: React.FC = () => {
         setError("Failed to get a valid response from the research service.");
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'An unknown error occurred.');
+        if (err instanceof ApiError) {
+            setError(err.message);
+        } else if (err instanceof Error) {
+            setError(`An unexpected error occurred: ${err.message}`);
+        } else {
+            setError('An unknown error occurred during the search.');
+        }
     } finally {
       setIsLoading(false);
     }
-  }, [summaryLength, handleGenerateCitations, CACHE_DURATION_MS]);
+  }, [summaryLength, summaryStyle, searchSource, handleGenerateCitations, CACHE_DURATION_MS]);
   
   const handleAnalysis = useCallback(async () => {
     if (papers.length === 0) return;
@@ -168,11 +223,52 @@ const App: React.FC = () => {
         const result = await analyzeAndClusterPapers(papers);
         setAnalysisResult(result);
     } catch(err) {
-        setAnalysisError(err instanceof Error ? err.message : 'An unknown error occurred during analysis.');
+        if (err instanceof ParsingError || err instanceof ApiError) {
+            setAnalysisError(err.message);
+        } else if (err instanceof Error) {
+            setAnalysisError(`An unexpected client-side error occurred: ${err.message}`);
+        } else {
+            setAnalysisError('An unknown error occurred during analysis.');
+        }
     } finally {
         setIsAnalyzing(false);
     }
   }, [papers]);
+
+  const handleSendMessage = useCallback(async (message: string) => {
+    if (!chatSession) return;
+
+    setIsChatting(true);
+    setChatError(null);
+
+    const userMessage: ChatMessage = { role: 'user', parts: [{ text: message }] };
+    setChatHistory(prev => [...prev, userMessage]);
+
+    try {
+        const stream = await chatSession.sendMessageStream({ message });
+        let modelResponse = '';
+        
+        // Add a placeholder for the model's response
+        setChatHistory(prev => [...prev, { role: 'model', parts: [{ text: '' }] }]);
+
+        for await (const chunk of stream) {
+            modelResponse += chunk.text;
+            setChatHistory(prev => {
+                const newHistory = [...prev];
+                newHistory[newHistory.length - 1] = { role: 'model', parts: [{ text: modelResponse }] };
+                return newHistory;
+            });
+        }
+    } catch (err) {
+        console.error("Chat error:", err);
+        const errorMessage = err instanceof Error ? err.message : 'An unknown error occurred.';
+        setChatError(`Sorry, I couldn't get a response. ${errorMessage}`);
+        // Remove the empty model message placeholder on error
+        setChatHistory(prev => prev.filter(m => m.parts[0].text !== ''));
+    } finally {
+        setIsChatting(false);
+    }
+  }, [chatSession]);
 
 
   return (
@@ -186,7 +282,7 @@ const App: React.FC = () => {
             AI Research Assistant
           </h1>
           <p className="mt-2 text-md text-gray-600 max-w-2xl">
-            Enter a topic, keyword, or author to discover and summarize relevant academic literature from Google Scholar.
+            Enter a topic, keyword, or author to discover and summarize relevant academic literature from premier academic sources.
           </p>
         </header>
 
@@ -196,6 +292,10 @@ const App: React.FC = () => {
              isLoading={isLoading} 
              summaryLength={summaryLength}
              onLengthChange={setSummaryLength}
+             summaryStyle={summaryStyle}
+             onStyleChange={setSummaryStyle}
+             searchSource={searchSource}
+             onSourceChange={setSearchSource}
            />
         </div>
        
@@ -213,11 +313,21 @@ const App: React.FC = () => {
           {papers.length > 0 && (
             <>
               <ResultsDisplay papers={papers} />
+              
               <ReferenceList 
                 citations={citations} 
                 isLoading={isCiting}
                 error={citationError}
               />
+
+              {chatSession && (
+                <ChatPanel
+                    history={chatHistory}
+                    isLoading={isChatting}
+                    error={chatError}
+                    onSendMessage={handleSendMessage}
+                />
+              )}
 
               {!analysisResult && (
                 <div className="mt-8 text-center">

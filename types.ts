@@ -22,6 +22,10 @@ export interface Source {
 
 export type SummaryLength = 'short' | 'medium' | 'detailed';
 
+export type SummaryStyle = 'paragraph' | 'bullets' | 'qa';
+
+export type SearchSource = 'google_scholar' | 'general' | 'jstor' | 'pubmed' | 'arxiv';
+
 export interface Cluster {
   theme: string;
   papers: string[];
@@ -34,3 +38,15 @@ export interface AnalysisResult {
 export type PublicationYearData = {
   [year: string]: number;
 };
+
+export interface AdvancedSearchOptions {
+  startYear: string;
+  endYear: string;
+  authors: string;
+  excludeKeywords: string;
+}
+
+export interface ChatMessage {
+    role: 'user' | 'model';
+    parts: { text: string }[];
+}

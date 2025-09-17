@@ -2,6 +2,7 @@ import React from 'react';
 import type { ResearchPaper } from '../types';
 import { ZoteroIcon } from './icons/ZoteroIcon';
 import { ExternalLinkIcon } from './icons/ExternalLinkIcon';
+import { FormattedSummary } from './FormattedSummary';
 
 interface PaperCardProps {
   paper: ResearchPaper;
@@ -60,7 +61,7 @@ export const PaperCard: React.FC<PaperCardProps> = ({ paper }) => {
           <span className="font-semibold">Year:</span> {paper.year}
         </p>
       </div>
-      <p className="text-gray-700 leading-relaxed">{paper.summary}</p>
+      <FormattedSummary text={paper.summary} />
       
       {/* Hidden COinS metadata for Zotero */}
       <span className="Z3988" title={coinsTitle} style={{ display: 'none' }}></span>
