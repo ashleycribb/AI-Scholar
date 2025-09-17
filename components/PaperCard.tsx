@@ -1,7 +1,7 @@
-
 import React from 'react';
 import type { ResearchPaper } from '../types';
 import { ZoteroIcon } from './icons/ZoteroIcon';
+import { ExternalLinkIcon } from './icons/ExternalLinkIcon';
 
 interface PaperCardProps {
   paper: ResearchPaper;
@@ -64,6 +64,22 @@ export const PaperCard: React.FC<PaperCardProps> = ({ paper }) => {
       
       {/* Hidden COinS metadata for Zotero */}
       <span className="Z3988" title={coinsTitle} style={{ display: 'none' }}></span>
+
+      {/* View Source Button */}
+      {paper.sourceURL && (
+        <div className="mt-4 pt-4 border-t border-gray-100 flex justify-end">
+            <a
+                href={paper.sourceURL}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-2 px-4 py-2 bg-blue-50 text-blue-700 text-sm font-medium rounded-full hover:bg-blue-100 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition-colors"
+                aria-label={`View source for ${paper.title}`}
+            >
+                <ExternalLinkIcon className="w-4 h-4" />
+                <span>View Source</span>
+            </a>
+        </div>
+      )}
     </article>
   );
 };

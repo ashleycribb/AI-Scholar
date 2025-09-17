@@ -3,6 +3,7 @@ export interface ResearchPaper {
   authors: string;
   year: string;
   summary: string;
+  sourceURL?: string;
 }
 
 // FIX: Updated GroundingChunk interface to match the @google/genai SDK.

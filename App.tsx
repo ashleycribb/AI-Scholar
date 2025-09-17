@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useRef } from 'react';
 import { SearchForm } from './components/SearchForm';
 import { ResultsDisplay } from './components/ResultsDisplay';
 import { LoadingSpinner } from './components/LoadingSpinner';
@@ -8,6 +8,13 @@ import { fetchResearchPapers, analyzeAndClusterPapers, generateCitations } from 
 import type { ResearchPaper, Source, SummaryLength, AnalysisResult } from './types';
 import { ScholarIcon } from './components/icons/ScholarIcon';
 import { ReferenceList } from './components/ReferenceList';
+
+// Interface for our cache entry
+interface CacheEntry {
+  papers: ResearchPaper[];
+  citations: string[];
+  timestamp: number;
+}
 
 const App: React.FC = () => {
   const [query, setQuery] = useState<string>('');
@@ -24,6 +31,10 @@ const App: React.FC = () => {
   const [citations, setCitations] = useState<string[]>([]);
   const [isCiting, setIsCiting] = useState<boolean>(false);
   const [citationError, setCitationError] = useState<string | null>(null);
+
+  // Client-side cache for search results
+  const searchCache = useRef<Map<string, CacheEntry>>(new Map());
+  const CACHE_DURATION_MS = 5 * 60 * 1000; // 5 minutes
 
 
   const parseGeminiResponse = (text: string): ResearchPaper[] => {
@@ -49,6 +60,9 @@ const App: React.FC = () => {
           } else if (line.startsWith('**Year:**')) {
             paper.year = line.substring('**Year:**'.length).trim();
             isReadingSummary = false;
+          } else if (line.startsWith('**SourceURL:**')) {
+            paper.sourceURL = line.substring('**SourceURL:**'.length).trim();
+            isReadingSummary = false;
           } else if (line.startsWith('**Summary:**')) {
             summaryBuffer = line.substring('**Summary:**'.length).trim();
             isReadingSummary = true;
@@ -64,15 +78,17 @@ const App: React.FC = () => {
       .filter(p => p.title && p.authors && p.year && p.summary);
   };
   
-  const handleGenerateCitations = useCallback(async (sourcesToCite: Source[]) => {
-    if (sourcesToCite.length === 0) return;
+  const handleGenerateCitations = useCallback(async (papersToCite: ResearchPaper[]): Promise<string[]> => {
+    if (papersToCite.length === 0) return [];
     setIsCiting(true);
     setCitationError(null);
     try {
-        const generatedCitations = await generateCitations(sourcesToCite);
+        const generatedCitations = await generateCitations(papersToCite);
         setCitations(generatedCitations);
+        return generatedCitations; // Return for caching
     } catch (err) {
         setCitationError(err instanceof Error ? err.message : 'An unknown error occurred while generating citations.');
+        return []; // Return empty array on error
     } finally {
         setIsCiting(false);
     }
@@ -81,6 +97,24 @@ const App: React.FC = () => {
   const handleSearch = useCallback(async (searchQuery: string) => {
     if (!searchQuery.trim()) return;
 
+    const cacheKey = searchQuery.trim().toLowerCase();
+    const cachedData = searchCache.current.get(cacheKey);
+
+    // Check for a valid, non-expired cache entry
+    if (cachedData && (Date.now() - cachedData.timestamp < CACHE_DURATION_MS)) {
+      setQuery(searchQuery);
+      setPapers(cachedData.papers);
+      setCitations(cachedData.citations);
+      setHasSearched(true);
+      setError(null);
+      setIsLoading(false);
+      setAnalysisResult(null);
+      setAnalysisError(null);
+      setCitationError(null);
+      return; // Use cached data and skip API call
+    }
+
+    // Reset state for a new search
     setQuery(searchQuery);
     setIsLoading(true);
     setError(null);
@@ -97,9 +131,17 @@ const App: React.FC = () => {
         const parsedPapers = parseGeminiResponse(result.text);
         setPapers(parsedPapers);
         
-        if (result.sources.length > 0) {
-            handleGenerateCitations(result.sources);
+        let newCitations: string[] = [];
+        if (parsedPapers.length > 0) {
+            newCitations = await handleGenerateCitations(parsedPapers);
         }
+
+        // Add new result to the cache
+        searchCache.current.set(cacheKey, {
+          papers: parsedPapers,
+          citations: newCitations,
+          timestamp: Date.now(),
+        });
 
         if (parsedPapers.length === 0 && !result.text) {
           setError("The model returned an empty response. Please try refining your search query.");
@@ -114,7 +156,7 @@ const App: React.FC = () => {
     } finally {
       setIsLoading(false);
     }
-  }, [summaryLength, handleGenerateCitations]);
+  }, [summaryLength, handleGenerateCitations, CACHE_DURATION_MS]);
   
   const handleAnalysis = useCallback(async () => {
     if (papers.length === 0) return;

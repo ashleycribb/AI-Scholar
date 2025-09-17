@@ -31,8 +31,9 @@ export const fetchResearchPapers = async (userQuery: string, summaryLength: Summ
     USER QUERY: "${userQuery}"
 
     FORMATTING RULES:
-    - For each paper, you MUST provide: Title, Authors, Year, and Summary.
-    - Each field MUST start with a specific label in bold followed by a colon (e.g., "**Title:**", "**Authors:**", "**Year:**", "**Summary:**").
+    - For each paper, you MUST provide: Title, Authors, Year, SourceURL, and Summary.
+    - The **SourceURL:** MUST be the direct URL to the paper's landing page (e.g., on arXiv, ACM Digital Library, publisher's site) from the search results.
+    - Each field MUST start with a specific label in bold followed by a colon (e.g., "**Title:**", "**Authors:**", "**Year:**", "**SourceURL:**", "**Summary:**").
     - Each field MUST be on a new line.
     - ${summaryInstruction}
     - You MUST separate each paper's entry with the exact delimiter "---" on its own line.
@@ -125,18 +126,21 @@ export const analyzeAndClusterPapers = async (papers: ResearchPaper[]): Promise<
   }
 };
 
-export const generateCitations = async (sources: Source[]): Promise<string[]> => {
-    const sourceList = sources.map(s => `Title: ${s.title}\nURL: ${s.uri}`).join('\n---\n');
+export const generateCitations = async (papers: ResearchPaper[]): Promise<string[]> => {
+    const paperList = papers.map(p => `Title: ${p.title}\nAuthors: ${p.authors}`).join('\n---\n');
 
     const prompt = `
-        You are an expert academic librarian. I will provide a list of web sources, each with a title and a URL.
-        Your task is to generate a full citation for each source in APA 7th edition format.
-        If a source appears to be a PDF of a research paper, format it as a journal article citation. If it's a webpage, format it as a webpage citation.
-        You must retrieve any missing information (like authors, publication date, journal name) from the URL to create a complete citation.
-        Return the result as a JSON array of strings, where each string is a complete, formatted citation.
+        You are an expert academic librarian. I will provide a list of papers with their titles and authors.
+        Your task is to generate a full citation for each paper in APA 7th edition format. You will likely need to infer details like the publication year and journal, which you should do based on the title and authors.
+        Each citation MUST be formatted as a single HTML string:
+        1. The entire citation text must be wrapped in an \`<a>\` tag.
+        2. The \`href\` attribute must be a URL-encoded Google Scholar search link for the paper's title. (e.g., href="https://scholar.google.com/scholar?q=...")
+        3. The \`<a>\` tag MUST include target="_blank", rel="noopener noreferrer", and class="text-blue-600 hover:text-blue-800 hover:underline".
         
-        Here are the sources:
-        ${sourceList}
+        Return the result as a JSON array of these HTML strings.
+
+        Here are the papers:
+        ${paperList}
     `;
 
     try {
@@ -169,3 +173,43 @@ export const generateCitations = async (sources: Source[]): Promise<string[]> =>
         throw new Error("An unknown error occurred while generating citations.");
     }
 };
+
+export const generateSearchSuggestions = async (query: string): Promise<string[]> => {
+    if (query.trim().length < 5) {
+      return [];
+    }
+  
+    const prompt = `
+      Based on the academic research topic "${query}", generate 5 related search query suggestions that a doctoral student might find useful. 
+      These suggestions should be concise and relevant for searching academic databases like Google Scholar.
+      Return the result as a JSON object with a "suggestions" key containing an array of strings.
+    `;
+  
+    try {
+      const response: GenerateContentResponse = await ai.models.generateContent({
+        model: model,
+        contents: prompt,
+        config: {
+          responseMimeType: "application/json",
+          responseSchema: {
+            type: Type.OBJECT,
+            properties: {
+              suggestions: {
+                type: Type.ARRAY,
+                items: { type: Type.STRING }
+              }
+            },
+            required: ["suggestions"]
+          }
+        }
+      });
+  
+      const result = JSON.parse(response.text);
+      return result.suggestions as string[] || [];
+  
+    } catch (error) {
+      console.error("Error generating search suggestions:", error);
+      // Return empty array on error to prevent UI breaking
+      return [];
+    }
+  };
