@@ -4,12 +4,17 @@ import { ResultsDisplay } from './components/ResultsDisplay';
 import { LoadingSpinner } from './components/LoadingSpinner';
 import { ErrorMessage } from './components/ErrorMessage';
 import { AnalysisDisplay } from './components/AnalysisDisplay';
-import { fetchResearchPapers, analyzeAndClusterPapers, generateCitations, ApiError, ParsingError, ai } from './services/geminiService';
-import type { ResearchPaper, SummaryLength, AnalysisResult, SearchSource, AdvancedSearchOptions, ChatMessage, SummaryStyle } from './types';
+import { fetchResearchPapers, analyzeAndClusterPapers, generateCitations, findPdfLink, findConnectedPapers, ApiError, ParsingError, ai } from './services/geminiService';
+import type { ResearchPaper, SummaryLength, AnalysisResult, SearchSource, AdvancedSearchOptions, ChatMessage, SummaryStyle, ConnectedPaper } from './types';
 import { ScholarIcon } from './components/icons/ScholarIcon';
 import { ReferenceList } from './components/ReferenceList';
 import { ChatPanel } from './components/ChatPanel';
 import type { Chat } from '@google/genai';
+import { FavoritesList } from './components/FavoritesList';
+import { analyticsService } from './services/analyticsService';
+import { FeedbackButton } from './components/FeedbackButton';
+import { FeedbackModal } from './components/FeedbackModal';
+import { ConnectedPapersModal } from './components/ConnectedPapersModal';
 
 
 // Interface for our cache entry
@@ -28,6 +33,7 @@ const App: React.FC = () => {
   const [summaryLength, setSummaryLength] = useState<SummaryLength>('medium');
   const [summaryStyle, setSummaryStyle] = useState<SummaryStyle>('paragraph');
   const [searchSource, setSearchSource] = useState<SearchSource>('google_scholar');
+  const [favoritePapers, setFavoritePapers] = useState<ResearchPaper[]>([]);
   
   const [analysisResult, setAnalysisResult] = useState<AnalysisResult | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState<boolean>(false);
@@ -43,10 +49,36 @@ const App: React.FC = () => {
   const [isChatting, setIsChatting] = useState<boolean>(false);
   const [chatError, setChatError] = useState<string | null>(null);
 
+  // Connected Papers state
+  const [connectedPapersResult, setConnectedPapersResult] = useState<{ seedPaper: ResearchPaper; connections: ConnectedPaper[] } | null>(null);
+  const [isFindingConnected, setIsFindingConnected] = useState<string | null>(null); // Stores title of paper being processed
+  const [findConnectedError, setFindConnectedError] = useState<string | null>(null);
+
+
+  const [pdfLoading, setPdfLoading] = useState<string | null>(null);
+
   // Client-side cache for search results
   const searchCache = useRef<Map<string, CacheEntry>>(new Map());
   const CACHE_DURATION_MS = 5 * 60 * 1000; // 5 minutes
 
+  // Feedback Modal State
+  const [isFeedbackModalOpen, setIsFeedbackModalOpen] = useState<boolean>(false);
+
+
+  const handleToggleFavorite = useCallback((paper: ResearchPaper) => {
+    setFavoritePapers(prev => {
+        const isFavorited = prev.some(p => p.title === paper.title && p.authors === paper.authors);
+        analyticsService.logEvent('favorite_toggled', {
+            action: isFavorited ? 'remove' : 'add',
+            paperTitle: paper.title,
+        });
+        if (isFavorited) {
+            return prev.filter(p => p.title !== paper.title || p.authors !== paper.authors);
+        } else {
+            return [...prev, paper];
+        }
+    });
+  }, []);
 
   const parseGeminiResponse = (text: string): ResearchPaper[] => {
     if (!text || !text.trim()) {
@@ -97,6 +129,43 @@ const App: React.FC = () => {
     return papers;
   };
 
+  const parseConnectedPapersResponse = (text: string): ConnectedPaper[] => {
+    if (!text || !text.trim()) {
+      return [];
+    }
+
+    const papers: ConnectedPaper[] = [];
+    const paperBlocks = text.split('---');
+
+    for (const block of paperBlocks) {
+        const trimmedBlock = block.trim();
+        if (!trimmedBlock) continue;
+
+        const paper: Partial<ConnectedPaper> = {};
+        const fieldRegex = /\*\*([A-Za-z]+):\*\*\s*([\s\S]*?)(?=\s*\*\*[A-Za-z]+:\*\*|$)/gi;
+        
+        let match;
+        while ((match = fieldRegex.exec(trimmedBlock)) !== null) {
+            const key = match[1].toLowerCase();
+            const value = match[2].trim();
+            
+            switch (key) {
+                case 'title': paper.title = value.split('\n')[0].trim(); break;
+                case 'authors': paper.authors = value.split('\n')[0].trim(); break;
+                case 'year': paper.year = value.split('\n')[0].trim(); break;
+                case 'sourceurl': paper.sourceURL = value.split('\n')[0].trim(); break;
+                case 'summary': paper.summary = value; break;
+                case 'connection': paper.connection = value; break;
+            }
+        }
+
+        if (paper.title && paper.authors && paper.year && paper.summary && paper.connection) {
+            papers.push(paper as ConnectedPaper);
+        }
+    }
+    return papers;
+  };
+
   const initializeChatSession = (foundPapers: ResearchPaper[]) => {
     if (foundPapers.length === 0) {
         setChatSession(null);
@@ -124,15 +193,24 @@ const App: React.FC = () => {
     try {
         const generatedCitations = await generateCitations(papersToCite);
         setCitations(generatedCitations);
+        analyticsService.logEvent('citations_completed', {
+            numPapersCited: papersToCite.length,
+        });
         return generatedCitations; // Return for caching
     } catch (err) {
+        let errorMessage: string;
         if (err instanceof ParsingError || err instanceof ApiError) {
-            setCitationError(err.message);
+            errorMessage = err.message;
         } else if (err instanceof Error) {
-            setCitationError(`An unexpected client-side error occurred: ${err.message}`);
+            errorMessage = `An unexpected client-side error occurred: ${err.message}`;
         } else {
-            setCitationError('An unknown error occurred while generating citations.');
+            errorMessage = 'An unknown error occurred while generating citations.';
         }
+        setCitationError(errorMessage);
+        analyticsService.logEvent('citations_failed', {
+            numPapersCited: papersToCite.length,
+            error: errorMessage,
+        });
         return []; // Return empty array on error
     } finally {
         setIsCiting(false);
@@ -141,8 +219,9 @@ const App: React.FC = () => {
 
   const handleSearch = useCallback(async (searchQuery: string, advancedOptions: AdvancedSearchOptions) => {
     if (!searchQuery.trim()) return;
-
-    const cacheKey = `${searchQuery.trim().toLowerCase()}|${searchSource}|${summaryLength}|${summaryStyle}|${advancedOptions.startYear}-${advancedOptions.endYear}|${advancedOptions.authors}|${advancedOptions.excludeKeywords}`;
+    
+    const favoritesCacheKey = favoritePapers.map(p => p.title).join(';');
+    const cacheKey = `${searchQuery.trim().toLowerCase()}|${searchSource}|${summaryLength}|${summaryStyle}|${advancedOptions.startYear}-${advancedOptions.endYear}|${advancedOptions.authors}|${advancedOptions.excludeKeywords}|favs:${favoritesCacheKey}`;
     const cachedData = searchCache.current.get(cacheKey);
 
     // Check for a valid, non-expired cache entry
@@ -173,13 +252,27 @@ const App: React.FC = () => {
     setChatSession(null);
     setChatHistory([]);
 
+    analyticsService.logEvent('search_initiated', {
+        query: searchQuery.trim(),
+        source: searchSource,
+        summaryLength,
+        summaryStyle,
+        advancedOptions,
+        numFavoritesUsed: favoritePapers.length,
+    });
+
     try {
-      const result = await fetchResearchPapers(searchQuery, summaryLength, summaryStyle, searchSource, advancedOptions);
+      const result = await fetchResearchPapers(searchQuery, summaryLength, summaryStyle, searchSource, advancedOptions, favoritePapers);
       if (result) {
         const parsedPapers = parseGeminiResponse(result.text);
         setPapers(parsedPapers);
         initializeChatSession(parsedPapers);
         
+        analyticsService.logEvent('search_completed', {
+            query: searchQuery.trim(),
+            resultsCount: parsedPapers.length,
+        });
+
         let newCitations: string[] = [];
         if (parsedPapers.length > 0) {
             newCitations = await handleGenerateCitations(parsedPapers);
@@ -198,38 +291,62 @@ const App: React.FC = () => {
           setError("Couldn't parse the research papers from the response. The model may have returned a non-standard format.");
         }
       } else {
-        setError("Failed to get a valid response from the research service.");
+        const errorMessage = "Failed to get a valid response from the research service.";
+        setError(errorMessage);
+        analyticsService.logEvent('search_failed', {
+            query: searchQuery.trim(),
+            error: errorMessage,
+        });
       }
     } catch (err) {
+        let errorMessage: string;
         if (err instanceof ApiError) {
-            setError(err.message);
+            errorMessage = err.message;
         } else if (err instanceof Error) {
-            setError(`An unexpected error occurred: ${err.message}`);
+            errorMessage = `An unexpected error occurred: ${err.message}`;
         } else {
-            setError('An unknown error occurred during the search.');
+            errorMessage = 'An unknown error occurred during the search.';
         }
+        setError(errorMessage);
+        analyticsService.logEvent('search_failed', {
+            query: searchQuery.trim(),
+            error: errorMessage,
+        });
     } finally {
       setIsLoading(false);
     }
-  }, [summaryLength, summaryStyle, searchSource, handleGenerateCitations, CACHE_DURATION_MS]);
+  }, [summaryLength, summaryStyle, searchSource, handleGenerateCitations, CACHE_DURATION_MS, favoritePapers]);
   
   const handleAnalysis = useCallback(async () => {
     if (papers.length === 0) return;
 
     setIsAnalyzing(true);
     setAnalysisError(null);
+    analyticsService.logEvent('analysis_initiated', {
+        numPapersAnalyzed: papers.length,
+    });
     
     try {
         const result = await analyzeAndClusterPapers(papers);
         setAnalysisResult(result);
+        analyticsService.logEvent('analysis_completed', {
+            numPapersAnalyzed: papers.length,
+            numClusters: result.clusters.length,
+        });
     } catch(err) {
+        let errorMessage: string;
         if (err instanceof ParsingError || err instanceof ApiError) {
-            setAnalysisError(err.message);
+            errorMessage = err.message;
         } else if (err instanceof Error) {
-            setAnalysisError(`An unexpected client-side error occurred: ${err.message}`);
+            errorMessage = `An unexpected client-side error occurred: ${err.message}`;
         } else {
-            setAnalysisError('An unknown error occurred during analysis.');
+            errorMessage = 'An unknown error occurred during analysis.';
         }
+        setAnalysisError(errorMessage);
+        analyticsService.logEvent('analysis_failed', {
+            numPapersAnalyzed: papers.length,
+            error: errorMessage,
+        });
     } finally {
         setIsAnalyzing(false);
     }
@@ -243,6 +360,10 @@ const App: React.FC = () => {
 
     const userMessage: ChatMessage = { role: 'user', parts: [{ text: message }] };
     setChatHistory(prev => [...prev, userMessage]);
+
+    analyticsService.logEvent('chat_message_sent', {
+        messageLength: message.length,
+    });
 
     try {
         const stream = await chatSession.sendMessageStream({ message });
@@ -263,6 +384,9 @@ const App: React.FC = () => {
         console.error("Chat error:", err);
         const errorMessage = err instanceof Error ? err.message : 'An unknown error occurred.';
         setChatError(`Sorry, I couldn't get a response. ${errorMessage}`);
+        analyticsService.logEvent('chat_message_failed', {
+            error: errorMessage,
+        });
         // Remove the empty model message placeholder on error
         setChatHistory(prev => prev.filter(m => m.parts[0].text !== ''));
     } finally {
@@ -270,6 +394,85 @@ const App: React.FC = () => {
     }
   }, [chatSession]);
 
+  const handleDownloadPdf = useCallback(async (paper: ResearchPaper) => {
+    setPdfLoading(paper.title);
+    analyticsService.logEvent('pdf_download_attempt', {
+        paperTitle: paper.title,
+    });
+    try {
+        // Simple check if the source URL is already a PDF
+        if (paper.sourceURL && paper.sourceURL.toLowerCase().endsWith('.pdf')) {
+            window.open(paper.sourceURL, '_blank');
+            return;
+        }
+
+        const pdfUrl = await findPdfLink(paper);
+        analyticsService.logEvent('pdf_download_completed', {
+            paperTitle: paper.title,
+            foundDirectLink: !!pdfUrl,
+        });
+
+        if (pdfUrl) {
+            window.open(pdfUrl, '_blank');
+        } else {
+            // This could be a more sophisticated toast notification
+            alert('A direct PDF link could not be found for this paper.');
+        }
+    } catch (err) {
+        console.error("Failed to find PDF link:", err);
+        const errorMessage = err instanceof Error ? err.message : 'An unknown error occurred.';
+        alert(`An error occurred while searching for the PDF: ${errorMessage}`);
+        analyticsService.logEvent('pdf_download_failed', {
+            paperTitle: paper.title,
+            error: errorMessage,
+        });
+    } finally {
+        setPdfLoading(null);
+    }
+  }, []);
+
+  const handleFeedbackSubmit = useCallback((feedback: { category: string; text: string }) => {
+    analyticsService.logEvent('feedback_submitted', {
+        category: feedback.category,
+        messageLength: feedback.text.length,
+    });
+    setIsFeedbackModalOpen(false);
+    alert('Thank you for your feedback! Your thoughts have been recorded.');
+  }, []);
+
+  const handleFindConnectedPapers = useCallback(async (seedPaper: ResearchPaper) => {
+    setIsFindingConnected(seedPaper.title);
+    setFindConnectedError(null);
+    analyticsService.logEvent('connected_papers_initiated', { seedPaperTitle: seedPaper.title });
+    
+    try {
+        const response = await findConnectedPapers(seedPaper);
+        const connections = parseConnectedPapersResponse(response.text);
+
+        if (connections.length > 0) {
+            setConnectedPapersResult({ seedPaper, connections });
+            analyticsService.logEvent('connected_papers_completed', { 
+                seedPaperTitle: seedPaper.title,
+                resultsCount: connections.length,
+            });
+        } else {
+            setFindConnectedError("Could not find and parse any connected papers for this article.");
+            analyticsService.logEvent('connected_papers_failed', { 
+                seedPaperTitle: seedPaper.title,
+                error: 'No parsable results',
+            });
+        }
+    } catch (err) {
+        const errorMessage = err instanceof Error ? err.message : 'An unknown error occurred.';
+        setFindConnectedError(errorMessage);
+        analyticsService.logEvent('connected_papers_failed', { 
+            seedPaperTitle: seedPaper.title,
+            error: errorMessage,
+        });
+    } finally {
+        setIsFindingConnected(null);
+    }
+  }, []);
 
   return (
     <div className="min-h-screen font-sans text-gray-800 antialiased">
@@ -296,12 +499,18 @@ const App: React.FC = () => {
              onStyleChange={setSummaryStyle}
              searchSource={searchSource}
              onSourceChange={setSearchSource}
+             logAnalyticsEvent={analyticsService.logEvent}
            />
         </div>
        
         <div className="mt-8">
           {isLoading && <LoadingSpinner />}
           {error && <ErrorMessage message={error} />}
+
+          <FavoritesList
+              favoritePapers={favoritePapers}
+              onToggleFavorite={handleToggleFavorite}
+          />
           
           {!isLoading && !error && hasSearched && papers.length === 0 && (
             <div className="text-center py-12">
@@ -312,7 +521,15 @@ const App: React.FC = () => {
 
           {papers.length > 0 && (
             <>
-              <ResultsDisplay papers={papers} />
+              <ResultsDisplay 
+                papers={papers}
+                favoritePapers={favoritePapers}
+                onToggleFavorite={handleToggleFavorite}
+                onDownloadPdf={handleDownloadPdf}
+                pdfLoading={pdfLoading}
+                onFindConnectedPapers={handleFindConnectedPapers}
+                isFindingConnected={isFindingConnected}
+              />
               
               <ReferenceList 
                 citations={citations} 
@@ -360,6 +577,18 @@ const App: React.FC = () => {
       <footer className="text-center py-6 text-sm text-gray-500">
         <p>Powered by Gemini. For academic research purposes.</p>
       </footer>
+
+      <FeedbackButton onClick={() => setIsFeedbackModalOpen(true)} />
+      <FeedbackModal
+        isOpen={isFeedbackModalOpen}
+        onClose={() => setIsFeedbackModalOpen(false)}
+        onSubmit={handleFeedbackSubmit}
+      />
+      <ConnectedPapersModal
+        result={connectedPapersResult}
+        onClose={() => { setConnectedPapersResult(null); setFindConnectedError(null); }}
+        error={findConnectedError}
+      />
     </div>
   );
 };

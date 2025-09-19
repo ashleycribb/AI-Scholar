@@ -13,6 +13,7 @@ interface SearchFormProps {
   onStyleChange: (style: SummaryStyle) => void;
   searchSource: SearchSource;
   onSourceChange: (source: SearchSource) => void;
+  logAnalyticsEvent: (eventName: string, payload: object) => void;
 }
 
 const searchSources: { id: SearchSource; name: string }[] = [
@@ -37,7 +38,8 @@ export const SearchForm: React.FC<SearchFormProps> = ({
     summaryStyle,
     onStyleChange, 
     searchSource, 
-    onSourceChange 
+    onSourceChange,
+    logAnalyticsEvent
 }) => {
   const [inputValue, setInputValue] = useState('');
   const [suggestions, setSuggestions] = useState<string[]>([]);
@@ -101,6 +103,7 @@ export const SearchForm: React.FC<SearchFormProps> = ({
   };
 
   const handleSuggestionClick = (suggestion: string) => {
+    logAnalyticsEvent('suggestion_clicked', { suggestion });
     setSuggestionsDisabled(true);
     setInputValue(suggestion);
   };
@@ -109,6 +112,9 @@ export const SearchForm: React.FC<SearchFormProps> = ({
     setSuggestionsDisabled(false);
     setInputValue(e.target.value);
   };
+
+  const selectedSourceName = searchSources.find(s => s.id === searchSource)?.name || 'academic sources';
+  const placeholderText = `Search ${selectedSourceName} for 'machine learning in biology'`;
 
   return (
     <div className="relative">
@@ -119,7 +125,7 @@ export const SearchForm: React.FC<SearchFormProps> = ({
               type="text"
               value={inputValue}
               onChange={handleInputChange}
-              placeholder="e.g., 'machine learning in computational biology'"
+              placeholder={placeholderText}
               className="w-full pl-4 pr-12 py-3 bg-white border border-gray-300 rounded-full focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-shadow duration-200 text-base"
               disabled={isLoading}
               autoComplete="off"

@@ -118,15 +118,36 @@ const buildAdvancedSearchPrompt = (options: AdvancedSearchOptions): string => {
     return promptPart;
 };
 
-export const fetchResearchPapers = async (userQuery: string, summaryLength: SummaryLength, summaryStyle: SummaryStyle, searchSource: SearchSource, advancedOptions: AdvancedSearchOptions): Promise<{ text: string; sources: Source[] } | null> => {
+const buildFavoritesPrompt = (favoritePapers: ResearchPaper[]): string => {
+    if (favoritePapers.length === 0) {
+        return '';
+    }
+
+    const paperInfo = favoritePapers
+        .map(p => `- Title: "${p.title}"\n  Authors: ${p.authors}`)
+        .join('\n');
+    
+    return `
+        CRITICAL INSTRUCTION: The user has identified the following papers as a highly relevant "seed list" for their research. Your primary goal is to find 5 *new* academic papers that are thematically similar to, build upon, or are frequently cited alongside these key sources.
+
+        SEED LIST:
+        ${paperInfo}
+
+        You MUST NOT include any of the papers from the SEED LIST in your results.
+    `;
+};
+
+export const fetchResearchPapers = async (userQuery: string, summaryLength: SummaryLength, summaryStyle: SummaryStyle, searchSource: SearchSource, advancedOptions: AdvancedSearchOptions, favoritePapers: ResearchPaper[]): Promise<{ text: string; sources: Source[] } | null> => {
   const summaryInstruction = getSummaryInstruction(summaryLength);
   const sourceInstruction = getSourceInstruction(searchSource);
   const advancedSearchInstruction = buildAdvancedSearchPrompt(advancedOptions);
   const summaryStyleInstruction = getSummaryStyleInstruction(summaryStyle);
+  const favoritesInstruction = buildFavoritesPrompt(favoritePapers);
 
   const prompt = `
     You are an expert academic research assistant for a doctoral student. 
     Your task is to find and summarize 5 highly relevant academic papers based on the user's query and the following constraints.
+    ${favoritesInstruction}
     ${sourceInstruction}
 
     USER QUERY: "${userQuery}"
@@ -135,7 +156,7 @@ export const fetchResearchPapers = async (userQuery: string, summaryLength: Summ
 
     FORMATTING RULES:
     - For each paper, you MUST provide: Title, Authors, Year, SourceURL, and Summary.
-    - The **SourceURL:** MUST be the direct URL to the paper's landing page (e.g., on arXiv, ACM Digital Library, publisher's site) from the search results.
+    - The **SourceURL:** MUST be a URL that searches for the paper's exact title on Google Scholar. The URL must be properly URL-encoded. For example, for a paper titled "Attention Is All You Need", the URL should be "https://scholar.google.com/scholar?q=Attention+Is+All+You+Need".
     - Each field MUST start with a specific label in bold followed by a colon (e.g., "**Title:**", "**Authors:**", "**Year:**", "**SourceURL:**", "**Summary:**").
     - Each field MUST be on a new line.
     - ${summaryInstruction} ${summaryStyleInstruction}
@@ -167,6 +188,43 @@ export const fetchResearchPapers = async (userQuery: string, summaryLength: Summ
   } catch (error) {
     handleApiError(error, "fetching research papers");
   }
+};
+
+export const findConnectedPapers = async (seedPaper: ResearchPaper): Promise<GenerateContentResponse> => {
+    const prompt = `
+      You are an expert research analyst. Your task is to find 3-5 seminal or highly related academic papers connected to the provided "seed paper".
+  
+      The connected papers should represent at least one of the following relationships:
+      - Foundational papers that the seed paper cites or is heavily based on.
+      - Influential papers that build upon or extend the work of the seed paper.
+      - Papers that are frequently cited alongside the seed paper, indicating a shared research conversation.
+  
+      SEED PAPER:
+      **Title:** "${seedPaper.title}"
+      **Authors:** "${seedPaper.authors}"
+  
+      FORMATTING RULES:
+      - For each connected paper, you MUST provide: Title, Authors, Year, SourceURL, Summary, and Connection.
+      - The **Connection:** field is CRITICAL. It MUST be a single, concise sentence explaining the paper's relationship to the seed paper (e.g., "Presents the foundational theory that the seed paper builds upon.").
+      - The **SourceURL:** MUST be a URL that searches for the paper's exact title on Google Scholar, properly URL-encoded.
+      - The **Summary:** should be a concise paragraph (2-3 sentences).
+      - Each field MUST start with a specific label in bold followed by a colon (e.g., "**Title:**", "**Authors:**", "**Connection:**").
+      - Each field MUST be on a new line.
+      - You MUST separate each paper's entry with the exact delimiter "---" on its own line.
+      - Do NOT include any introductory or concluding text.
+    `;
+  
+    try {
+      return await ai.models.generateContent({
+        model: model,
+        contents: prompt,
+        config: {
+          tools: [{ googleSearch: {} }],
+        },
+      });
+    } catch (error) {
+      handleApiError(error, "finding connected papers");
+    }
 };
 
 export const analyzeAndClusterPapers = async (papers: ResearchPaper[]): Promise<AnalysisResult> => {
@@ -320,3 +378,50 @@ export const generateSearchSuggestions = async (query: string): Promise<string[]
       return [];
     }
   };
+  
+export const findPdfLink = async (paper: ResearchPaper): Promise<string | null> => {
+    const prompt = `
+      You are an AI research assistant. Your task is to find a single, direct, publicly accessible PDF link for the following academic paper.
+  
+      **Paper Title:** "${paper.title}"
+      **Authors:** "${paper.authors}"
+  
+      Instructions:
+      1.  Perform a targeted web search for a direct link to a PDF file.
+      2.  Prioritize links ending with ".pdf".
+      3.  Prioritize links from reputable academic sources like arXiv.org, aclweb.org, university domains (.edu), and open-access journals.
+      4.  The link MUST lead directly to the PDF file, not an abstract page, landing page, or a page requiring a login or payment.
+      5.  Return your response as a JSON object.
+      6.  If you find a valid, direct PDF link, the JSON object should be: \`{"pdfUrl": "THE_DIRECT_URL"}\`.
+      7.  If you cannot find a direct PDF link, the JSON object must be: \`{"pdfUrl": ""}\`. Do not provide any explanation.
+    `;
+  
+    try {
+      const response: GenerateContentResponse = await ai.models.generateContent({
+        model: model,
+        contents: prompt,
+        config: {
+          tools: [{ googleSearch: {} }],
+          responseMimeType: "application/json",
+          responseSchema: {
+            type: Type.OBJECT,
+            properties: {
+              pdfUrl: {
+                type: Type.STRING,
+                description: "The direct URL to the PDF file, or an empty string if not found.",
+              }
+            },
+            required: ["pdfUrl"]
+          }
+        }
+      });
+  
+      const result = JSON.parse(response.text);
+      return result.pdfUrl || null;
+  
+    } catch (error) {
+      console.error("Error finding PDF link:", error);
+      // Return null on any error to ensure the UI doesn't break.
+      return null;
+    }
+};

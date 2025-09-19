@@ -6,6 +6,10 @@ export interface ResearchPaper {
   sourceURL?: string;
 }
 
+export interface ConnectedPaper extends ResearchPaper {
+  connection: string;
+}
+
 // FIX: Updated GroundingChunk interface to match the @google/genai SDK.
 // The `web` property is optional in the SDK's type definition, which was causing a type mismatch.
 export interface GroundingChunk {
