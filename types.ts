@@ -4,6 +4,7 @@ export interface ResearchPaper {
   year: string;
   summary: string;
   sourceURL?: string;
+  pdfURL?: string;
 }
 
 export interface ConnectedPaper extends ResearchPaper {
@@ -28,7 +29,13 @@ export type SummaryLength = 'short' | 'medium' | 'detailed';
 
 export type SummaryStyle = 'paragraph' | 'bullets' | 'qa';
 
-export type SearchSource = 'google_scholar' | 'general' | 'jstor' | 'pubmed' | 'arxiv';
+export type SearchSource = string;
+
+export interface SearchSourceInfo {
+  id: string;
+  name: string;
+  description?: string;
+}
 
 export interface Cluster {
   theme: string;
@@ -53,4 +60,11 @@ export interface AdvancedSearchOptions {
 export interface ChatMessage {
     role: 'user' | 'model';
     parts: { text: string }[];
+}
+
+export interface PaperAnalysis {
+  researchQuestion: string;
+  methodology: string;
+  keyFindings: string[];
+  limitations: string[];
 }

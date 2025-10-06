@@ -1,5 +1,6 @@
+
 import { GoogleGenAI, GenerateContentResponse, Type } from "@google/genai";
-import type { Source, GroundingChunk, SummaryLength, ResearchPaper, AnalysisResult, SearchSource, AdvancedSearchOptions, SummaryStyle } from '../types';
+import type { Source, GroundingChunk, SummaryLength, ResearchPaper, AnalysisResult, SearchSource, AdvancedSearchOptions, SummaryStyle, SearchSourceInfo, PaperAnalysis } from '../types';
 
 if (!process.env.API_KEY) {
   throw new Error("API_KEY environment variable is not set.");
@@ -79,20 +80,25 @@ const getSummaryStyleInstruction = (style: SummaryStyle): string => {
     }
 };
 
-const getSourceInstruction = (source: SearchSource): string => {
-  switch (source) {
-    case 'google_scholar':
-      return 'You MUST prioritize results from Google Scholar (scholar.google.com).';
-    case 'jstor':
-      return 'You MUST prioritize results from JSTOR (jstor.org).';
-    case 'pubmed':
-      return 'You MUST prioritize results from PubMed (pubmed.ncbi.nlm.nih.gov).';
-    case 'arxiv':
-      return 'You MUST prioritize results from arXiv (arxiv.org).';
-    case 'general':
-    default:
-      return 'You should perform a general web search, but prioritize finding academic and peer-reviewed sources.';
+const getSourceInstruction = (sourceId: string): string => {
+  const sourceName = sourceId.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+
+  if (sourceId === 'general') {
+    return 'You should perform a general web search, but prioritize finding academic and peer-reviewed sources.';
   }
+
+  const domains: { [key: string]: string } = {
+    google_scholar: 'scholar.google.com',
+    jstor: 'jstor.org',
+    pubmed: 'pubmed.ncbi.nlm.nih.gov',
+    arxiv: 'arxiv.org',
+    eric: 'eric.ed.gov',
+  };
+
+  const domain = domains[sourceId];
+  const domainInstruction = domain ? ` (domain: ${domain})` : '';
+  
+  return `You MUST prioritize results from the academic database: ${sourceName}${domainInstruction}.`;
 };
 
 const buildAdvancedSearchPrompt = (options: AdvancedSearchOptions): string => {
@@ -192,12 +198,13 @@ export const fetchResearchPapers = async (userQuery: string, summaryLength: Summ
 
 export const findConnectedPapers = async (seedPaper: ResearchPaper): Promise<GenerateContentResponse> => {
     const prompt = `
-      You are an expert research analyst. Your task is to find 3-5 seminal or highly related academic papers connected to the provided "seed paper".
+      You are an expert research analyst. Your task is to find 5-7 seminal or highly related academic papers connected to the provided "seed paper".
   
       The connected papers should represent at least one of the following relationships:
       - Foundational papers that the seed paper cites or is heavily based on.
       - Influential papers that build upon or extend the work of the seed paper.
       - Papers that are frequently cited alongside the seed paper, indicating a shared research conversation.
+      - Papers that present a contrasting or critical viewpoint to the seed paper.
   
       SEED PAPER:
       **Title:** "${seedPaper.title}"
@@ -205,7 +212,7 @@ export const findConnectedPapers = async (seedPaper: ResearchPaper): Promise<Gen
   
       FORMATTING RULES:
       - For each connected paper, you MUST provide: Title, Authors, Year, SourceURL, Summary, and Connection.
-      - The **Connection:** field is CRITICAL. It MUST be a single, concise sentence explaining the paper's relationship to the seed paper (e.g., "Presents the foundational theory that the seed paper builds upon.").
+      - The **Connection:** field is CRITICAL. It MUST be a clear and specific sentence (or two, if necessary) explaining the paper's relationship to the seed paper. Be explicit. For example: "This paper presents the foundational theory that the seed paper builds upon.", "This study directly challenges the methodology of the seed paper.", or "This is a direct follow-up study applying the original findings to a new domain."
       - The **SourceURL:** MUST be a URL that searches for the paper's exact title on Google Scholar, properly URL-encoded.
       - The **Summary:** should be a concise paragraph (2-3 sentences).
       - Each field MUST start with a specific label in bold followed by a colon (e.g., "**Title:**", "**Authors:**", "**Connection:**").
@@ -425,3 +432,148 @@ export const findPdfLink = async (paper: ResearchPaper): Promise<string | null> 
       return null;
     }
 };
+
+export const generateResearchGapReport = async (papers: ResearchPaper[]): Promise<string> => {
+    const paperTexts = papers.map(p => `Title: ${p.title}\nSummary: ${p.summary}`).join('\n---\n');
+  
+    const prompt = `
+      You are an expert research strategist and meta-analyst preparing a report for a doctoral student.
+      Your task is to analyze the provided list of academic paper summaries to identify research gaps, unanswered questions, and potential future research directions.
+      Synthesize these findings into a coherent and actionable report.
+  
+      Here are the papers:
+      ${paperTexts}
+  
+      FORMATTING RULES:
+      Your response MUST be a well-structured report using the following markdown-like format.
+      - Use '##' for main section headings.
+      - Use '*' or '-' for bullet points.
+      
+      REPORT STRUCTURE:
+      ## Executive Summary
+      - A brief, high-level overview of the key themes in the literature and a summary of the most significant research gaps you identified.
+      
+      ## Key Research Themes
+      - A bulleted list of the dominant themes or topics that are well-covered by the provided papers.
+      
+      ## Identified Research Gaps & Unanswered Questions
+      - This is the most critical section. Provide a detailed, bulleted list of specific areas where the literature appears to be lacking, based *only* on the provided summaries.
+      - For each gap, briefly explain the nature of the gap (e.g., "Lack of longitudinal studies," "Focus on X demographic, ignoring Y," "Methodological limitations in...").
+      
+      ## Future Research Directions
+      - A bulleted list of concrete, actionable research questions or project ideas that could address the gaps identified above. Frame these as suggestions for the student.
+      
+      ## Conflicting Findings or Debates (if applicable)
+      - If you notice any contradictory findings or ongoing debates between the papers, highlight them here in a bulleted list. If there are no conflicts, state "No significant conflicting findings were identified in the provided summaries."
+    `;
+  
+    try {
+      const response = await ai.models.generateContent({
+        model: model,
+        contents: prompt,
+      });
+      return response.text;
+    } catch (error) {
+      handleApiError(error, 'generating research gap report');
+    }
+  };
+  
+export const findDatabasesForField = async (fieldOfStudy: string): Promise<SearchSourceInfo[]> => {
+    const prompt = `
+      You are an expert academic librarian advising a postgraduate student.
+      Your task is to recommend 5-7 of the most important and reputable academic databases for research in the field of "${fieldOfStudy}".
+
+      For each database, provide its name and a concise, one-sentence description of its primary focus.
+      Focus on databases whose contents are at least partially indexed by major search engines or are widely recognized in academia.
+
+      Return the result as a JSON object with a "databases" key, which contains an array of objects.
+      Each object in the array must have two keys: "name" (string) and "description" (string).
+    `;
+
+    try {
+        const response = await ai.models.generateContent({
+            model: model,
+            contents: prompt,
+            config: {
+                responseMimeType: "application/json",
+                responseSchema: {
+                    type: Type.OBJECT,
+                    properties: {
+                        databases: {
+                            type: Type.ARRAY,
+                            items: {
+                                type: Type.OBJECT,
+                                properties: {
+                                    name: { type: Type.STRING },
+                                    description: { type: Type.STRING }
+                                },
+                                required: ["name", "description"]
+                            }
+                        }
+                    },
+                    required: ["databases"]
+                }
+            }
+        });
+
+        const result = JSON.parse(response.text);
+        return result.databases as SearchSourceInfo[];
+
+    } catch (error) {
+        if (error instanceof SyntaxError) {
+            throw new ParsingError('The database recommendations from the model were not valid JSON.');
+        }
+        handleApiError(error, 'finding academic databases');
+    }
+};
+
+export const analyzePaperStructure = async (paper: ResearchPaper): Promise<PaperAnalysis> => {
+    const prompt = `
+      You are an expert academic analyst. Your task is to deconstruct the provided research paper summary into its core components.
+      Based *only* on the summary text provided, identify the following:
+      1.  **Research Question:** What is the central question or hypothesis the paper is investigating? (1-2 sentences)
+      2.  **Methodology:** What method did the authors use to investigate the question? (e.g., survey, experiment, case study, literature review). Be concise.
+      3.  **Key Findings:** What were the 2-3 most important results or conclusions of the study?
+      4.  **Limitations:** What are the potential limitations of the study? Infer these if not explicitly stated (e.g., "The study may be limited by its small sample size," or "Findings may not be generalizable."). If no limitations can be determined, state "Not specified in summary."
+  
+      PAPER:
+      **Title:** "${paper.title}"
+      **Summary:** "${paper.summary}"
+  
+      Return the result as a single JSON object with the keys: "researchQuestion", "methodology", "keyFindings" (an array of strings), and "limitations" (an array of strings).
+    `;
+  
+    try {
+      const response = await ai.models.generateContent({
+        model: model,
+        contents: prompt,
+        config: {
+          responseMimeType: "application/json",
+          responseSchema: {
+            type: Type.OBJECT,
+            properties: {
+              researchQuestion: { type: Type.STRING },
+              methodology: { type: Type.STRING },
+              keyFindings: {
+                type: Type.ARRAY,
+                items: { type: Type.STRING }
+              },
+              limitations: {
+                type: Type.ARRAY,
+                items: { type: Type.STRING }
+              },
+            },
+            required: ["researchQuestion", "methodology", "keyFindings", "limitations"]
+          }
+        }
+      });
+  
+      return JSON.parse(response.text) as PaperAnalysis;
+  
+    } catch (error) {
+      if (error instanceof SyntaxError) {
+        throw new ParsingError('The structured analysis from the model was not valid JSON.');
+      }
+      handleApiError(error, 'analyzing paper structure');
+    }
+  };

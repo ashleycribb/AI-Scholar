@@ -1,11 +1,12 @@
+
 import React, { useState, useCallback, useRef } from 'react';
 import { SearchForm } from './components/SearchForm';
 import { ResultsDisplay } from './components/ResultsDisplay';
 import { LoadingSpinner } from './components/LoadingSpinner';
 import { ErrorMessage } from './components/ErrorMessage';
 import { AnalysisDisplay } from './components/AnalysisDisplay';
-import { fetchResearchPapers, analyzeAndClusterPapers, generateCitations, findPdfLink, findConnectedPapers, ApiError, ParsingError, ai } from './services/geminiService';
-import type { ResearchPaper, SummaryLength, AnalysisResult, SearchSource, AdvancedSearchOptions, ChatMessage, SummaryStyle, ConnectedPaper } from './types';
+import { fetchResearchPapers, analyzeAndClusterPapers, generateCitations, findPdfLink, findConnectedPapers, generateResearchGapReport, findDatabasesForField, analyzePaperStructure, ApiError, ParsingError, ai } from './services/geminiService';
+import type { ResearchPaper, SummaryLength, AnalysisResult, SearchSource, AdvancedSearchOptions, ChatMessage, SummaryStyle, ConnectedPaper, SearchSourceInfo, PaperAnalysis } from './types';
 import { ScholarIcon } from './components/icons/ScholarIcon';
 import { ReferenceList } from './components/ReferenceList';
 import { ChatPanel } from './components/ChatPanel';
@@ -15,6 +16,10 @@ import { analyticsService } from './services/analyticsService';
 import { FeedbackButton } from './components/FeedbackButton';
 import { FeedbackModal } from './components/FeedbackModal';
 import { ConnectedPapersModal } from './components/ConnectedPapersModal';
+import { ReportModal } from './components/ReportModal';
+import { ReportIcon } from './components/icons/ReportIcon';
+import { DatabaseFinderModal } from './components/DatabaseFinderModal';
+import { PaperAnalysisModal } from './components/PaperAnalysisModal';
 
 
 // Interface for our cache entry
@@ -24,6 +29,14 @@ interface CacheEntry {
   timestamp: number;
 }
 
+const initialSearchSources: SearchSourceInfo[] = [
+    { id: 'google_scholar', name: 'Google Scholar' },
+    { id: 'eric', name: 'ERIC' },
+    { id: 'jstor', name: 'JSTOR' },
+    { id: 'pubmed', name: 'PubMed' },
+    { id: 'arxiv', name: 'arXiv' },
+];
+
 const App: React.FC = () => {
   const [query, setQuery] = useState<string>('');
   const [papers, setPapers] = useState<ResearchPaper[]>([]);
@@ -32,7 +45,10 @@ const App: React.FC = () => {
   const [hasSearched, setHasSearched] = useState<boolean>(false);
   const [summaryLength, setSummaryLength] = useState<SummaryLength>('medium');
   const [summaryStyle, setSummaryStyle] = useState<SummaryStyle>('paragraph');
+
+  const [searchSources, setSearchSources] = useState<SearchSourceInfo[]>(initialSearchSources);
   const [searchSource, setSearchSource] = useState<SearchSource>('google_scholar');
+
   const [favoritePapers, setFavoritePapers] = useState<ResearchPaper[]>([]);
   
   const [analysisResult, setAnalysisResult] = useState<AnalysisResult | null>(null);
@@ -54,8 +70,12 @@ const App: React.FC = () => {
   const [isFindingConnected, setIsFindingConnected] = useState<string | null>(null); // Stores title of paper being processed
   const [findConnectedError, setFindConnectedError] = useState<string | null>(null);
 
+  // Report Modal State
+  const [isReportModalOpen, setIsReportModalOpen] = useState<boolean>(false);
+  const [isGeneratingReport, setIsGeneratingReport] = useState<boolean>(false);
+  const [reportContent, setReportContent] = useState<string | null>(null);
+  const [reportError, setReportError] = useState<string | null>(null);
 
-  const [pdfLoading, setPdfLoading] = useState<string | null>(null);
 
   // Client-side cache for search results
   const searchCache = useRef<Map<string, CacheEntry>>(new Map());
@@ -64,6 +84,13 @@ const App: React.FC = () => {
   // Feedback Modal State
   const [isFeedbackModalOpen, setIsFeedbackModalOpen] = useState<boolean>(false);
 
+  // Database Finder Modal State
+  const [isDbFinderOpen, setIsDbFinderOpen] = useState<boolean>(false);
+
+  // Paper Analysis State
+  const [isAnalyzingPaper, setIsAnalyzingPaper] = useState<string | null>(null); // paper title
+  const [paperAnalysisResult, setPaperAnalysisResult] = useState<{ paper: ResearchPaper; analysis: PaperAnalysis } | null>(null);
+  const [paperAnalysisError, setPaperAnalysisError] = useState<string | null>(null);
 
   const handleToggleFavorite = useCallback((paper: ResearchPaper) => {
     setFavoritePapers(prev => {
@@ -217,6 +244,25 @@ const App: React.FC = () => {
     }
   }, []);
 
+  const findAndSetPdfLinks = (papersToEnrich: ResearchPaper[]) => {
+    papersToEnrich.forEach(async (paper, index) => {
+        try {
+            const pdfUrl = await findPdfLink(paper);
+            if (pdfUrl) {
+                setPapers(prevPapers => {
+                    const newPapers = [...prevPapers];
+                    if (newPapers[index] && newPapers[index].title === paper.title) {
+                        newPapers[index] = { ...newPapers[index], pdfURL: pdfUrl };
+                    }
+                    return newPapers;
+                });
+            }
+        } catch (error) {
+            console.warn(`Could not find PDF for "${paper.title}":`, error);
+        }
+    });
+  };
+
   const handleSearch = useCallback(async (searchQuery: string, advancedOptions: AdvancedSearchOptions) => {
     if (!searchQuery.trim()) return;
     
@@ -251,6 +297,8 @@ const App: React.FC = () => {
     setCitationError(null);
     setChatSession(null);
     setChatHistory([]);
+    setReportContent(null);
+    setReportError(null);
 
     analyticsService.logEvent('search_initiated', {
         query: searchQuery.trim(),
@@ -272,9 +320,10 @@ const App: React.FC = () => {
             query: searchQuery.trim(),
             resultsCount: parsedPapers.length,
         });
-
+        
         let newCitations: string[] = [];
         if (parsedPapers.length > 0) {
+            findAndSetPdfLinks(parsedPapers);
             newCitations = await handleGenerateCitations(parsedPapers);
         }
 
@@ -352,6 +401,36 @@ const App: React.FC = () => {
     }
   }, [papers]);
 
+  const handleGenerateReport = useCallback(async () => {
+    if (papers.length === 0) return;
+
+    setIsReportModalOpen(true);
+    setIsGeneratingReport(true);
+    setReportContent(null);
+    setReportError(null);
+    analyticsService.logEvent('report_generation_initiated', {
+        numPapers: papers.length,
+    });
+
+    try {
+        const reportText = await generateResearchGapReport(papers);
+        setReportContent(reportText);
+        analyticsService.logEvent('report_generation_completed', {
+            numPapers: papers.length,
+            reportLength: reportText.length,
+        });
+    } catch (err) {
+        const errorMessage = err instanceof Error ? err.message : 'An unknown error occurred.';
+        setReportError(errorMessage);
+        analyticsService.logEvent('report_generation_failed', {
+            numPapers: papers.length,
+            error: errorMessage,
+        });
+    } finally {
+        setIsGeneratingReport(false);
+    }
+  }, [papers]);
+
   const handleSendMessage = useCallback(async (message: string) => {
     if (!chatSession) return;
 
@@ -393,43 +472,6 @@ const App: React.FC = () => {
         setIsChatting(false);
     }
   }, [chatSession]);
-
-  const handleDownloadPdf = useCallback(async (paper: ResearchPaper) => {
-    setPdfLoading(paper.title);
-    analyticsService.logEvent('pdf_download_attempt', {
-        paperTitle: paper.title,
-    });
-    try {
-        // Simple check if the source URL is already a PDF
-        if (paper.sourceURL && paper.sourceURL.toLowerCase().endsWith('.pdf')) {
-            window.open(paper.sourceURL, '_blank');
-            return;
-        }
-
-        const pdfUrl = await findPdfLink(paper);
-        analyticsService.logEvent('pdf_download_completed', {
-            paperTitle: paper.title,
-            foundDirectLink: !!pdfUrl,
-        });
-
-        if (pdfUrl) {
-            window.open(pdfUrl, '_blank');
-        } else {
-            // This could be a more sophisticated toast notification
-            alert('A direct PDF link could not be found for this paper.');
-        }
-    } catch (err) {
-        console.error("Failed to find PDF link:", err);
-        const errorMessage = err instanceof Error ? err.message : 'An unknown error occurred.';
-        alert(`An error occurred while searching for the PDF: ${errorMessage}`);
-        analyticsService.logEvent('pdf_download_failed', {
-            paperTitle: paper.title,
-            error: errorMessage,
-        });
-    } finally {
-        setPdfLoading(null);
-    }
-  }, []);
 
   const handleFeedbackSubmit = useCallback((feedback: { category: string; text: string }) => {
     analyticsService.logEvent('feedback_submitted', {
@@ -474,6 +516,37 @@ const App: React.FC = () => {
     }
   }, []);
 
+  const handleAnalyzePaper = useCallback(async (paper: ResearchPaper) => {
+    setIsAnalyzingPaper(paper.title);
+    setPaperAnalysisError(null);
+    analyticsService.logEvent('paper_analysis_initiated', { paperTitle: paper.title });
+
+    try {
+        const analysis = await analyzePaperStructure(paper);
+        setPaperAnalysisResult({ paper, analysis });
+        analyticsService.logEvent('paper_analysis_completed', { paperTitle: paper.title });
+    } catch (err) {
+        const errorMessage = err instanceof Error ? err.message : 'An unknown error occurred.';
+        setPaperAnalysisError(errorMessage);
+        analyticsService.logEvent('paper_analysis_failed', {
+            paperTitle: paper.title,
+            error: errorMessage,
+        });
+    } finally {
+        setIsAnalyzingPaper(null);
+    }
+  }, []);
+
+  const handleAddSearchSource = (source: SearchSourceInfo) => {
+    // Avoid duplicates
+    if (!searchSources.some(s => s.name === source.name)) {
+      const newSource = { ...source, id: source.name.toLowerCase().replace(/\s+/g, '_') };
+      setSearchSources(prev => [...prev, newSource]);
+      setSearchSource(newSource.id); // Automatically select the new source
+      analyticsService.logEvent('database_source_added', { sourceName: source.name });
+    }
+  };
+
   return (
     <div className="min-h-screen font-sans text-gray-800 antialiased">
       <main className="container mx-auto max-w-4xl px-4 py-8 md:py-12">
@@ -497,8 +570,10 @@ const App: React.FC = () => {
              onLengthChange={setSummaryLength}
              summaryStyle={summaryStyle}
              onStyleChange={setSummaryStyle}
+             searchSources={searchSources}
              searchSource={searchSource}
              onSourceChange={setSearchSource}
+             onOpenDbFinder={() => setIsDbFinderOpen(true)}
              logAnalyticsEvent={analyticsService.logEvent}
            />
         </div>
@@ -525,10 +600,10 @@ const App: React.FC = () => {
                 papers={papers}
                 favoritePapers={favoritePapers}
                 onToggleFavorite={handleToggleFavorite}
-                onDownloadPdf={handleDownloadPdf}
-                pdfLoading={pdfLoading}
                 onFindConnectedPapers={handleFindConnectedPapers}
                 isFindingConnected={isFindingConnected}
+                onAnalyzePaper={handleAnalyzePaper}
+                isAnalyzingPaper={isAnalyzingPaper}
               />
               
               <ReferenceList 
@@ -547,13 +622,21 @@ const App: React.FC = () => {
               )}
 
               {!analysisResult && (
-                <div className="mt-8 text-center">
+                <div className="mt-8 text-center flex justify-center items-center gap-4">
                     <button
                         onClick={handleAnalysis}
                         disabled={isAnalyzing}
                         className="px-6 py-3 bg-green-600 text-white font-semibold rounded-full hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors duration-200"
                     >
                         {isAnalyzing ? 'Analyzing...' : 'Visualize & Cluster Results'}
+                    </button>
+                     <button
+                        onClick={handleGenerateReport}
+                        disabled={isGeneratingReport}
+                        className="inline-flex items-center gap-2 px-6 py-3 bg-purple-600 text-white font-semibold rounded-full hover:bg-purple-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors duration-200"
+                    >
+                        <ReportIcon className="w-5 h-5" />
+                        {isGeneratingReport ? 'Generating...' : 'Generate Research Gap Report'}
                     </button>
                 </div>
               )}
@@ -588,6 +671,25 @@ const App: React.FC = () => {
         result={connectedPapersResult}
         onClose={() => { setConnectedPapersResult(null); setFindConnectedError(null); }}
         error={findConnectedError}
+      />
+      <ReportModal
+        isOpen={isReportModalOpen}
+        onClose={() => setIsReportModalOpen(false)}
+        isLoading={isGeneratingReport}
+        content={reportContent}
+        error={reportError}
+      />
+      <DatabaseFinderModal
+        isOpen={isDbFinderOpen}
+        onClose={() => setIsDbFinderOpen(false)}
+        onAddSource={handleAddSearchSource}
+        findDatabasesForField={findDatabasesForField}
+        existingSources={searchSources}
+      />
+       <PaperAnalysisModal
+        result={paperAnalysisResult}
+        onClose={() => { setPaperAnalysisResult(null); setPaperAnalysisError(null); }}
+        error={paperAnalysisError}
       />
     </div>
   );

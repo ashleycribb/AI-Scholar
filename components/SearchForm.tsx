@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { SearchIcon } from './icons/SearchIcon';
-import type { SummaryLength, SearchSource, AdvancedSearchOptions, SummaryStyle } from '../types';
+import type { SummaryLength, SearchSource, AdvancedSearchOptions, SummaryStyle, SearchSourceInfo } from '../types';
 import { generateSearchSuggestions } from '../services/geminiService';
 import { SearchSuggestions } from './SearchSuggestions';
+import { DatabaseIcon } from './icons/DatabaseIcon';
 
 interface SearchFormProps {
   onSearch: (query: string, options: AdvancedSearchOptions) => void;
@@ -11,18 +12,12 @@ interface SearchFormProps {
   onLengthChange: (length: SummaryLength) => void;
   summaryStyle: SummaryStyle;
   onStyleChange: (style: SummaryStyle) => void;
+  searchSources: SearchSourceInfo[];
   searchSource: SearchSource;
   onSourceChange: (source: SearchSource) => void;
+  onOpenDbFinder: () => void;
   logAnalyticsEvent: (eventName: string, payload: object) => void;
 }
-
-const searchSources: { id: SearchSource; name: string }[] = [
-    { id: 'google_scholar', name: 'Google Scholar' },
-    { id: 'general', name: 'General Web' },
-    { id: 'jstor', name: 'JSTOR' },
-    { id: 'pubmed', name: 'PubMed' },
-    { id: 'arxiv', name: 'arXiv' },
-];
 
 const summaryStyles: { id: SummaryStyle; name: string }[] = [
     { id: 'paragraph', name: 'Paragraph' },
@@ -37,8 +32,10 @@ export const SearchForm: React.FC<SearchFormProps> = ({
     onLengthChange,
     summaryStyle,
     onStyleChange, 
+    searchSources,
     searchSource, 
     onSourceChange,
+    onOpenDbFinder,
     logAnalyticsEvent
 }) => {
   const [inputValue, setInputValue] = useState('');
@@ -231,6 +228,14 @@ export const SearchForm: React.FC<SearchFormProps> = ({
                 {source.name}
             </button>
             ))}
+             <button
+                type="button"
+                onClick={onOpenDbFinder}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-medium text-blue-600 bg-blue-100 hover:bg-blue-200 transition-colors focus:outline-none focus:ring-2 focus:ring-offset-1 focus:ring-blue-500"
+            >
+                <DatabaseIcon className="w-4 h-4" />
+                Find More...
+            </button>
         </div>
       </form>
       <SearchSuggestions

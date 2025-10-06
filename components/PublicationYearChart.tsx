@@ -7,7 +7,8 @@ interface PublicationYearChartProps {
 
 export const PublicationYearChart: React.FC<PublicationYearChartProps> = ({ data }) => {
   const sortedYears = Object.keys(data).sort((a, b) => parseInt(a) - parseInt(b));
-  const maxCount = Math.max(...Object.values(data), 1);
+  // FIX: Explicitly cast Object.values(data) to number[] to resolve a TypeScript type inference issue.
+  const maxCount = Math.max(...(Object.values(data) as number[]), 1);
 
   return (
     <div className="bg-white p-6 rounded-lg shadow-md border border-gray-200">

@@ -7,13 +7,13 @@ interface ResultsDisplayProps {
   papers: ResearchPaper[];
   favoritePapers: ResearchPaper[];
   onToggleFavorite: (paper: ResearchPaper) => void;
-  onDownloadPdf: (paper: ResearchPaper) => void;
-  pdfLoading: string | null;
   onFindConnectedPapers: (paper: ResearchPaper) => void;
   isFindingConnected: string | null;
+  onAnalyzePaper: (paper: ResearchPaper) => void;
+  isAnalyzingPaper: string | null;
 }
 
-export const ResultsDisplay: React.FC<ResultsDisplayProps> = ({ papers, favoritePapers, onToggleFavorite, onDownloadPdf, pdfLoading, onFindConnectedPapers, isFindingConnected }) => {
+export const ResultsDisplay: React.FC<ResultsDisplayProps> = ({ papers, favoritePapers, onToggleFavorite, onFindConnectedPapers, isFindingConnected, onAnalyzePaper, isAnalyzingPaper }) => {
   return (
     <div className="space-y-6">
       <h2 className="text-2xl font-bold text-gray-800 border-b pb-2">Research Papers Found</h2>
@@ -25,10 +25,10 @@ export const ResultsDisplay: React.FC<ResultsDisplayProps> = ({ papers, favorite
                 paper={paper} 
                 isFavorite={isFavorite}
                 onToggleFavorite={onToggleFavorite}
-                onDownloadPdf={onDownloadPdf}
-                isPdfLoading={pdfLoading === paper.title}
                 onFindConnectedPapers={onFindConnectedPapers}
                 isFindingConnected={isFindingConnected === paper.title}
+                onAnalyzePaper={onAnalyzePaper}
+                isAnalyzingPaper={isAnalyzingPaper === paper.title}
             />
         );
       })}
