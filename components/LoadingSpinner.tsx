@@ -1,7 +1,10 @@
-
 import React from 'react';
 
-export const LoadingSpinner: React.FC = () => {
+interface LoadingSpinnerProps {
+  message?: string;
+}
+
+export const LoadingSpinner: React.FC<LoadingSpinnerProps> = ({ message = "Analyzing research papers..." }) => {
   return (
     <div className="flex justify-center items-center py-12">
       <div className="flex flex-col items-center space-y-3">
@@ -25,7 +28,7 @@ export const LoadingSpinner: React.FC = () => {
             d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
           ></path>
         </svg>
-        <p className="text-lg text-gray-600">Analyzing research papers...</p>
+        <p className="text-lg text-gray-600">{message}</p>
       </div>
     </div>
   );

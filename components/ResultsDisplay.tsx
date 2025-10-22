@@ -1,37 +1,66 @@
-
 import React from 'react';
-import type { ResearchPaper } from '../types';
+import type { ResearchPaper, SortConfig, SortKey } from '../types';
 import { PaperCard } from './PaperCard';
 
 interface ResultsDisplayProps {
   papers: ResearchPaper[];
-  favoritePapers: ResearchPaper[];
-  onToggleFavorite: (paper: ResearchPaper) => void;
-  onFindConnectedPapers: (paper: ResearchPaper) => void;
-  isFindingConnected: string | null;
-  onAnalyzePaper: (paper: ResearchPaper) => void;
-  isAnalyzingPaper: string | null;
+  selectedPaper: ResearchPaper | null;
+  onSelectPaper: (paper: ResearchPaper) => void;
+  sortConfig: SortConfig;
+  onSortChange: (config: SortConfig) => void;
 }
 
-export const ResultsDisplay: React.FC<ResultsDisplayProps> = ({ papers, favoritePapers, onToggleFavorite, onFindConnectedPapers, isFindingConnected, onAnalyzePaper, isAnalyzingPaper }) => {
+export const ResultsDisplay: React.FC<ResultsDisplayProps> = ({ papers, selectedPaper, onSelectPaper, sortConfig, onSortChange }) => {
+  const handleSort = (key: SortKey) => {
+    if (key === 'relevance') {
+      onSortChange({ key: 'relevance', direction: 'desc' });
+      return;
+    }
+    const newDirection = sortConfig.key === key && sortConfig.direction === 'desc' ? 'asc' : 'desc';
+    onSortChange({ key, direction: newDirection });
+  };
+
+  const renderSortIcon = (key: SortKey) => {
+    if (sortConfig.key !== key || key === 'relevance') return null;
+    return sortConfig.direction === 'desc' 
+        ? <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clipRule="evenodd" /></svg>
+        : <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M14.707 12.707a1 1 0 01-1.414 0L10 9.414l-3.293 3.293a1 1 0 01-1.414-1.414l4-4a1 1 0 011.414 0l4 4a1 1 0 010 1.414z" clipRule="evenodd" /></svg>;
+  };
+
+  const getButtonClasses = (key: SortKey) => {
+    return `flex items-center px-2 py-1 rounded-full font-medium transition-colors ${
+        sortConfig.key === key 
+        ? 'bg-blue-100 text-blue-700' 
+        : 'text-gray-600 hover:bg-gray-100'
+    }`;
+  };
+
   return (
-    <div className="space-y-6">
-      <h2 className="text-2xl font-bold text-gray-800 border-b pb-2">Research Papers Found</h2>
-      {papers.map((paper, index) => {
-        const isFavorite = favoritePapers.some(p => p.title === paper.title && p.authors === paper.authors);
-        return (
-            <PaperCard 
-                key={paper.title + index} 
-                paper={paper} 
-                isFavorite={isFavorite}
-                onToggleFavorite={onToggleFavorite}
-                onFindConnectedPapers={onFindConnectedPapers}
-                isFindingConnected={isFindingConnected === paper.title}
-                onAnalyzePaper={onAnalyzePaper}
-                isAnalyzingPaper={isAnalyzingPaper === paper.title}
-            />
-        );
-      })}
+    <div>
+      <div className="flex justify-between items-center border-b pb-2 mb-2 sticky top-0 bg-white z-10 py-2">
+        <h2 className="text-lg font-bold text-gray-800">
+          Search Results ({papers.length})
+        </h2>
+        <div className="flex items-center gap-1 text-xs">
+          <span className="font-medium text-gray-500 mr-1">Sort by:</span>
+          <button onClick={() => handleSort('relevance')} className={getButtonClasses('relevance')}>Relevance</button>
+          <button onClick={() => handleSort('year')} className={getButtonClasses('year')}>Year {renderSortIcon('year')}</button>
+          <button onClick={() => handleSort('citations')} className={getButtonClasses('citations')}>Citations {renderSortIcon('citations')}</button>
+        </div>
+      </div>
+      <div className="space-y-2">
+        {papers.map((paper, index) => {
+          return (
+              <PaperCard 
+                  key={paper.title + index} 
+                  paper={paper} 
+                  isOrigin={sortConfig.key === 'relevance' && index === 0}
+                  isSelected={selectedPaper?.title === paper.title}
+                  onSelectPaper={onSelectPaper}
+              />
+          );
+        })}
+      </div>
     </div>
   );
 };

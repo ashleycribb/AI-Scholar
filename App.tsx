@@ -1,696 +1,500 @@
 
-import React, { useState, useCallback, useRef } from 'react';
+import React, { useState, useCallback, useMemo, useEffect } from 'react';
+
+// Services
+import * as apiService from './services/apiService';
+import * as geminiService from './services/geminiService';
+import * as crossrefService from './services/crossrefService';
+import { analyticsService } from './services/analyticsService';
+
+// Types
+import type {
+  AdvancedSearchOptions,
+  AnalysisResult,
+  ChatMessage,
+  ConnectedPaper,
+  PaperAnalysis,
+  ResearchPaper,
+  SortConfig,
+  SummaryLength,
+  SummaryStyle,
+  SearchSourceInfo,
+} from './types';
+
+// Components
 import { SearchForm } from './components/SearchForm';
 import { ResultsDisplay } from './components/ResultsDisplay';
 import { LoadingSpinner } from './components/LoadingSpinner';
 import { ErrorMessage } from './components/ErrorMessage';
-import { AnalysisDisplay } from './components/AnalysisDisplay';
-import { fetchResearchPapers, analyzeAndClusterPapers, generateCitations, findPdfLink, findConnectedPapers, generateResearchGapReport, findDatabasesForField, analyzePaperStructure, ApiError, ParsingError, ai } from './services/geminiService';
-import type { ResearchPaper, SummaryLength, AnalysisResult, SearchSource, AdvancedSearchOptions, ChatMessage, SummaryStyle, ConnectedPaper, SearchSourceInfo, PaperAnalysis } from './types';
-import { ScholarIcon } from './components/icons/ScholarIcon';
-import { ReferenceList } from './components/ReferenceList';
-import { ChatPanel } from './components/ChatPanel';
-import type { Chat } from '@google/genai';
 import { FavoritesList } from './components/FavoritesList';
-import { analyticsService } from './services/analyticsService';
+import { SearchResultFeedback } from './components/SearchResultFeedback';
+import { AboutIcon } from './components/icons/AboutIcon';
+import { InitialSearchScreen } from './components/InitialSearchScreen';
+import { DetailsPanel } from './components/DetailsPanel';
+
+// Modals and Buttons
+import { ChatButton } from './components/ChatButton';
+import { ChatModal } from './components/ChatModal';
+import { CitationButton } from './components/CitationButton';
+import { InfoModal } from './components/InfoModal';
+import { CitationGenerator } from './components/CitationModal';
 import { FeedbackButton } from './components/FeedbackButton';
-import { FeedbackModal } from './components/FeedbackModal';
+import { FeedbackForm } from './components/FeedbackModal';
+import { AnalyticsButton } from './components/AnalyticsButton';
+import { AnalyticsDashboard } from './components/AnalyticsModal';
 import { ConnectedPapersModal } from './components/ConnectedPapersModal';
-import { ReportModal } from './components/ReportModal';
-import { ReportIcon } from './components/icons/ReportIcon';
-import { DatabaseFinderModal } from './components/DatabaseFinderModal';
 import { PaperAnalysisModal } from './components/PaperAnalysisModal';
-
-
-// Interface for our cache entry
-interface CacheEntry {
-  papers: ResearchPaper[];
-  citations: string[];
-  timestamp: number;
-}
-
-const initialSearchSources: SearchSourceInfo[] = [
-    { id: 'google_scholar', name: 'Google Scholar' },
-    { id: 'eric', name: 'ERIC' },
-    { id: 'jstor', name: 'JSTOR' },
-    { id: 'pubmed', name: 'PubMed' },
-    { id: 'arxiv', name: 'arXiv' },
-];
+import { DatabaseFinderModal } from './components/DatabaseFinderModal';
+import { SummaryFeedbackModal } from './components/SummaryFeedbackModal';
+import { SuggestionsModal } from './components/SuggestionsModal';
 
 const App: React.FC = () => {
-  const [query, setQuery] = useState<string>('');
+  // Main search state
+  const [query, setQuery] = useState('');
   const [papers, setPapers] = useState<ResearchPaper[]>([]);
-  const [isLoading, setIsLoading] = useState<boolean>(false);
+  const [selectedPaper, setSelectedPaper] = useState<ResearchPaper | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [hasSearched, setHasSearched] = useState<boolean>(false);
+  const [summary, setSummary] = useState('');
+  const [analysis, setAnalysis] = useState<AnalysisResult | null>(null);
+
+  // Search options state
   const [summaryLength, setSummaryLength] = useState<SummaryLength>('medium');
   const [summaryStyle, setSummaryStyle] = useState<SummaryStyle>('paragraph');
+  const [sortConfig, setSortConfig] = useState<SortConfig>({ key: 'relevance', direction: 'desc' });
 
-  const [searchSources, setSearchSources] = useState<SearchSourceInfo[]>(initialSearchSources);
-  const [searchSource, setSearchSource] = useState<SearchSource>('google_scholar');
+  // UI/Modal states
+  const [isChatModalOpen, setIsChatModalOpen] = useState(false);
+  const [isCitationModalOpen, setIsCitationModalOpen] = useState(false);
+  const [isFeedbackModalOpen, setIsFeedbackModalOpen] = useState(false);
+  const [isAnalyticsModalOpen, setIsAnalyticsModalOpen] = useState(false);
+  const [isAboutModalOpen, setIsAboutModalOpen] = useState(false);
+  const [isDbFinderModalOpen, setIsDbFinderModalOpen] = useState(false);
+  const [isSummaryFeedbackModalOpen, setIsSummaryFeedbackModalOpen] = useState(false);
+  const [hasSearched, setHasSearched] = useState(false);
+  const [isAdmin, setIsAdmin] = useState(false);
 
-  const [favoritePapers, setFavoritePapers] = useState<ResearchPaper[]>([]);
-  
-  const [analysisResult, setAnalysisResult] = useState<AnalysisResult | null>(null);
-  const [isAnalyzing, setIsAnalyzing] = useState<boolean>(false);
-  const [analysisError, setAnalysisError] = useState<string | null>(null);
-
-  const [citations, setCitations] = useState<string[]>([]);
-  const [isCiting, setIsCiting] = useState<boolean>(false);
-  const [citationError, setCitationError] = useState<string | null>(null);
 
   // Chat state
-  const [chatSession, setChatSession] = useState<Chat | null>(null);
   const [chatHistory, setChatHistory] = useState<ChatMessage[]>([]);
-  const [isChatting, setIsChatting] = useState<boolean>(false);
+  const [isChatLoading, setIsChatLoading] = useState(false);
   const [chatError, setChatError] = useState<string | null>(null);
+  const [location, setLocation] = useState<{ latitude: number; longitude: number } | null>(null);
 
-  // Connected Papers state
-  const [connectedPapersResult, setConnectedPapersResult] = useState<{ seedPaper: ResearchPaper; connections: ConnectedPaper[] } | null>(null);
-  const [isFindingConnected, setIsFindingConnected] = useState<string | null>(null); // Stores title of paper being processed
-  const [findConnectedError, setFindConnectedError] = useState<string | null>(null);
+  // Favorite papers state
+  const [favoritePapers, setFavoritePapers] = useState<ResearchPaper[]>([]);
 
-  // Report Modal State
-  const [isReportModalOpen, setIsReportModalOpen] = useState<boolean>(false);
-  const [isGeneratingReport, setIsGeneratingReport] = useState<boolean>(false);
-  const [reportContent, setReportContent] = useState<string | null>(null);
-  const [reportError, setReportError] = useState<string | null>(null);
+  // Per-paper action states
+  const [connectedPapersResult, setConnectedPapersResult] = useState<{ seedPaper: ResearchPaper, connections: ConnectedPaper[] } | null>(null);
+  const [isFindingConnected, setIsFindingConnected] = useState(false);
+  const [connectedPapersError, setConnectedPapersError] = useState<string | null>(null);
 
-
-  // Client-side cache for search results
-  const searchCache = useRef<Map<string, CacheEntry>>(new Map());
-  const CACHE_DURATION_MS = 5 * 60 * 1000; // 5 minutes
-
-  // Feedback Modal State
-  const [isFeedbackModalOpen, setIsFeedbackModalOpen] = useState<boolean>(false);
-
-  // Database Finder Modal State
-  const [isDbFinderOpen, setIsDbFinderOpen] = useState<boolean>(false);
-
-  // Paper Analysis State
-  const [isAnalyzingPaper, setIsAnalyzingPaper] = useState<string | null>(null); // paper title
-  const [paperAnalysisResult, setPaperAnalysisResult] = useState<{ paper: ResearchPaper; analysis: PaperAnalysis } | null>(null);
+  const [paperAnalysisResult, setPaperAnalysisResult] = useState<{ paper: ResearchPaper, analysis: PaperAnalysis } | null>(null);
+  const [isAnalyzingPaper, setIsAnalyzingPaper] = useState(false);
   const [paperAnalysisError, setPaperAnalysisError] = useState<string | null>(null);
+  
+  const [suggestionsResult, setSuggestionsResult] = useState<{ seedPaper: ResearchPaper, suggestions: string[] } | null>(null);
+  const [isGeneratingSuggestions, setIsGeneratingSuggestions] = useState(false);
+  const [suggestionsError, setSuggestionsError] = useState<string | null>(null);
+
+  const [sources, setSources] = useState<SearchSourceInfo[]>([]);
+
+  // Get user location and check for admin status
+  useEffect(() => {
+    // Check for admin flag in URL
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('admin') === 'true') {
+        setIsAdmin(true);
+    }
+
+    // Get user location for maps grounding
+    navigator.geolocation.getCurrentPosition(
+        (position) => setLocation({ latitude: position.coords.latitude, longitude: position.coords.longitude }),
+        (err) => console.warn(`Could not get location: ${err.message}`)
+    );
+  }, []);
+
+  const logAnalyticsEvent = useCallback((eventName: string, payload: object) => {
+    analyticsService.logEvent(eventName, payload);
+  }, []);
+
+  const handleSearch = useCallback(async (currentQuery: string, options: AdvancedSearchOptions) => {
+    if (!currentQuery.trim()) return;
+    setHasSearched(true);
+    setIsLoading(true);
+    setError(null);
+    setPapers([]);
+    setSummary('');
+    setAnalysis(null);
+    setSelectedPaper(null);
+    logAnalyticsEvent('search_started', { query: currentQuery, options });
+
+    try {
+      const enhancedQuery = await geminiService.enhanceSearchQuery(currentQuery);
+      setQuery(enhancedQuery.refined_query); // Update query to the enhanced one
+      const result = await apiService.search(enhancedQuery.refined_query, options, summaryLength, summaryStyle);
+      setPapers(result.papers);
+      setSummary(result.summary);
+      setAnalysis(result.analysis);
+      if (result.papers.length > 0) {
+        handleSelectPaper(result.papers[0]);
+      }
+      logAnalyticsEvent('search_success', { query: currentQuery, resultsCount: result.papers.length });
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : 'An unknown error occurred.';
+      setError(errorMessage);
+      logAnalyticsEvent('search_failed', { query: currentQuery, error: errorMessage });
+    } finally {
+      setIsLoading(false);
+    }
+  }, [summaryLength, summaryStyle, logAnalyticsEvent]);
+  
+  const sortedPapers = useMemo(() => {
+    return [...papers].sort((a, b) => {
+        if (sortConfig.key === 'relevance') return 0; // Keep original order
+        const aVal = a[sortConfig.key] || 0;
+        const bVal = b[sortConfig.key] || 0;
+        if (aVal < bVal) return sortConfig.direction === 'asc' ? -1 : 1;
+        if (aVal > bVal) return sortConfig.direction === 'asc' ? 1 : -1;
+        return 0;
+    });
+  }, [papers, sortConfig]);
+
+  const handleSelectPaper = useCallback((paper: ResearchPaper) => {
+    setSelectedPaper(paper);
+    if (!paper.keyConcepts) {
+        setPapers(prev => prev.map(p => p.title === paper.title ? { ...p, keyConceptsState: 'loading' } : p));
+        geminiService.extractKeyConcepts(paper.abstract)
+            .then(concepts => setPapers(prev => prev.map(p => p.title === paper.title ? { ...p, keyConcepts: concepts, keyConceptsState: 'loaded' } : p)))
+            .catch(() => setPapers(prev => prev.map(p => p.title === paper.title ? { ...p, keyConceptsState: 'error' } : p)));
+    }
+    logAnalyticsEvent('paper_selected', { title: paper.title });
+  }, [logAnalyticsEvent]);
 
   const handleToggleFavorite = useCallback((paper: ResearchPaper) => {
     setFavoritePapers(prev => {
-        const isFavorited = prev.some(p => p.title === paper.title && p.authors === paper.authors);
-        analyticsService.logEvent('favorite_toggled', {
-            action: isFavorited ? 'remove' : 'add',
-            paperTitle: paper.title,
-        });
-        if (isFavorited) {
-            return prev.filter(p => p.title !== paper.title || p.authors !== paper.authors);
+        const isFav = prev.some(p => p.title === paper.title);
+        if (isFav) {
+            logAnalyticsEvent('paper_unfavorited', { title: paper.title });
+            return prev.filter(p => p.title !== paper.title);
         } else {
+            logAnalyticsEvent('paper_favorited', { title: paper.title });
             return [...prev, paper];
         }
     });
-  }, []);
-
-  const parseGeminiResponse = (text: string): ResearchPaper[] => {
-    if (!text || !text.trim()) {
-      return [];
-    }
-
-    const papers: ResearchPaper[] = [];
-    const paperBlocks = text.split('---');
-
-    for (const block of paperBlocks) {
-      const trimmedBlock = block.trim();
-      if (!trimmedBlock) continue;
-
-      const paper: Partial<ResearchPaper> = {};
-      // This regex finds all fields in the block, handling different ordering and multi-line values.
-      const fieldRegex = /\*\*([A-Za-z]+):\*\*\s*([\s\S]*?)(?=\s*\*\*[A-Za-z]+:\*\*|$)/gi;
-      
-      let match;
-      while ((match = fieldRegex.exec(trimmedBlock)) !== null) {
-        const key = match[1].toLowerCase();
-        const value = match[2].trim();
-        
-        switch (key) {
-          case 'title':
-            paper.title = value.split('\n')[0].trim();
-            break;
-          case 'authors':
-            paper.authors = value.split('\n')[0].trim();
-            break;
-          case 'year':
-            paper.year = value.split('\n')[0].trim();
-            break;
-          case 'sourceurl':
-            paper.sourceURL = value.split('\n')[0].trim();
-            break;
-          case 'summary':
-            paper.summary = value; // Keep multi-line content
-            break;
-        }
-      }
-
-      // Ensure all essential fields were found before adding the paper
-      if (paper.title && paper.authors && paper.year && paper.summary) {
-        papers.push(paper as ResearchPaper);
-      }
-    }
-
-    return papers;
-  };
-
-  const parseConnectedPapersResponse = (text: string): ConnectedPaper[] => {
-    if (!text || !text.trim()) {
-      return [];
-    }
-
-    const papers: ConnectedPaper[] = [];
-    const paperBlocks = text.split('---');
-
-    for (const block of paperBlocks) {
-        const trimmedBlock = block.trim();
-        if (!trimmedBlock) continue;
-
-        const paper: Partial<ConnectedPaper> = {};
-        const fieldRegex = /\*\*([A-Za-z]+):\*\*\s*([\s\S]*?)(?=\s*\*\*[A-Za-z]+:\*\*|$)/gi;
-        
-        let match;
-        while ((match = fieldRegex.exec(trimmedBlock)) !== null) {
-            const key = match[1].toLowerCase();
-            const value = match[2].trim();
-            
-            switch (key) {
-                case 'title': paper.title = value.split('\n')[0].trim(); break;
-                case 'authors': paper.authors = value.split('\n')[0].trim(); break;
-                case 'year': paper.year = value.split('\n')[0].trim(); break;
-                case 'sourceurl': paper.sourceURL = value.split('\n')[0].trim(); break;
-                case 'summary': paper.summary = value; break;
-                case 'connection': paper.connection = value; break;
-            }
-        }
-
-        if (paper.title && paper.authors && paper.year && paper.summary && paper.connection) {
-            papers.push(paper as ConnectedPaper);
-        }
-    }
-    return papers;
-  };
-
-  const initializeChatSession = (foundPapers: ResearchPaper[]) => {
-    if (foundPapers.length === 0) {
-        setChatSession(null);
-        return;
-    }
-    const paperContext = foundPapers.map(p => `Title: ${p.title}\nSummary: ${p.summary}`).join('\n\n');
-    const systemInstruction = `You are an AI research assistant. The user has just found the following academic papers. Your task is to answer the user's questions based on the summaries of these papers. Be concise and helpful. Do not mention that you are basing your answer on the summaries unless the user asks. Here are the papers:\n\n${paperContext}`;
-
-    const newChat: Chat = ai.chats.create({
-        model: 'gemini-2.5-flash',
-        config: {
-            systemInstruction: systemInstruction,
-        },
-    });
-
-    setChatSession(newChat);
-    setChatHistory([]);
-    setChatError(null);
-  };
-  
-  const handleGenerateCitations = useCallback(async (papersToCite: ResearchPaper[]): Promise<string[]> => {
-    if (papersToCite.length === 0) return [];
-    setIsCiting(true);
-    setCitationError(null);
-    try {
-        const generatedCitations = await generateCitations(papersToCite);
-        setCitations(generatedCitations);
-        analyticsService.logEvent('citations_completed', {
-            numPapersCited: papersToCite.length,
-        });
-        return generatedCitations; // Return for caching
-    } catch (err) {
-        let errorMessage: string;
-        if (err instanceof ParsingError || err instanceof ApiError) {
-            errorMessage = err.message;
-        } else if (err instanceof Error) {
-            errorMessage = `An unexpected client-side error occurred: ${err.message}`;
-        } else {
-            errorMessage = 'An unknown error occurred while generating citations.';
-        }
-        setCitationError(errorMessage);
-        analyticsService.logEvent('citations_failed', {
-            numPapersCited: papersToCite.length,
-            error: errorMessage,
-        });
-        return []; // Return empty array on error
-    } finally {
-        setIsCiting(false);
-    }
-  }, []);
-
-  const findAndSetPdfLinks = (papersToEnrich: ResearchPaper[]) => {
-    papersToEnrich.forEach(async (paper, index) => {
-        try {
-            const pdfUrl = await findPdfLink(paper);
-            if (pdfUrl) {
-                setPapers(prevPapers => {
-                    const newPapers = [...prevPapers];
-                    if (newPapers[index] && newPapers[index].title === paper.title) {
-                        newPapers[index] = { ...newPapers[index], pdfURL: pdfUrl };
-                    }
-                    return newPapers;
-                });
-            }
-        } catch (error) {
-            console.warn(`Could not find PDF for "${paper.title}":`, error);
-        }
-    });
-  };
-
-  const handleSearch = useCallback(async (searchQuery: string, advancedOptions: AdvancedSearchOptions) => {
-    if (!searchQuery.trim()) return;
-    
-    const favoritesCacheKey = favoritePapers.map(p => p.title).join(';');
-    const cacheKey = `${searchQuery.trim().toLowerCase()}|${searchSource}|${summaryLength}|${summaryStyle}|${advancedOptions.startYear}-${advancedOptions.endYear}|${advancedOptions.authors}|${advancedOptions.excludeKeywords}|favs:${favoritesCacheKey}`;
-    const cachedData = searchCache.current.get(cacheKey);
-
-    // Check for a valid, non-expired cache entry
-    if (cachedData && (Date.now() - cachedData.timestamp < CACHE_DURATION_MS)) {
-      setQuery(searchQuery);
-      setPapers(cachedData.papers);
-      setCitations(cachedData.citations);
-      setHasSearched(true);
-      setError(null);
-      setIsLoading(false);
-      setAnalysisResult(null);
-      setAnalysisError(null);
-      setCitationError(null);
-      initializeChatSession(cachedData.papers);
-      return; // Use cached data and skip API call
-    }
-
-    // Reset state for a new search
-    setQuery(searchQuery);
-    setIsLoading(true);
-    setError(null);
-    setHasSearched(true);
-    setPapers([]);
-    setAnalysisResult(null);
-    setAnalysisError(null);
-    setCitations([]);
-    setCitationError(null);
-    setChatSession(null);
-    setChatHistory([]);
-    setReportContent(null);
-    setReportError(null);
-
-    analyticsService.logEvent('search_initiated', {
-        query: searchQuery.trim(),
-        source: searchSource,
-        summaryLength,
-        summaryStyle,
-        advancedOptions,
-        numFavoritesUsed: favoritePapers.length,
-    });
-
-    try {
-      const result = await fetchResearchPapers(searchQuery, summaryLength, summaryStyle, searchSource, advancedOptions, favoritePapers);
-      if (result) {
-        const parsedPapers = parseGeminiResponse(result.text);
-        setPapers(parsedPapers);
-        initializeChatSession(parsedPapers);
-        
-        analyticsService.logEvent('search_completed', {
-            query: searchQuery.trim(),
-            resultsCount: parsedPapers.length,
-        });
-        
-        let newCitations: string[] = [];
-        if (parsedPapers.length > 0) {
-            findAndSetPdfLinks(parsedPapers);
-            newCitations = await handleGenerateCitations(parsedPapers);
-        }
-
-        // Add new result to the cache
-        searchCache.current.set(cacheKey, {
-          papers: parsedPapers,
-          citations: newCitations,
-          timestamp: Date.now(),
-        });
-
-        if (parsedPapers.length === 0 && !result.text) {
-          setError("The model returned an empty response. Please try refining your search query.");
-        } else if (parsedPapers.length === 0 && result.text) {
-          setError("Couldn't parse the research papers from the response. The model may have returned a non-standard format.");
-        }
-      } else {
-        const errorMessage = "Failed to get a valid response from the research service.";
-        setError(errorMessage);
-        analyticsService.logEvent('search_failed', {
-            query: searchQuery.trim(),
-            error: errorMessage,
-        });
-      }
-    } catch (err) {
-        let errorMessage: string;
-        if (err instanceof ApiError) {
-            errorMessage = err.message;
-        } else if (err instanceof Error) {
-            errorMessage = `An unexpected error occurred: ${err.message}`;
-        } else {
-            errorMessage = 'An unknown error occurred during the search.';
-        }
-        setError(errorMessage);
-        analyticsService.logEvent('search_failed', {
-            query: searchQuery.trim(),
-            error: errorMessage,
-        });
-    } finally {
-      setIsLoading(false);
-    }
-  }, [summaryLength, summaryStyle, searchSource, handleGenerateCitations, CACHE_DURATION_MS, favoritePapers]);
-  
-  const handleAnalysis = useCallback(async () => {
-    if (papers.length === 0) return;
-
-    setIsAnalyzing(true);
-    setAnalysisError(null);
-    analyticsService.logEvent('analysis_initiated', {
-        numPapersAnalyzed: papers.length,
-    });
-    
-    try {
-        const result = await analyzeAndClusterPapers(papers);
-        setAnalysisResult(result);
-        analyticsService.logEvent('analysis_completed', {
-            numPapersAnalyzed: papers.length,
-            numClusters: result.clusters.length,
-        });
-    } catch(err) {
-        let errorMessage: string;
-        if (err instanceof ParsingError || err instanceof ApiError) {
-            errorMessage = err.message;
-        } else if (err instanceof Error) {
-            errorMessage = `An unexpected client-side error occurred: ${err.message}`;
-        } else {
-            errorMessage = 'An unknown error occurred during analysis.';
-        }
-        setAnalysisError(errorMessage);
-        analyticsService.logEvent('analysis_failed', {
-            numPapersAnalyzed: papers.length,
-            error: errorMessage,
-        });
-    } finally {
-        setIsAnalyzing(false);
-    }
-  }, [papers]);
-
-  const handleGenerateReport = useCallback(async () => {
-    if (papers.length === 0) return;
-
-    setIsReportModalOpen(true);
-    setIsGeneratingReport(true);
-    setReportContent(null);
-    setReportError(null);
-    analyticsService.logEvent('report_generation_initiated', {
-        numPapers: papers.length,
-    });
-
-    try {
-        const reportText = await generateResearchGapReport(papers);
-        setReportContent(reportText);
-        analyticsService.logEvent('report_generation_completed', {
-            numPapers: papers.length,
-            reportLength: reportText.length,
-        });
-    } catch (err) {
-        const errorMessage = err instanceof Error ? err.message : 'An unknown error occurred.';
-        setReportError(errorMessage);
-        analyticsService.logEvent('report_generation_failed', {
-            numPapers: papers.length,
-            error: errorMessage,
-        });
-    } finally {
-        setIsGeneratingReport(false);
-    }
-  }, [papers]);
+  }, [logAnalyticsEvent]);
 
   const handleSendMessage = useCallback(async (message: string) => {
-    if (!chatSession) return;
-
-    setIsChatting(true);
-    setChatError(null);
-
     const userMessage: ChatMessage = { role: 'user', parts: [{ text: message }] };
-    setChatHistory(prev => [...prev, userMessage]);
-
-    analyticsService.logEvent('chat_message_sent', {
-        messageLength: message.length,
-    });
+    const newHistory = [...chatHistory, userMessage];
+    setChatHistory(newHistory);
+    setIsChatLoading(true);
+    setChatError(null);
+    logAnalyticsEvent('chat_message_sent', { message });
 
     try {
-        const stream = await chatSession.sendMessageStream({ message });
-        let modelResponse = '';
-        
-        // Add a placeholder for the model's response
-        setChatHistory(prev => [...prev, { role: 'model', parts: [{ text: '' }] }]);
-
-        for await (const chunk of stream) {
-            modelResponse += chunk.text;
-            setChatHistory(prev => {
-                const newHistory = [...prev];
-                newHistory[newHistory.length - 1] = { role: 'model', parts: [{ text: modelResponse }] };
-                return newHistory;
-            });
-        }
+      const response = await geminiService.chatWithResults(newHistory, papers, location);
+      const modelMessage: ChatMessage = { role: 'model', parts: [{ text: response.text }], sources: response.sources };
+      setChatHistory(prev => [...prev, modelMessage]);
     } catch (err) {
-        console.error("Chat error:", err);
-        const errorMessage = err instanceof Error ? err.message : 'An unknown error occurred.';
-        setChatError(`Sorry, I couldn't get a response. ${errorMessage}`);
-        analyticsService.logEvent('chat_message_failed', {
-            error: errorMessage,
-        });
-        // Remove the empty model message placeholder on error
-        setChatHistory(prev => prev.filter(m => m.parts[0].text !== ''));
+      const errorMessage = err instanceof Error ? err.message : 'An unknown error occurred.';
+      setChatError(errorMessage);
     } finally {
-        setIsChatting(false);
+      setIsChatLoading(false);
     }
-  }, [chatSession]);
+  }, [chatHistory, papers, location, logAnalyticsEvent]);
 
-  const handleFeedbackSubmit = useCallback((feedback: { category: string; text: string }) => {
-    analyticsService.logEvent('feedback_submitted', {
-        category: feedback.category,
-        messageLength: feedback.text.length,
-    });
-    setIsFeedbackModalOpen(false);
-    alert('Thank you for your feedback! Your thoughts have been recorded.');
+  const handleVerifyPaper = useCallback(async (paper: ResearchPaper) => {
+    setPapers(prev => prev.map(p => p.title === paper.title ? { ...p, verification: { state: 'verifying' } } : p));
+    try {
+        const status = await geminiService.verifyPaper(paper);
+        setPapers(prev => prev.map(p => p.title === paper.title ? { ...p, verification: status, pdfURL: status.pdfURL || p.pdfURL } : p));
+    } catch (err) {
+        setPapers(prev => prev.map(p => p.title === paper.title ? { ...p, verification: { state: 'error', reason: 'Verification failed' } } : p));
+    }
   }, []);
-
-  const handleFindConnectedPapers = useCallback(async (seedPaper: ResearchPaper) => {
-    setIsFindingConnected(seedPaper.title);
-    setFindConnectedError(null);
-    analyticsService.logEvent('connected_papers_initiated', { seedPaperTitle: seedPaper.title });
-    
-    try {
-        const response = await findConnectedPapers(seedPaper);
-        const connections = parseConnectedPapersResponse(response.text);
-
-        if (connections.length > 0) {
-            setConnectedPapersResult({ seedPaper, connections });
-            analyticsService.logEvent('connected_papers_completed', { 
-                seedPaperTitle: seedPaper.title,
-                resultsCount: connections.length,
-            });
-        } else {
-            setFindConnectedError("Could not find and parse any connected papers for this article.");
-            analyticsService.logEvent('connected_papers_failed', { 
-                seedPaperTitle: seedPaper.title,
-                error: 'No parsable results',
-            });
-        }
-    } catch (err) {
-        const errorMessage = err instanceof Error ? err.message : 'An unknown error occurred.';
-        setFindConnectedError(errorMessage);
-        analyticsService.logEvent('connected_papers_failed', { 
-            seedPaperTitle: seedPaper.title,
-            error: errorMessage,
-        });
-    } finally {
-        setIsFindingConnected(null);
-    }
+  
+  const handleFindConnectedPapers = useCallback(async (paper: ResearchPaper) => {
+      setIsFindingConnected(true);
+      setConnectedPapersError(null);
+      setConnectedPapersResult(null);
+      try {
+          const result = await geminiService.findConnectedPapers(paper);
+          setConnectedPapersResult(result);
+      } catch (err) {
+          const errorMessage = err instanceof Error ? err.message : 'An unknown error occurred.';
+          setConnectedPapersError(errorMessage);
+          setConnectedPapersResult({ seedPaper: paper, connections: [] }); // Still open modal with error
+      } finally {
+          setIsFindingConnected(false);
+      }
   }, []);
 
   const handleAnalyzePaper = useCallback(async (paper: ResearchPaper) => {
-    setIsAnalyzingPaper(paper.title);
-    setPaperAnalysisError(null);
-    analyticsService.logEvent('paper_analysis_initiated', { paperTitle: paper.title });
-
+      setIsAnalyzingPaper(true);
+      setPaperAnalysisError(null);
+      setPaperAnalysisResult(null);
+      try {
+          const analysisResult = await geminiService.analyzeSinglePaper(paper);
+          setPaperAnalysisResult({ paper, analysis: analysisResult });
+      } catch (err) {
+          const errorMessage = err instanceof Error ? err.message : 'An unknown error occurred.';
+          setPaperAnalysisError(errorMessage);
+          setPaperAnalysisResult({ paper, analysis: { researchQuestion: '', methodology: '', keyFindings: [], limitations: [] } });
+      } finally {
+          setIsAnalyzingPaper(false);
+      }
+  }, []);
+  
+  const handleGenerateSuggestions = useCallback(async (paper: ResearchPaper) => {
+    setIsGeneratingSuggestions(true);
+    setSuggestionsError(null);
+    setSuggestionsResult({ seedPaper: paper, suggestions: [] }); // Open modal immediately with loading state
     try {
-        const analysis = await analyzePaperStructure(paper);
-        setPaperAnalysisResult({ paper, analysis });
-        analyticsService.logEvent('paper_analysis_completed', { paperTitle: paper.title });
+        const suggestions = await geminiService.generatePaperBasedSuggestions(paper);
+        setSuggestionsResult({ seedPaper: paper, suggestions });
     } catch (err) {
         const errorMessage = err instanceof Error ? err.message : 'An unknown error occurred.';
-        setPaperAnalysisError(errorMessage);
-        analyticsService.logEvent('paper_analysis_failed', {
-            paperTitle: paper.title,
-            error: errorMessage,
-        });
+        setSuggestionsError(errorMessage);
     } finally {
-        setIsAnalyzingPaper(null);
+        setIsGeneratingSuggestions(false);
     }
   }, []);
 
-  const handleAddSearchSource = (source: SearchSourceInfo) => {
-    // Avoid duplicates
-    if (!searchSources.some(s => s.name === source.name)) {
-      const newSource = { ...source, id: source.name.toLowerCase().replace(/\s+/g, '_') };
-      setSearchSources(prev => [...prev, newSource]);
-      setSearchSource(newSource.id); // Automatically select the new source
-      analyticsService.logEvent('database_source_added', { sourceName: source.name });
+  const handleSuggestionSearch = useCallback((newQuery: string) => {
+      setSuggestionsResult(null); // Close modal
+      setQuery(newQuery);
+      handleSearch(newQuery, { startYear: '', endYear: '', authors: '', excludeKeywords: '' });
+  }, [handleSearch]);
+
+  const handleFindDoi = useCallback(async (paper: ResearchPaper) => {
+    setPapers(prev => prev.map(p => p.title === paper.title ? { ...p, doiState: 'loading' } : p));
+    try {
+      const doi = await crossrefService.findDoiForPaper(paper);
+      setPapers(prev => prev.map(p => p.title === paper.title ? { ...p, doi: doi || undefined, doiState: 'loaded' } : p));
+    } catch (err) {
+      setPapers(prev => prev.map(p => p.title === paper.title ? { ...p, doiState: 'error' } : p));
     }
-  };
+  }, []);
+  
+  // FIX: Wrapped handleConceptClick in useCallback to prevent unnecessary re-renders.
+  const handleConceptClick = useCallback((concept: string) => {
+    setQuery(concept);
+    handleSearch(concept, { startYear: '', endYear: '', authors: '', excludeKeywords: '' });
+  }, [handleSearch]);
+  
+  // FIX: Wrapped handleAddSource in useCallback to prevent unnecessary re-renders and use the latest `sources` state.
+  const handleAddSource = useCallback((source: SearchSourceInfo) => {
+    if (!sources.some(s => s.id === source.id)) {
+        setSources(prev => [...prev, source]);
+    }
+  }, [sources]);
+
+  // FIX: Wrapped handleNewSearch in useCallback as it's a stable function that only uses state setters.
+  const handleNewSearch = useCallback(() => {
+    setHasSearched(false);
+    setPapers([]);
+    setSummary('');
+    setAnalysis(null);
+    setSelectedPaper(null);
+    setQuery('');
+    setError(null);
+  }, []);
 
   return (
-    <div className="min-h-screen font-sans text-gray-800 antialiased">
-      <main className="container mx-auto max-w-4xl px-4 py-8 md:py-12">
-        <header className="flex flex-col items-center text-center mb-8">
-          <div className="bg-blue-600 text-white p-3 rounded-full mb-4 shadow-md">
-            <ScholarIcon className="w-8 h-8" />
+    <div className="bg-gray-50 min-h-screen font-sans">
+      <header className="bg-white border-b border-gray-200 sticky top-0 z-20">
+        <div className="max-w-screen-2xl mx-auto px-4 sm:px-6 lg:px-8 py-3 flex justify-between items-center">
+          <div className="flex items-center gap-3">
+            <AboutIcon className="w-8 h-8 text-blue-600" />
+            <div>
+              <h1 className="text-xl font-bold text-gray-900">AI Research Explorer</h1>
+              <p className="text-sm text-gray-500">Your intelligent gateway to academic literature.</p>
+            </div>
           </div>
-          <h1 className="text-3xl md:text-4xl font-bold text-gray-900">
-            AI Research Assistant
-          </h1>
-          <p className="mt-2 text-md text-gray-600 max-w-2xl">
-            Enter a topic, keyword, or author to discover and summarize relevant academic literature from premier academic sources.
-          </p>
-        </header>
-
-        <div className="sticky top-4 z-10 bg-gray-50/80 backdrop-blur-sm p-4 rounded-xl shadow-lg border border-gray-200">
-           <SearchForm 
-             onSearch={handleSearch} 
-             isLoading={isLoading} 
-             summaryLength={summaryLength}
-             onLengthChange={setSummaryLength}
-             summaryStyle={summaryStyle}
-             onStyleChange={setSummaryStyle}
-             searchSources={searchSources}
-             searchSource={searchSource}
-             onSourceChange={setSearchSource}
-             onOpenDbFinder={() => setIsDbFinderOpen(true)}
-             logAnalyticsEvent={analyticsService.logEvent}
-           />
-        </div>
-       
-        <div className="mt-8">
-          {isLoading && <LoadingSpinner />}
-          {error && <ErrorMessage message={error} />}
-
-          <FavoritesList
-              favoritePapers={favoritePapers}
-              onToggleFavorite={handleToggleFavorite}
-          />
-          
-          {!isLoading && !error && hasSearched && papers.length === 0 && (
-            <div className="text-center py-12">
-              <h3 className="text-xl font-semibold text-gray-700">No Results Found</h3>
-              <p className="text-gray-500 mt-2">Your search for "{query}" did not return any parsable results. Please try a different or more specific query.</p>
-            </div>
+          {hasSearched ? (
+            <button onClick={handleNewSearch} className="text-sm font-medium text-blue-600 hover:text-blue-800">
+                New Search
+            </button>
+          ) : (
+            <button onClick={() => setIsAboutModalOpen(true)} className="text-sm font-medium text-blue-600 hover:text-blue-800">
+                About
+            </button>
           )}
+        </div>
+      </header>
 
-          {papers.length > 0 && (
-            <>
-              <ResultsDisplay 
-                papers={papers}
-                favoritePapers={favoritePapers}
-                onToggleFavorite={handleToggleFavorite}
-                onFindConnectedPapers={handleFindConnectedPapers}
-                isFindingConnected={isFindingConnected}
-                onAnalyzePaper={handleAnalyzePaper}
-                isAnalyzingPaper={isAnalyzingPaper}
-              />
-              
-              <ReferenceList 
-                citations={citations} 
-                isLoading={isCiting}
-                error={citationError}
-              />
-
-              {chatSession && (
-                <ChatPanel
-                    history={chatHistory}
-                    isLoading={isChatting}
-                    error={chatError}
-                    onSendMessage={handleSendMessage}
-                />
-              )}
-
-              {!analysisResult && (
-                <div className="mt-8 text-center flex justify-center items-center gap-4">
-                    <button
-                        onClick={handleAnalysis}
-                        disabled={isAnalyzing}
-                        className="px-6 py-3 bg-green-600 text-white font-semibold rounded-full hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors duration-200"
-                    >
-                        {isAnalyzing ? 'Analyzing...' : 'Visualize & Cluster Results'}
-                    </button>
-                     <button
-                        onClick={handleGenerateReport}
-                        disabled={isGeneratingReport}
-                        className="inline-flex items-center gap-2 px-6 py-3 bg-purple-600 text-white font-semibold rounded-full hover:bg-purple-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors duration-200"
-                    >
-                        <ReportIcon className="w-5 h-5" />
-                        {isGeneratingReport ? 'Generating...' : 'Generate Research Gap Report'}
-                    </button>
+      <main className="max-w-screen-2xl mx-auto p-4 sm:p-6 lg:p-8">
+        {!hasSearched ? (
+            <InitialSearchScreen 
+                query={query}
+                onQueryChange={setQuery}
+                onSearch={handleSearch}
+                isLoading={isLoading}
+                summaryLength={summaryLength}
+                onLengthChange={setSummaryLength}
+                summaryStyle={summaryStyle}
+                onStyleChange={setSummaryStyle}
+                logAnalyticsEvent={logAnalyticsEvent}
+            />
+        ) : (
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
+                {/* Left Column: Search & Results */}
+                <div className="lg:col-span-5 space-y-6">
+                    <SearchForm
+                        query={query}
+                        onQueryChange={setQuery}
+                        onSearch={handleSearch}
+                        isLoading={isLoading}
+                        summaryLength={summaryLength}
+                        onLengthChange={setSummaryLength}
+                        summaryStyle={summaryStyle}
+                        onStyleChange={setSummaryStyle}
+                        logAnalyticsEvent={logAnalyticsEvent}
+                    />
+                    <FavoritesList favoritePapers={favoritePapers} onToggleFavorite={handleToggleFavorite} />
+                    <div className="p-4 bg-white rounded-lg shadow-sm border">
+                        <button onClick={() => setIsDbFinderModalOpen(true)} className="w-full text-center text-sm font-medium text-blue-600 hover:text-blue-800">Find More Databases</button>
+                    </div>
+                    {isLoading && <LoadingSpinner message="Searching for papers..." />}
+                    {error && <ErrorMessage message={error} />}
+                    {!isLoading && !error && papers.length > 0 && (
+                        <div>
+                            <ResultsDisplay
+                                papers={sortedPapers}
+                                selectedPaper={selectedPaper}
+                                onSelectPaper={handleSelectPaper}
+                                sortConfig={sortConfig}
+                                onSortChange={setSortConfig}
+                            />
+                            <SearchResultFeedback query={query} onOpenFeedbackModal={() => setIsSummaryFeedbackModalOpen(true)} />
+                        </div>
+                    )}
                 </div>
-              )}
-            </>
-          )}
 
-          {isAnalyzing && <LoadingSpinner />}
-          {analysisError && <ErrorMessage message={analysisError} />}
-          {analysisResult && <AnalysisDisplay papers={papers} result={analysisResult} />}
-
-          {!hasSearched && !isLoading && (
-             <div className="text-center py-16 px-6 bg-white rounded-lg border border-gray-200">
-                <h2 className="text-xl font-semibold text-gray-800">Ready to start your research?</h2>
-                <p className="mt-2 text-gray-500">
-                  Simply type your research query above and let our AI assistant do the heavy lifting.
-                </p>
+                {/* Right Column: Details Panel */}
+                <div className="lg:col-span-7">
+                    <DetailsPanel
+                        selectedPaper={selectedPaper}
+                        summary={summary}
+                        analysis={analysis}
+                        isFavorite={selectedPaper ? favoritePapers.some(p => p.title === selectedPaper.title) : false}
+                        onToggleFavorite={handleToggleFavorite}
+                        onFindConnectedPapers={handleFindConnectedPapers}
+                        isFindingConnected={isFindingConnected}
+                        onAnalyzePaper={handleAnalyzePaper}
+                        isAnalyzingPaper={isAnalyzingPaper}
+                        onVerifyPaper={handleVerifyPaper}
+                        isVerifying={!!selectedPaper?.verification && selectedPaper.verification.state === 'verifying'}
+                        onConceptClick={handleConceptClick}
+                        onFindDoi={handleFindDoi}
+                        onGenerateSuggestions={handleGenerateSuggestions}
+                        isGeneratingSuggestions={isGeneratingSuggestions}
+                    />
+                </div>
             </div>
-          )}
-        </div>
+        )}
       </main>
-      <footer className="text-center py-6 text-sm text-gray-500">
-        <p>Powered by Gemini. For academic research purposes.</p>
-      </footer>
 
-      <FeedbackButton onClick={() => setIsFeedbackModalOpen(true)} />
-      <FeedbackModal
+      {/* Floating Action Buttons */}
+      <div className="fixed bottom-6 right-6 flex flex-col items-center gap-4 z-30">
+        {isAdmin && <AnalyticsButton onClick={() => setIsAnalyticsModalOpen(true)} />}
+        <FeedbackButton onClick={() => setIsFeedbackModalOpen(true)} />
+        <CitationButton onClick={() => setIsCitationModalOpen(true)} disabled={papers.length === 0} />
+        <ChatButton onClick={() => setIsChatModalOpen(true)} disabled={papers.length === 0} />
+      </div>
+
+      {/* Modals */}
+      <ChatModal
+        isOpen={isChatModalOpen}
+        onClose={() => setIsChatModalOpen(false)}
+        history={chatHistory}
+        isLoading={isChatLoading}
+        error={chatError}
+        onSendMessage={handleSendMessage}
+      />
+      
+       <InfoModal
+          isOpen={isCitationModalOpen}
+          onClose={() => setIsCitationModalOpen(false)}
+          title="Citation Generator"
+      >
+          <CitationGenerator
+              papers={papers}
+              onGenerate={() => { /* Handled internally now */}}
+              isLoading={false}
+              citations={[]}
+              error={null}
+              citationStyle="apa"
+              onStyleChange={() => {}}
+          />
+      </InfoModal>
+
+
+      <InfoModal
         isOpen={isFeedbackModalOpen}
         onClose={() => setIsFeedbackModalOpen(false)}
-        onSubmit={handleFeedbackSubmit}
-      />
+        title="Provide Feedback"
+      >
+        <FeedbackForm onSubmit={(feedback) => logAnalyticsEvent('feedback_submitted', feedback)} />
+      </InfoModal>
+
+      <InfoModal
+        isOpen={isAnalyticsModalOpen}
+        onClose={() => setIsAnalyticsModalOpen(false)}
+        title="Analytics Dashboard"
+      >
+        <AnalyticsDashboard />
+      </InfoModal>
+
       <ConnectedPapersModal
-        result={connectedPapersResult}
-        onClose={() => { setConnectedPapersResult(null); setFindConnectedError(null); }}
-        error={findConnectedError}
+          result={connectedPapersResult}
+          onClose={() => setConnectedPapersResult(null)}
+          error={connectedPapersError}
       />
-      <ReportModal
-        isOpen={isReportModalOpen}
-        onClose={() => setIsReportModalOpen(false)}
-        isLoading={isGeneratingReport}
-        content={reportContent}
-        error={reportError}
+      <PaperAnalysisModal
+          result={paperAnalysisResult}
+          onClose={() => setPaperAnalysisResult(null)}
+          error={paperAnalysisError}
       />
+
       <DatabaseFinderModal
-        isOpen={isDbFinderOpen}
-        onClose={() => setIsDbFinderOpen(false)}
-        onAddSource={handleAddSearchSource}
-        findDatabasesForField={findDatabasesForField}
-        existingSources={searchSources}
+        isOpen={isDbFinderModalOpen}
+        onClose={() => setIsDbFinderModalOpen(false)}
+        onAddSource={handleAddSource}
+        findDatabasesForField={geminiService.findDatabasesForField}
+        existingSources={sources}
       />
-       <PaperAnalysisModal
-        result={paperAnalysisResult}
-        onClose={() => { setPaperAnalysisResult(null); setPaperAnalysisError(null); }}
-        error={paperAnalysisError}
-      />
+      
+       <InfoModal isOpen={isAboutModalOpen} onClose={() => setIsAboutModalOpen(false)} title="About AI Research Explorer">
+          <div className="space-y-4">
+              <p>This application is an advanced research tool designed to accelerate literature reviews and knowledge discovery. By leveraging the power of Google's Gemini models, it goes beyond simple keyword searching to provide a rich, contextual understanding of academic landscapes.</p>
+              <h3 className="font-bold">Core Features:</h3>
+              <ul className="list-disc list-inside">
+                  <li><strong>Enhanced Search:</strong> User queries are refined by an AI librarian to create more effective search terms for academic databases like OpenAlex.</li>
+                  <li><strong>AI-Generated Summaries:</strong> Get a quick overview of search results with summaries generated in various styles (paragraph, bullets, Q&A).</li>
+                  <li><strong>Thematic Analysis:</strong> Automatically identifies and clusters papers into thematic groups, helping you see the bigger picture.</li>
+                  <li><strong>Interactive Chat:</strong> Ask follow-up questions about your search results and get answers grounded in the provided papers.</li>
+                  <li><strong>Paper Deep-Dive:</strong> For any paper, you can find connected works (citations, derivatives), perform a structured analysis, and verify its source.</li>
+                  <li><strong>Citation Management:</strong> Generate formatted citations in multiple styles and export them for use in tools like Zotero.</li>
+              </ul>
+              <p>This tool is a demonstration of how generative AI can be applied to create more powerful and intuitive research workflows.</p>
+          </div>
+       </InfoModal>
+
+        <SummaryFeedbackModal
+            isOpen={isSummaryFeedbackModalOpen}
+            onClose={() => setIsSummaryFeedbackModalOpen(false)}
+            onSubmit={(feedback) => logAnalyticsEvent('summary_feedback_provided', { ...feedback, query })}
+        />
+
+        <SuggestionsModal
+            result={suggestionsResult}
+            onClose={() => setSuggestionsResult(null)}
+            error={suggestionsError}
+            isLoading={isGeneratingSuggestions}
+            onSuggestionClick={handleSuggestionSearch}
+        />
     </div>
   );
 };

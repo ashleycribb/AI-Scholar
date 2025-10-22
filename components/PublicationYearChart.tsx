@@ -6,16 +6,24 @@ interface PublicationYearChartProps {
 }
 
 export const PublicationYearChart: React.FC<PublicationYearChartProps> = ({ data }) => {
-  const sortedYears = Object.keys(data).sort((a, b) => parseInt(a) - parseInt(b));
-  // FIX: Explicitly cast Object.values(data) to number[] to resolve a TypeScript type inference issue.
-  const maxCount = Math.max(...(Object.values(data) as number[]), 1);
+  if (!data || data.length === 0) {
+    return (
+        <div className="bg-white p-6 rounded-lg shadow-md border border-gray-200">
+            <h3 className="text-xl font-semibold text-gray-800 mb-4">Papers by Publication Year</h3>
+            <div className="flex items-center justify-center h-48 border-l border-b border-gray-200">
+                <p className="text-gray-500 italic">No publication data available for this result set.</p>
+            </div>
+        </div>
+    );
+  }
+  const sortedData = [...data].sort((a, b) => a.year - b.year);
+  const maxCount = Math.max(...sortedData.map(item => item.count), 1);
 
   return (
     <div className="bg-white p-6 rounded-lg shadow-md border border-gray-200">
       <h3 className="text-xl font-semibold text-gray-800 mb-4">Papers by Publication Year</h3>
       <div className="flex items-end justify-around h-48 space-x-2 pt-4 border-l border-b border-gray-200">
-        {sortedYears.map((year) => {
-          const count = data[year];
+        {sortedData.map(({ year, count }) => {
           const heightPercentage = (count / maxCount) * 100;
 
           return (

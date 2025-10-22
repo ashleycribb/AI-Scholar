@@ -1,20 +1,47 @@
 import React from 'react';
 import { ErrorMessage } from './ErrorMessage';
+import type { CitationStyle } from '../types';
 
 interface ReferenceListProps {
     citations: string[];
     isLoading: boolean;
     error: string | null;
+    citationStyle: CitationStyle;
+    onStyleChange: (style: CitationStyle) => void;
 }
 
-export const ReferenceList: React.FC<ReferenceListProps> = ({ citations, isLoading, error }) => {
+const citationStyles: { id: CitationStyle; name: string }[] = [
+    { id: 'apa', name: 'APA 7' },
+    { id: 'mla', name: 'MLA 9' },
+    { id: 'chicago', name: 'Chicago 17' },
+    { id: 'harvard', name: 'Harvard' },
+];
+
+export const ReferenceList: React.FC<ReferenceListProps> = ({ citations, isLoading, error, citationStyle, onStyleChange }) => {
     if (!isLoading && !error && citations.length === 0) {
         return null;
     }
 
     return (
         <div className="mt-10 pt-6 border-t border-gray-200">
-            <h3 className="text-xl font-semibold text-gray-800 mb-4">References</h3>
+            <div className="flex justify-between items-center mb-4">
+                <h3 className="text-xl font-semibold text-gray-800">References</h3>
+                <div>
+                    <label htmlFor="citation-style" className="sr-only">Citation Style</label>
+                    <select
+                        id="citation-style"
+                        value={citationStyle}
+                        onChange={(e) => onStyleChange(e.target.value as CitationStyle)}
+                        className="block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm rounded-md bg-white"
+                        disabled={isLoading}
+                    >
+                        {citationStyles.map(style => (
+                            <option key={style.id} value={style.id}>{style.name}</option>
+                        ))}
+                    </select>
+                </div>
+            </div>
+
             {isLoading && (
                 <div className="flex items-center space-x-2 text-gray-600">
                     <svg

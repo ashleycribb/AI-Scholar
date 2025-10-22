@@ -1,579 +1,472 @@
 
-import { GoogleGenAI, GenerateContentResponse, Type } from "@google/genai";
-import type { Source, GroundingChunk, SummaryLength, ResearchPaper, AnalysisResult, SearchSource, AdvancedSearchOptions, SummaryStyle, SearchSourceInfo, PaperAnalysis } from '../types';
+import { GoogleGenAI, Type } from "@google/genai";
+import type {
+  ChatMessage,
+  ConnectedPaper,
+  EnhancedQuery,
+  PaperAnalysis,
+  ResearchPaper,
+  SearchSourceInfo,
+  SummaryLength,
+  SummaryStyle,
+  VerificationStatus,
+  GroundingSource
+} from "../types";
+import * as crossrefService from './crossrefService';
 
-if (!process.env.API_KEY) {
-  throw new Error("API_KEY environment variable is not set.");
-}
+// Always use `const ai = new GoogleGenAI({apiKey: process.env.API_KEY});`.
+const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
-export const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-
-const model = 'gemini-2.5-flash';
-
-// Custom Error classes for more specific error handling
-export class ApiError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = 'ApiError';
-  }
-}
-
-export class RateLimitError extends ApiError {
-  constructor(message: string = "You've exceeded the request rate limit. Please wait a moment and try again.") {
-    super(message);
-    this.name = 'RateLimitError';
-  }
-}
-
-export class ServerError extends ApiError {
-  constructor(message: string = "The research service is currently experiencing issues. Please try again later.") {
-    super(message);
-    this.name = 'ServerError';
-  }
-}
-
-export class ParsingError extends Error {
-  constructor(message: string = "Failed to parse the response from the AI model. The format might be unexpected.") {
-    super(message);
-    this.name = 'ParsingError';
-  }
-}
-
-const handleApiError = (error: unknown, context: string): never => {
-  console.error(`Error during ${context}:`, error);
-
-  if (error instanceof Error) {
-    if (error.message.includes('429') || error.message.toLowerCase().includes('rate limit')) {
-      throw new RateLimitError();
-    }
-    // Check for 5xx server errors
-    if (/5\d{2}/.test(error.message) || error.message.toLowerCase().includes('server error')) {
-      throw new ServerError();
-    }
-    throw new ApiError(`An issue occurred while ${context}: ${error.message}`);
-  }
-  
-  throw new ApiError(`An unknown error occurred while ${context}.`);
-};
-
-const getSummaryInstruction = (length: SummaryLength): string => {
-  switch (length) {
-    case 'short':
-      return 'The summary should be a single, concise sentence highlighting the main conclusion.';
-    case 'detailed':
-      return "The summary should be a detailed paragraph (5-7 sentences) covering the paper's background, methodology, key findings, and implications.";
-    case 'medium':
-    default:
-      return 'The summary should be a concise paragraph (3-4 sentences) explaining the key findings.';
-  }
-};
-
-const getSummaryStyleInstruction = (style: SummaryStyle): string => {
-    switch (style) {
-      case 'bullets':
-        return 'The summary MUST be a bulleted list of the key findings and takeaways, starting each line with a hyphen (-).';
-      case 'qa':
-        return 'The summary MUST be in a Question & Answer format, with 2-3 key questions the paper answers, followed by their concise answers. Start questions with "Q:" and answers with "A:".';
-      case 'paragraph':
-      default:
-        return ''; // The length instruction already implies a paragraph format.
-    }
-};
-
-const getSourceInstruction = (sourceId: string): string => {
-  const sourceName = sourceId.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
-
-  if (sourceId === 'general') {
-    return 'You should perform a general web search, but prioritize finding academic and peer-reviewed sources.';
-  }
-
-  const domains: { [key: string]: string } = {
-    google_scholar: 'scholar.google.com',
-    jstor: 'jstor.org',
-    pubmed: 'pubmed.ncbi.nlm.nih.gov',
-    arxiv: 'arxiv.org',
-    eric: 'eric.ed.gov',
-  };
-
-  const domain = domains[sourceId];
-  const domainInstruction = domain ? ` (domain: ${domain})` : '';
-  
-  return `You MUST prioritize results from the academic database: ${sourceName}${domainInstruction}.`;
-};
-
-const buildAdvancedSearchPrompt = (options: AdvancedSearchOptions): string => {
-    let promptPart = '';
-    const { startYear, endYear, authors, excludeKeywords } = options;
-  
-    if (startYear && endYear) {
-      promptPart += `\n- The papers MUST be published between ${startYear} and ${endYear}.`;
-    } else if (startYear) {
-      promptPart += `\n- The papers MUST be published in or after ${startYear}.`;
-    } else if (endYear) {
-      promptPart += `\n- The papers MUST be published in or before ${endYear}.`;
-    }
-  
-    if (authors) {
-      promptPart += `\n- The papers MUST include at least one of the following authors: "${authors}".`;
-    }
-  
-    if (excludeKeywords) {
-      promptPart += `\n- The search results MUST NOT include papers primarily about the following keywords: "${excludeKeywords}".`;
-    }
-    
-    return promptPart;
-};
-
-const buildFavoritesPrompt = (favoritePapers: ResearchPaper[]): string => {
-    if (favoritePapers.length === 0) {
-        return '';
-    }
-
-    const paperInfo = favoritePapers
-        .map(p => `- Title: "${p.title}"\n  Authors: ${p.authors}`)
-        .join('\n');
-    
-    return `
-        CRITICAL INSTRUCTION: The user has identified the following papers as a highly relevant "seed list" for their research. Your primary goal is to find 5 *new* academic papers that are thematically similar to, build upon, or are frequently cited alongside these key sources.
-
-        SEED LIST:
-        ${paperInfo}
-
-        You MUST NOT include any of the papers from the SEED LIST in your results.
-    `;
-};
-
-export const fetchResearchPapers = async (userQuery: string, summaryLength: SummaryLength, summaryStyle: SummaryStyle, searchSource: SearchSource, advancedOptions: AdvancedSearchOptions, favoritePapers: ResearchPaper[]): Promise<{ text: string; sources: Source[] } | null> => {
-  const summaryInstruction = getSummaryInstruction(summaryLength);
-  const sourceInstruction = getSourceInstruction(searchSource);
-  const advancedSearchInstruction = buildAdvancedSearchPrompt(advancedOptions);
-  const summaryStyleInstruction = getSummaryStyleInstruction(summaryStyle);
-  const favoritesInstruction = buildFavoritesPrompt(favoritePapers);
-
-  const prompt = `
-    You are an expert academic research assistant for a doctoral student. 
-    Your task is to find and summarize 5 highly relevant academic papers based on the user's query and the following constraints.
-    ${favoritesInstruction}
-    ${sourceInstruction}
-
-    USER QUERY: "${userQuery}"
-
-    CONSTRAINTS:${advancedSearchInstruction || '\n- None.'}
-
-    FORMATTING RULES:
-    - For each paper, you MUST provide: Title, Authors, Year, SourceURL, and Summary.
-    - The **SourceURL:** MUST be a URL that searches for the paper's exact title on Google Scholar. The URL must be properly URL-encoded. For example, for a paper titled "Attention Is All You Need", the URL should be "https://scholar.google.com/scholar?q=Attention+Is+All+You+Need".
-    - Each field MUST start with a specific label in bold followed by a colon (e.g., "**Title:**", "**Authors:**", "**Year:**", "**SourceURL:**", "**Summary:**").
-    - Each field MUST be on a new line.
-    - ${summaryInstruction} ${summaryStyleInstruction}
-    - You MUST separate each paper's entry with the exact delimiter "---" on its own line.
-    - Do NOT include any introductory or concluding text outside of this structured format.
-  `;
-
+// Utility to safely parse JSON from a string
+const safeJsonParse = (jsonString: string) => {
   try {
-    const response: GenerateContentResponse = await ai.models.generateContent({
-      model: model,
-      contents: prompt,
-      config: {
-        tools: [{ googleSearch: {} }],
-      },
-    });
-    
-    const text = response.text;
-    const groundingChunks: GroundingChunk[] = response.candidates?.[0]?.groundingMetadata?.groundingChunks || [];
-
-    const sources: Source[] = groundingChunks.reduce<Source[]>((acc, chunk) => {
-      if (chunk.web && chunk.web.uri && chunk.web.title) {
-        acc.push({ uri: chunk.web.uri, title: chunk.web.title });
-      }
-      return acc;
-    }, []);
-
-    return { text, sources };
-
-  } catch (error) {
-    handleApiError(error, "fetching research papers");
+    const cleanedString = jsonString.replace(/```json/g, '').replace(/```/g, '').trim();
+    return JSON.parse(cleanedString);
+  } catch (e) {
+    console.error("Failed to parse JSON:", e);
+    console.error("Original string:", jsonString);
+    return null;
   }
 };
 
-export const findConnectedPapers = async (seedPaper: ResearchPaper): Promise<GenerateContentResponse> => {
-    const prompt = `
-      You are an expert research analyst. Your task is to find 5-7 seminal or highly related academic papers connected to the provided "seed paper".
-  
-      The connected papers should represent at least one of the following relationships:
-      - Foundational papers that the seed paper cites or is heavily based on.
-      - Influential papers that build upon or extend the work of the seed paper.
-      - Papers that are frequently cited alongside the seed paper, indicating a shared research conversation.
-      - Papers that present a contrasting or critical viewpoint to the seed paper.
-  
-      SEED PAPER:
-      **Title:** "${seedPaper.title}"
-      **Authors:** "${seedPaper.authors}"
-  
-      FORMATTING RULES:
-      - For each connected paper, you MUST provide: Title, Authors, Year, SourceURL, Summary, and Connection.
-      - The **Connection:** field is CRITICAL. It MUST be a clear and specific sentence (or two, if necessary) explaining the paper's relationship to the seed paper. Be explicit. For example: "This paper presents the foundational theory that the seed paper builds upon.", "This study directly challenges the methodology of the seed paper.", or "This is a direct follow-up study applying the original findings to a new domain."
-      - The **SourceURL:** MUST be a URL that searches for the paper's exact title on Google Scholar, properly URL-encoded.
-      - The **Summary:** should be a concise paragraph (2-3 sentences).
-      - Each field MUST start with a specific label in bold followed by a colon (e.g., "**Title:**", "**Authors:**", "**Connection:**").
-      - Each field MUST be on a new line.
-      - You MUST separate each paper's entry with the exact delimiter "---" on its own line.
-      - Do NOT include any introductory or concluding text.
-    `;
-  
-    try {
-      return await ai.models.generateContent({
-        model: model,
-        contents: prompt,
-        config: {
-          tools: [{ googleSearch: {} }],
-        },
-      });
-    } catch (error) {
-      handleApiError(error, "finding connected papers");
-    }
+const searchQueryEnhancementSchema = {
+    type: Type.OBJECT,
+    properties: {
+        refined_query: { type: Type.STRING },
+        key_concepts: { type: Type.ARRAY, items: { type: Type.STRING } },
+    },
+    required: ["refined_query", "key_concepts"],
 };
 
-export const analyzeAndClusterPapers = async (papers: ResearchPaper[]): Promise<AnalysisResult> => {
-  const paperTexts = papers.map(p => `Title: ${p.title}\nSummary: ${p.summary}`).join('\n---\n');
+export const enhanceSearchQuery = async (userQuery: string): Promise<EnhancedQuery> => {
+    const prompt = `You are an expert research librarian specializing in academic databases. Your task is to take a user's research query and transform it into a highly effective, structured search query for a database like OpenAlex.
 
-  const prompt = `
-    You are a research analyst. I will provide you with a list of research paper titles and their summaries.
-    Your task is to perform a clustering analysis on these papers.
-    
-    Instructions:
-    1. Group the papers into 2-4 distinct clusters based on the similarity of their summaries.
-    2. For each cluster, create a short, descriptive theme name (2-5 words).
-    3. Return a JSON object containing the clusters. Each cluster must list the exact titles of the papers belonging to it.
-    
-    Here are the papers:
-    ${paperTexts}
-  `;
+    User Query: "${userQuery}"
 
-  try {
-    const response: GenerateContentResponse = await ai.models.generateContent({
-      model: model,
-      contents: prompt,
-      config: {
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            clusters: {
-              type: Type.ARRAY,
-              items: {
-                type: Type.OBJECT,
-                properties: {
-                  theme: { type: Type.STRING },
-                  papers: { 
-                    type: Type.ARRAY,
-                    items: { type: Type.STRING }
-                  },
-                },
-                required: ["theme", "papers"],
-              },
-            },
-          },
-          required: ["clusters"],
-        },
-      },
-    });
+    Analyze the query to identify its core concepts. Generate synonyms, alternative phrasings, and common acronyms for these concepts. Then, construct a refined search query string that uses boolean operators (AND, OR) and phrase searching (using double quotes) to maximize relevance.
 
-    return JSON.parse(response.text) as AnalysisResult;
+    Return your response as a single JSON object with the following structure. Do not include any text, code blocks, or explanations outside of the JSON object.
 
-  } catch (error) {
-    if (error instanceof SyntaxError) {
-        console.error("Error parsing JSON for clustering analysis:", error);
-        throw new ParsingError('The analysis data returned by the model was not valid JSON.');
+    {
+      "refined_query": "The structured query string you constructed.",
+      "key_concepts": ["An array of the primary concepts identified."]
     }
-    handleApiError(error, 'performing cluster analysis');
-  }
-};
 
-export const generateCitations = async (papers: ResearchPaper[]): Promise<string[]> => {
-    const paperList = papers.map(p => `Title: ${p.title}\nAuthors: ${p.authors}`).join('\n---\n');
-
-    const prompt = `
-        You are an expert academic librarian. I will provide a list of papers with their titles and authors.
-        Your task is to generate a full citation for each paper in APA 7th edition format. You will likely need to infer details like the publication year and journal based on the title and authors.
-
-        For each citation, format it as a single HTML string.
-        The citation text should be standard text. If the citation includes a URL (like a DOI link), that specific URL part MUST be wrapped in an \`<a>\` tag.
-        The \`<a>\` tag MUST have \`target="_blank"\`, \`rel="noopener noreferrer"\`, and \`class="text-blue-600 hover:text-blue-800 hover:underline"\`.
-
-        If the generated citation does not naturally include a URL, you MUST append a "View on Google Scholar" link at the end of the citation. This link must also be an \`<a>\` tag with the same attributes, and its \`href\` must be a URL-encoded Google Scholar search link for the paper's title.
-
-        Example with a DOI:
-        \`Author, A. A. (Year). Title of article. *Title of Periodical, volume*(issue), pages. <a href="https://doi.org/xxxx" target="_blank" rel="noopener noreferrer" class="text-blue-600 hover:text-blue-800 hover:underline">https://doi.org/xxxx</a>\`
-
-        Example without a DOI (fallback to Google Scholar):
-        \`Author, A. A., & Author, B. B. (Year). Title of book. Publisher. <a href="https://scholar.google.com/scholar?q=Title%20of%20book" target="_blank" rel="noopener noreferrer" class="text-blue-600 hover:text-blue-800 hover:underline">View on Google Scholar</a>\`
-
-        Return the result as a JSON object with a "citations" key containing an array of these HTML strings.
-
-        Here are the papers:
-        ${paperList}
-    `;
+    Example:
+    User Query: "using machine learning for sentiment analysis in social media"
+    Your JSON response:
+    {
+      "refined_query": "(\\"machine learning\\" OR \\"deep learning\\" OR \\"NLP\\") AND (\\"sentiment analysis\\" OR \\"opinion mining\\") AND (\\"social media\\" OR \\"twitter\\" OR \\"facebook\\")",
+      "key_concepts": ["machine learning", "sentiment analysis", "social media"]
+    }`;
 
     try {
-        const response: GenerateContentResponse = await ai.models.generateContent({
-            model: model,
+        const response = await ai.models.generateContent({
+            model: "gemini-2.5-flash",
             contents: prompt,
             config: {
                 responseMimeType: "application/json",
-                responseSchema: {
-                    type: Type.OBJECT,
-                    properties: {
-                        citations: {
-                            type: Type.ARRAY,
-                            items: { type: Type.STRING }
-                        }
-                    },
-                    required: ["citations"]
-                }
-            }
+                responseSchema: searchQueryEnhancementSchema,
+            },
         });
-
-        const result = JSON.parse(response.text);
-        return result.citations as string[];
-
+        const result = safeJsonParse(response.text ?? '');
+        if (!result) throw new Error("Could not enhance search query.");
+        return result;
     } catch (error) {
-        if (error instanceof SyntaxError) {
-            console.error("Error parsing JSON for citations:", error);
-            throw new ParsingError('The citation data returned by the model was not valid JSON.');
-        }
-        handleApiError(error, 'generating citations');
+        console.error("Error enhancing search query:", error);
+        // Fallback to the original query in case of an error
+        return {
+            refined_query: userQuery,
+            key_concepts: [userQuery],
+        };
+    }
+};
+
+export const generateSummaryForPapers = async (
+    papers: ResearchPaper[],
+    summaryLength: SummaryLength,
+    summaryStyle: SummaryStyle,
+): Promise<string> => {
+    if (papers.length === 0) return "";
+    
+    const paperContext = papers.map(p => `Title: ${p.title}\nAbstract: ${p.abstract}`).join('\n\n---\n\n');
+
+    const prompt = `Based on the following list of research paper abstracts, generate a cohesive summary. The summary should be a "${summaryStyle}" of "${summaryLength}" length.
+    
+    Papers:
+    ${paperContext}
+    
+    Summary:`;
+
+    try {
+        const response = await ai.models.generateContent({
+            model: "gemini-2.5-flash",
+            contents: prompt,
+        });
+        return response.text ?? '';
+    } catch (error) {
+        console.error("Error generating summary for papers:", error);
+        throw new Error("Failed to generate summary.");
     }
 };
 
 export const generateSearchSuggestions = async (query: string): Promise<string[]> => {
-    if (query.trim().length < 5) {
-      return [];
-    }
-  
-    const prompt = `
-      Based on the academic research topic "${query}", generate 5 related search query suggestions that a doctoral student might find useful. 
-      These suggestions should be concise and relevant for searching academic databases like Google Scholar.
-      Return the result as a JSON object with a "suggestions" key containing an array of strings.
-    `;
-  
-    try {
-      const response: GenerateContentResponse = await ai.models.generateContent({
-        model: model,
+  if (query.trim().length < 5) {
+    return [];
+  }
+  try {
+    const prompt = `Generate 4 search query suggestions for a research paper search engine, based on the following query. The suggestions should be diverse and explore different facets of the topic. Return only a bulleted list of suggestions.
+    Query: "${query}"`;
+
+    const response = await ai.models.generateContent({
+        model: 'gemini-2.5-flash',
         contents: prompt,
-        config: {
-          responseMimeType: "application/json",
-          responseSchema: {
-            type: Type.OBJECT,
-            properties: {
-              suggestions: {
-                type: Type.ARRAY,
-                items: { type: Type.STRING }
-              }
-            },
-            required: ["suggestions"]
-          }
-        }
-      });
-  
-      const result = JSON.parse(response.text);
-      return result.suggestions as string[] || [];
-  
-    } catch (error) {
-      console.error("Error generating search suggestions:", error);
-      // Return empty array on error to prevent UI breaking
-      return [];
-    }
-  };
-  
-export const findPdfLink = async (paper: ResearchPaper): Promise<string | null> => {
-    const prompt = `
-      You are an AI research assistant. Your task is to find a single, direct, publicly accessible PDF link for the following academic paper.
-  
-      **Paper Title:** "${paper.title}"
-      **Authors:** "${paper.authors}"
-  
-      Instructions:
-      1.  Perform a targeted web search for a direct link to a PDF file.
-      2.  Prioritize links ending with ".pdf".
-      3.  Prioritize links from reputable academic sources like arXiv.org, aclweb.org, university domains (.edu), and open-access journals.
-      4.  The link MUST lead directly to the PDF file, not an abstract page, landing page, or a page requiring a login or payment.
-      5.  Return your response as a JSON object.
-      6.  If you find a valid, direct PDF link, the JSON object should be: \`{"pdfUrl": "THE_DIRECT_URL"}\`.
-      7.  If you cannot find a direct PDF link, the JSON object must be: \`{"pdfUrl": ""}\`. Do not provide any explanation.
-    `;
-  
-    try {
-      const response: GenerateContentResponse = await ai.models.generateContent({
-        model: model,
-        contents: prompt,
-        config: {
-          tools: [{ googleSearch: {} }],
-          responseMimeType: "application/json",
-          responseSchema: {
-            type: Type.OBJECT,
-            properties: {
-              pdfUrl: {
-                type: Type.STRING,
-                description: "The direct URL to the PDF file, or an empty string if not found.",
-              }
-            },
-            required: ["pdfUrl"]
-          }
-        }
-      });
-  
-      const result = JSON.parse(response.text);
-      return result.pdfUrl || null;
-  
-    } catch (error) {
-      console.error("Error finding PDF link:", error);
-      // Return null on any error to ensure the UI doesn't break.
-      return null;
-    }
+    });
+
+    const suggestions = (response.text ?? '').split('\n')
+      .map(s => s.replace(/[-*]\s*/, '').trim())
+      .filter(s => s.length > 0);
+      
+    return suggestions;
+  } catch (error) {
+    console.error("Error generating search suggestions:", error);
+    return [];
+  }
 };
 
-export const generateResearchGapReport = async (papers: ResearchPaper[]): Promise<string> => {
-    const paperTexts = papers.map(p => `Title: ${p.title}\nSummary: ${p.summary}`).join('\n---\n');
-  
-    const prompt = `
-      You are an expert research strategist and meta-analyst preparing a report for a doctoral student.
-      Your task is to analyze the provided list of academic paper summaries to identify research gaps, unanswered questions, and potential future research directions.
-      Synthesize these findings into a coherent and actionable report.
-  
-      Here are the papers:
-      ${paperTexts}
-  
-      FORMATTING RULES:
-      Your response MUST be a well-structured report using the following markdown-like format.
-      - Use '##' for main section headings.
-      - Use '*' or '-' for bullet points.
-      
-      REPORT STRUCTURE:
-      ## Executive Summary
-      - A brief, high-level overview of the key themes in the literature and a summary of the most significant research gaps you identified.
-      
-      ## Key Research Themes
-      - A bulleted list of the dominant themes or topics that are well-covered by the provided papers.
-      
-      ## Identified Research Gaps & Unanswered Questions
-      - This is the most critical section. Provide a detailed, bulleted list of specific areas where the literature appears to be lacking, based *only* on the provided summaries.
-      - For each gap, briefly explain the nature of the gap (e.g., "Lack of longitudinal studies," "Focus on X demographic, ignoring Y," "Methodological limitations in...").
-      
-      ## Future Research Directions
-      - A bulleted list of concrete, actionable research questions or project ideas that could address the gaps identified above. Frame these as suggestions for the student.
-      
-      ## Conflicting Findings or Debates (if applicable)
-      - If you notice any contradictory findings or ongoing debates between the papers, highlight them here in a bulleted list. If there are no conflicts, state "No significant conflicting findings were identified in the provided summaries."
-    `;
-  
-    try {
-      const response = await ai.models.generateContent({
-        model: model,
-        contents: prompt,
-      });
-      return response.text;
-    } catch (error) {
-      handleApiError(error, 'generating research gap report');
+const paperBasedSuggestionsSchema = {
+    type: Type.OBJECT,
+    properties: {
+        suggestions: {
+            type: Type.ARRAY,
+            items: { type: Type.STRING }
+        },
+    },
+    required: ["suggestions"],
+};
+
+export const generatePaperBasedSuggestions = async (paper: ResearchPaper): Promise<string[]> => {
+    const prompt = `You are a research expert. Based on the title and abstract of the following academic paper, generate 5 distinct and insightful search queries that would help a user find related or follow-up research. The new queries should explore different facets of the topic, such as alternative methodologies, applications in different domains, or future research directions implied by the paper.
+
+    Seed Paper:
+    Title: "${paper.title}"
+    Abstract: "${paper.abstract}"
+
+    Return your response as a single JSON object with a single key "suggestions", which is an array of strings. Do not include any other text or markdown.
+
+    Example:
+    {
+        "suggestions": [
+            "long-term effects of [key concept] on [specific population]",
+            "application of [methodology] in [different field]",
+            "alternative approaches to solving [research problem]",
+            "ethical implications of [main finding]",
+            "longitudinal studies following up on [paper's conclusion]"
+        ]
     }
-  };
-  
-export const findDatabasesForField = async (fieldOfStudy: string): Promise<SearchSourceInfo[]> => {
-    const prompt = `
-      You are an expert academic librarian advising a postgraduate student.
-      Your task is to recommend 5-7 of the most important and reputable academic databases for research in the field of "${fieldOfStudy}".
-
-      For each database, provide its name and a concise, one-sentence description of its primary focus.
-      Focus on databases whose contents are at least partially indexed by major search engines or are widely recognized in academia.
-
-      Return the result as a JSON object with a "databases" key, which contains an array of objects.
-      Each object in the array must have two keys: "name" (string) and "description" (string).
     `;
 
     try {
         const response = await ai.models.generateContent({
-            model: model,
+            model: "gemini-2.5-flash",
             contents: prompt,
             config: {
                 responseMimeType: "application/json",
-                responseSchema: {
-                    type: Type.OBJECT,
-                    properties: {
-                        databases: {
-                            type: Type.ARRAY,
-                            items: {
-                                type: Type.OBJECT,
-                                properties: {
-                                    name: { type: Type.STRING },
-                                    description: { type: Type.STRING }
-                                },
-                                required: ["name", "description"]
-                            }
-                        }
-                    },
-                    required: ["databases"]
-                }
-            }
+                responseSchema: paperBasedSuggestionsSchema,
+            },
         });
-
-        const result = JSON.parse(response.text);
-        return result.databases as SearchSourceInfo[];
-
+        const result = safeJsonParse(response.text ?? '');
+        if (!result || !result.suggestions) return [];
+        return result.suggestions;
     } catch (error) {
-        if (error instanceof SyntaxError) {
-            throw new ParsingError('The database recommendations from the model were not valid JSON.');
-        }
-        handleApiError(error, 'finding academic databases');
+        console.error("Error generating paper-based suggestions:", error);
+        throw new Error("Failed to generate search suggestions for the selected paper.");
     }
 };
 
-export const analyzePaperStructure = async (paper: ResearchPaper): Promise<PaperAnalysis> => {
-    const prompt = `
-      You are an expert academic analyst. Your task is to deconstruct the provided research paper summary into its core components.
-      Based *only* on the summary text provided, identify the following:
-      1.  **Research Question:** What is the central question or hypothesis the paper is investigating? (1-2 sentences)
-      2.  **Methodology:** What method did the authors use to investigate the question? (e.g., survey, experiment, case study, literature review). Be concise.
-      3.  **Key Findings:** What were the 2-3 most important results or conclusions of the study?
-      4.  **Limitations:** What are the potential limitations of the study? Infer these if not explicitly stated (e.g., "The study may be limited by its small sample size," or "Findings may not be generalizable."). If no limitations can be determined, state "Not specified in summary."
-  
-      PAPER:
-      **Title:** "${paper.title}"
-      **Summary:** "${paper.summary}"
-  
-      Return the result as a single JSON object with the keys: "researchQuestion", "methodology", "keyFindings" (an array of strings), and "limitations" (an array of strings).
-    `;
-  
-    try {
-      const response = await ai.models.generateContent({
-        model: model,
-        contents: prompt,
-        config: {
-          responseMimeType: "application/json",
-          responseSchema: {
-            type: Type.OBJECT,
-            properties: {
-              researchQuestion: { type: Type.STRING },
-              methodology: { type: Type.STRING },
-              keyFindings: {
-                type: Type.ARRAY,
-                items: { type: Type.STRING }
-              },
-              limitations: {
-                type: Type.ARRAY,
-                items: { type: Type.STRING }
-              },
-            },
-            required: ["researchQuestion", "methodology", "keyFindings", "limitations"]
-          }
-        }
-      });
-  
-      return JSON.parse(response.text) as PaperAnalysis;
-  
-    } catch (error) {
-      if (error instanceof SyntaxError) {
-        throw new ParsingError('The structured analysis from the model was not valid JSON.');
-      }
-      handleApiError(error, 'analyzing paper structure');
+export const chatWithResults = async (
+    history: ChatMessage[],
+    papers: ResearchPaper[],
+    location: { latitude: number; longitude: number } | null
+): Promise<{ text: string, sources: GroundingSource[] }> => {
+    const paperContext = papers.map((p, i) => `[Paper ${i+1}] ${p.title}\n${p.abstract}`).join('\n\n');
+    
+    const systemInstruction = `You are a helpful research assistant. The user is asking questions about a set of research papers.
+    Your knowledge is limited to the provided papers. Answer the user's questions based *only* on the information in the abstracts below.
+    If the answer cannot be found in the papers, say that you cannot answer based on the provided information. Be concise.
+    You can also answer general questions or location-based questions if the user asks them.
+
+    Reference Papers:
+    ${paperContext}`;
+
+    // FIX: Replaced `findLast` with a compatible alternative (`.reverse().find()`) to support older TS/JS versions.
+    const lastUserMessage = [...history].reverse().find(m => m.role === 'user')?.parts[0].text.toLowerCase() || '';
+    const isLocationQuery = ['nearby', 'where is', 'directions to', 'restaurants near', 'coffee shops', 'map of'].some(kw => lastUserMessage.includes(kw));
+
+    const config: any = { systemInstruction };
+    if (isLocationQuery && location) {
+        config.tools = [{ googleMaps: {} }];
+        config.toolConfig = {
+            retrievalConfig: {
+                latLng: {
+                    latitude: location.latitude,
+                    longitude: location.longitude
+                }
+            }
+        };
     }
-  };
+    
+    try {
+        const contents = history.map(msg => ({
+            role: msg.role,
+            parts: msg.parts
+        }));
+
+        const response = await ai.models.generateContent({
+            model: 'gemini-2.5-flash',
+            contents,
+            config
+        });
+        
+        const groundingChunks = response.candidates?.[0]?.groundingMetadata?.groundingChunks || [];
+        const sources: GroundingSource[] = groundingChunks
+            .filter((chunk: any) => chunk.maps)
+            .map((chunk: any) => ({
+                title: chunk.maps.title,
+                uri: chunk.maps.uri,
+            }));
+
+        return { text: response.text ?? '', sources };
+    } catch (error) {
+        console.error("Error in chat:", error);
+        throw new Error("Failed to get chat response.");
+    }
+};
+
+export const findConnectedPapers = async (seedPaper: ResearchPaper): Promise<{ seedPaper: ResearchPaper, connections: ConnectedPaper[] }> => {
+    const prompt = `Find 5-7 highly relevant papers connected to the following seed paper. The connections could be citations, papers that build on its work, or papers with contrasting findings.
+    
+    Seed Paper:
+    Title: ${seedPaper.title}
+    Authors: ${seedPaper.authors}
+    Abstract: ${seedPaper.abstract}
+
+    Instructions:
+    1.  Use Google Scholar search to find the connected papers.
+    2.  For each connected paper, provide the title, authors, publication year, a brief summary, an explanation of its connection to the seed paper, and a direct source URL if available.
+    3.  Follow this JSON format precisely. The top-level object must have a single key "connections" which is an array of paper objects. Do not add any text outside this JSON structure.
+    4.  Each paper object must have these keys: "title", "authors", "year", "summary", "connection", and an optional "sourceURL".
+    `;
+    
+    try {
+        const response = await ai.models.generateContent({
+            model: "gemini-2.5-flash",
+            contents: prompt,
+            config: {
+                tools: [{googleSearch: {}}],
+            },
+        });
+        
+        const result = safeJsonParse(response.text ?? '');
+        if (!result || !result.connections) throw new Error("Invalid response format for connected papers.");
+        
+        return { seedPaper, connections: result.connections };
+    } catch (error) {
+        console.error("Error finding connected papers:", error);
+        throw new Error("Failed to find connected papers.");
+    }
+};
+
+const databaseFinderSchema = {
+    type: Type.ARRAY,
+    items: {
+        type: Type.OBJECT,
+        properties: {
+            id: { type: Type.STRING, description: "A unique ID for the database, e.g., 'pubmed'." },
+            name: { type: Type.STRING, description: "The full name of the database, e.g., 'PubMed'." },
+            description: { type: Type.STRING, description: "A short description of the database's focus." },
+        },
+        required: ["id", "name", "description"]
+    }
+};
+
+export const findDatabasesForField = async (field: string): Promise<SearchSourceInfo[]> => {
+    const prompt = `List the top 3-5 most relevant and reputable academic databases for the field of "${field}". For each, provide a unique ID, its name, and a brief description. Return the result as a JSON array.`;
+
+    try {
+        const response = await ai.models.generateContent({
+            model: "gemini-2.5-flash",
+            contents: prompt,
+            config: {
+                responseMimeType: "application/json",
+                responseSchema: databaseFinderSchema,
+            },
+        });
+        
+        const result = safeJsonParse(response.text ?? '');
+        if (!result) throw new Error("Could not find databases.");
+        return result;
+    } catch (error) {
+        console.error("Error finding databases:", error);
+        throw new Error("Failed to find academic databases.");
+    }
+};
+
+const paperAnalysisSchema = {
+    type: Type.OBJECT,
+    properties: {
+        researchQuestion: { type: Type.STRING },
+        methodology: { type: Type.STRING },
+        keyFindings: { type: Type.ARRAY, items: { type: Type.STRING } },
+        limitations: { type: Type.ARRAY, items: { type: Type.STRING } },
+    },
+    required: ["researchQuestion", "methodology", "keyFindings", "limitations"],
+};
+
+export const analyzeSinglePaper = async (paper: ResearchPaper): Promise<PaperAnalysis> => {
+    const prompt = `Perform a structured analysis of the following research paper based on its abstract.
+    
+    Title: ${paper.title}
+    Abstract: ${paper.abstract}
+
+    Extract the following information:
+    1.  The primary research question or objective.
+    2.  The methodology used.
+    3.  A bulleted list of key findings.
+    4.  A bulleted list of potential limitations mentioned or implied.
+    
+    Return the result in JSON format.`;
+    
+    try {
+        const response = await ai.models.generateContent({
+            model: "gemini-2.5-flash",
+            contents: prompt,
+            config: {
+                responseMimeType: "application/json",
+                responseSchema: paperAnalysisSchema,
+            },
+        });
+        const result = safeJsonParse(response.text ?? '');
+        if (!result) throw new Error("Could not analyze paper.");
+        return result;
+    } catch (error) {
+        console.error("Error analyzing paper:", error);
+        throw new Error("Failed to perform structured analysis on the paper.");
+    }
+};
+
+export const verifyPaper = async (paper: ResearchPaper): Promise<VerificationStatus> => {
+    // Step 1: Attempt verification with Crossref first for a reliable, structured result.
+    try {
+        const crossrefResult = await crossrefService.fetchPaperFromCrossref(paper);
+        if (crossrefResult) {
+            // Find a direct PDF link if available from Crossref's link-walking service
+            const pdfLink = crossrefResult.link?.find((l) => l['content-type'] === 'application/pdf');
+            const sourceUrl = crossrefResult.URL || (crossrefResult.DOI ? `https://doi.org/${crossrefResult.DOI}` : undefined);
+            
+            return {
+                state: 'verified',
+                source: 'Crossref',
+                linkState: pdfLink ? 'valid' : 'unchecked',
+                pdfURL: pdfLink?.URL || sourceUrl, // Prioritize the direct PDF link
+            };
+        }
+    } catch (error) {
+        console.warn("Crossref verification failed or returned no match. Proceeding to web search.", error);
+    }
+
+    // Step 2: If Crossref fails or finds no match, fall back to the Gemini-powered web search.
+    const prompt = `You are a meticulous research assistant. Verify the existence and accessibility of the following academic paper using a web search. Your primary goal is to find a freely accessible PDF. A lookup in the Crossref database was inconclusive, so a broader search is needed.
+
+    Paper Details:
+    - Title: "${paper.title}"
+    - Authors: "${paper.authors}"
+    - Provided URL: ${paper.sourceURL || 'N/A'}
+    
+    Verification Steps:
+    1.  **Confirm Existence:** Use Google Scholar first to confirm the paper's existence. Note the primary source (e.g., Google Scholar, arXiv, Publisher's website).
+    2.  **Validate Provided URL:** If a URL was provided, analyze search results to determine its status. Is it a direct link to the paper, a 404 page, or something else?
+    3.  **Find Free PDF:** Actively search for a direct, publicly accessible PDF link. Look for links from university repositories, arXiv, or author homepages.
+    4.  **Detect Paywalls:** If the primary link leads to a publisher's page that requires payment or a subscription to access the full text, and no free alternative PDF is found, classify it as paywalled.
+    5.  **Format Response:** Respond with a single JSON object. Do not include any other text or markdown.
+    
+    JSON Response Schema:
+    - "state": One of "verified", "not_found", "error".
+    - "source": The best source found (e.g., "Google Scholar", "arXiv", "Publisher Site").
+    - "linkState": The status of the paper's accessibility. One of "valid" (free PDF found), "paywalled" (verified existence but PDF is behind a paywall), "invalid" (provided link is broken/404), "unchecked".
+    - "pdfURL": The direct URL to the free PDF, ONLY if "linkState" is "valid".
+    - "reason": A brief explanation for "not_found", "error", or "paywalled" states.
+    
+    Example Responses:
+    - Free PDF found: { "state": "verified", "source": "arXiv", "linkState": "valid", "pdfURL": "https://arxiv.org/pdf/1234.5678.pdf" }
+    - Paywalled: { "state": "verified", "source": "Elsevier", "linkState": "paywalled", "reason": "Paper is available on the publisher's site but requires a subscription to access the full text." }
+    - Broken Link, but PDF found elsewhere: { "state": "verified", "source": "Google Scholar", "linkState": "invalid", "pdfURL": "https://university.edu/repo/paper.pdf", "reason": "The original link was broken, but an alternative free PDF was found." }
+    - Not Found: { "state": "not_found", "reason": "Could not find a reliable source for this paper via web search." }
+    `;
+    
+    try {
+        const response = await ai.models.generateContent({
+            model: 'gemini-2.5-flash',
+            contents: prompt,
+            config: {
+                tools: [{googleSearch: {}}],
+            },
+        });
+        
+        const result = safeJsonParse(response.text ?? '');
+        if (!result || !result.state) return { state: 'error', reason: 'Invalid API response for verification.' };
+        return result as VerificationStatus;
+    } catch (error) {
+        console.error("Error verifying paper:", error);
+        return { state: 'error', reason: 'An error occurred during verification.' };
+    }
+};
+
+const keyConceptsSchema = {
+    type: Type.OBJECT,
+    properties: {
+        concepts: {
+            type: Type.ARRAY,
+            items: { type: Type.STRING }
+        },
+    },
+    required: ["concepts"],
+};
+
+export const extractKeyConcepts = async (abstract: string): Promise<string[]> => {
+    if (!abstract || abstract.trim().length < 100) {
+        return [];
+    }
+
+    const prompt = `You are a research expert skilled in identifying the core themes of academic literature.
+    Read the following abstract and extract the 5-7 most important keywords or key concepts.
+    These concepts should be concise and represent the main topics of the research.
+
+    Abstract: "${abstract}"
+
+    Return your response as a single JSON object with a single key "concepts" which is an array of strings.
+    Do not include any other text or markdown.
+
+    Example:
+    {
+        "concepts": ["machine learning", "sentiment analysis", "social media", "opinion mining", "natural language processing"]
+    }
+    `;
+
+    try {
+        const response = await ai.models.generateContent({
+            model: "gemini-2.5-flash",
+            contents: prompt,
+            config: {
+                responseMimeType: "application/json",
+                responseSchema: keyConceptsSchema,
+            },
+        });
+        const result = safeJsonParse(response.text ?? '');
+        if (!result || !result.concepts) return [];
+        return result.concepts;
+    } catch (error) {
+        console.error("Error extracting key concepts:", error);
+        throw new Error("Failed to extract key concepts from abstract.");
+    }
+};

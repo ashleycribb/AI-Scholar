@@ -1,5 +1,7 @@
 {
-  "name": "Google Scholar Research Assistant",
+  "name": "AI Research Explorer",
   "description": "An AI-powered assistant to help doctoral students find and summarize relevant academic papers from Google Scholar, providing concise summaries and source links.",
-  "requestFramePermissions": []
+  "requestFramePermissions": [
+    "geolocation"
+  ]
 }
