@@ -1,0 +1,35 @@
+/* extension/content-scripts/common.css */
+.are-save-button {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    margin-left: 8px;
+    padding: 4px 10px;
+    font-size: 13px;
+    font-weight: 600;
+    line-height: 1.5;
+    color: #1e40af; /* primary color from app */
+    background-color: #eef2ff; /* secondary color from app */
+    border: 1px solid #dbeafe;
+    border-radius: 9999px;
+    cursor: pointer;
+    transition: all 0.2s ease-in-out;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol";
+}
+
+.are-save-button:hover {
+    background-color: #dbeafe;
+    border-color: #bfdbfe;
+}
+
+.are-save-button.are-saved {
+    color: #166534;
+    background-color: #dcfce7;
+    border-color: #bbf7d0;
+    cursor: default;
+}
+
+.are-save-button svg {
+    width: 14px;
+    height: 14px;
+}

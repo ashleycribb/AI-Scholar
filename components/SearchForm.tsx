@@ -14,6 +14,7 @@ interface SearchFormProps {
   summaryStyle: SummaryStyle;
   onStyleChange: (style: SummaryStyle) => void;
   logAnalyticsEvent: (eventName: string, payload: object) => void;
+  excludeKeywords?: string;
 }
 
 const summaryStyles: { id: SummaryStyle; name: string }[] = [
@@ -31,7 +32,8 @@ export const SearchForm: React.FC<SearchFormProps> = ({
     onLengthChange,
     summaryStyle,
     onStyleChange, 
-    logAnalyticsEvent
+    logAnalyticsEvent,
+    excludeKeywords
 }) => {
   const [suggestions, setSuggestions] = useState<string[]>([]);
   const [isSuggesting, setIsSuggesting] = useState(false);
@@ -45,6 +47,13 @@ export const SearchForm: React.FC<SearchFormProps> = ({
     authors: '',
     excludeKeywords: '',
   });
+
+  useEffect(() => {
+    // Sync exclude keywords from parent if provided
+    if (excludeKeywords !== undefined) {
+      setAdvancedOptions(prev => ({...prev, excludeKeywords }));
+    }
+  }, [excludeKeywords]);
 
   const handleAdvancedChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const { name, value } = e.target;
@@ -116,18 +125,18 @@ export const SearchForm: React.FC<SearchFormProps> = ({
               value={query}
               onChange={handleInputChange}
               placeholder={placeholderText}
-              className="w-full pl-4 pr-12 py-3 bg-white border border-gray-300 rounded-full focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-shadow duration-200 text-base text-gray-900"
+              className="w-full pl-4 pr-12 h-11 bg-background border border-input rounded-md focus:ring-2 focus:ring-ring focus:ring-offset-2 transition-shadow duration-200 text-base text-foreground"
               disabled={isLoading}
               autoComplete="off"
             />
             <div className="absolute inset-y-0 right-0 flex items-center pr-4">
-                <SearchIcon className="w-5 h-5 text-gray-400" />
+                <SearchIcon className="w-5 h-5 text-muted-foreground" />
             </div>
           </div>
           <button
             type="submit"
             disabled={isLoading || !query.trim()}
-            className="px-6 py-3 bg-blue-600 text-white font-semibold rounded-full hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors duration-200"
+            className="px-6 h-11 bg-primary text-primary-foreground font-semibold rounded-md hover:bg-primary/90 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-ring disabled:bg-primary/50 disabled:cursor-not-allowed transition-colors duration-200"
           >
             {isLoading ? 'Searching...' : 'Search'}
           </button>
@@ -136,17 +145,17 @@ export const SearchForm: React.FC<SearchFormProps> = ({
         <div className="flex flex-col sm:flex-row justify-between items-center gap-4">
             <div className="flex flex-wrap items-center gap-x-6 gap-y-3">
                 <div className="flex items-center gap-2">
-                    <span className="text-sm font-medium text-gray-600">Summary:</span>
+                    <span className="text-sm font-medium text-muted-foreground">Summary:</span>
                     {(['short', 'medium', 'detailed'] as SummaryLength[]).map((len) => (
                         <button
                         key={len}
                         type="button"
                         onClick={() => onLengthChange(len)}
                         aria-pressed={summaryLength === len}
-                        className={`px-3 py-1.5 rounded-full text-sm font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-offset-1 focus:ring-blue-500 ${
+                        className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-offset-1 focus:ring-ring ${
                             summaryLength === len
-                            ? 'bg-blue-600 text-white shadow-sm'
-                            : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                            ? 'bg-primary text-primary-foreground shadow-sm'
+                            : 'bg-secondary text-secondary-foreground hover:bg-accent'
                         }`}
                         >
                         {len.charAt(0).toUpperCase() + len.slice(1)}
@@ -154,17 +163,17 @@ export const SearchForm: React.FC<SearchFormProps> = ({
                     ))}
                 </div>
                  <div className="flex items-center gap-2">
-                    <span className="text-sm font-medium text-gray-600">Style:</span>
+                    <span className="text-sm font-medium text-muted-foreground">Style:</span>
                     {summaryStyles.map((style) => (
                         <button
                         key={style.id}
                         type="button"
                         onClick={() => onStyleChange(style.id)}
                         aria-pressed={summaryStyle === style.id}
-                        className={`px-3 py-1.5 rounded-full text-sm font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-offset-1 focus:ring-blue-500 ${
+                        className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-offset-1 focus:ring-ring ${
                             summaryStyle === style.id
-                            ? 'bg-blue-600 text-white shadow-sm'
-                            : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                            ? 'bg-primary text-primary-foreground shadow-sm'
+                            : 'bg-secondary text-secondary-foreground hover:bg-accent'
                         }`}
                         >
                         {style.name}
@@ -175,7 +184,7 @@ export const SearchForm: React.FC<SearchFormProps> = ({
             <button
                 type="button"
                 onClick={() => setShowAdvanced(!showAdvanced)}
-                className="text-sm font-medium text-blue-600 hover:text-blue-800 flex-shrink-0"
+                className="text-sm font-medium text-primary hover:underline flex-shrink-0"
                 aria-expanded={showAdvanced}
             >
                 {showAdvanced ? 'Hide Advanced' : 'Advanced Search'}
@@ -184,22 +193,22 @@ export const SearchForm: React.FC<SearchFormProps> = ({
         </div>
 
         {showAdvanced && (
-            <div className="p-4 bg-gray-100 rounded-lg border border-gray-200 grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div className="p-4 bg-muted/50 rounded-lg border grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
-                    <label htmlFor="startYear" className="block text-sm font-medium text-gray-700 mb-1">Publication Year</label>
+                    <label htmlFor="startYear" className="block text-sm font-medium text-foreground mb-1">Publication Year</label>
                     <div className="flex items-center gap-2">
-                        <input type="number" name="startYear" id="startYear" value={advancedOptions.startYear} onChange={handleAdvancedChange} placeholder="From" className="w-full px-3 py-2 text-sm border border-gray-300 rounded-md focus:ring-1 focus:ring-blue-500 bg-white text-gray-900"/>
-                        <span className="text-gray-500">-</span>
-                        <input type="number" name="endYear" id="endYear" value={advancedOptions.endYear} onChange={handleAdvancedChange} placeholder="To" className="w-full px-3 py-2 text-sm border border-gray-300 rounded-md focus:ring-1 focus:ring-blue-500 bg-white text-gray-900"/>
+                        <input type="number" name="startYear" id="startYear" value={advancedOptions.startYear} onChange={handleAdvancedChange} placeholder="From" className="h-9 w-full px-3 py-2 text-sm border border-input rounded-md focus:ring-1 focus:ring-ring bg-background text-foreground"/>
+                        <span className="text-muted-foreground">-</span>
+                        <input type="number" name="endYear" id="endYear" value={advancedOptions.endYear} onChange={handleAdvancedChange} placeholder="To" className="h-9 w-full px-3 py-2 text-sm border border-input rounded-md focus:ring-1 focus:ring-ring bg-background text-foreground"/>
                     </div>
                 </div>
                  <div>
-                    <label htmlFor="authors" className="block text-sm font-medium text-gray-700 mb-1">Authors</label>
-                    <input type="text" name="authors" id="authors" value={advancedOptions.authors} onChange={handleAdvancedChange} placeholder="e.g., Hinton, LeCun" className="w-full px-3 py-2 text-sm border border-gray-300 rounded-md focus:ring-1 focus:ring-blue-500 bg-white text-gray-900"/>
+                    <label htmlFor="authors" className="block text-sm font-medium text-foreground mb-1">Authors</label>
+                    <input type="text" name="authors" id="authors" value={advancedOptions.authors} onChange={handleAdvancedChange} placeholder="e.g., Hinton, LeCun" className="h-9 w-full px-3 py-2 text-sm border border-input rounded-md focus:ring-1 focus:ring-ring bg-background text-foreground"/>
                 </div>
                 <div className="sm:col-span-2">
-                    <label htmlFor="excludeKeywords" className="block text-sm font-medium text-gray-700 mb-1">Exclude Keywords</label>
-                    <input type="text" name="excludeKeywords" id="excludeKeywords" value={advancedOptions.excludeKeywords} onChange={handleAdvancedChange} placeholder="e.g., review, meta-analysis" className="w-full px-3 py-2 text-sm border border-gray-300 rounded-md focus:ring-1 focus:ring-blue-500 bg-white text-gray-900"/>
+                    <label htmlFor="excludeKeywords" className="block text-sm font-medium text-foreground mb-1">Exclude Keywords</label>
+                    <input type="text" name="excludeKeywords" id="excludeKeywords" value={advancedOptions.excludeKeywords} onChange={handleAdvancedChange} placeholder="e.g., review, meta-analysis" className="h-9 w-full px-3 py-2 text-sm border border-input rounded-md focus:ring-1 focus:ring-ring bg-background text-foreground"/>
                 </div>
             </div>
         )}

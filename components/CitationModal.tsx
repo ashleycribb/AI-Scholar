@@ -65,15 +65,15 @@ export const CitationGenerator: React.FC<CitationGeneratorProps> = ({
 
   return (
     <div>
-        <p className="text-sm text-gray-600 mb-4">Create a formatted reference list for the {papers.length} papers found in your search.</p>
-        <div className="flex flex-col sm:flex-row items-center gap-4 mb-6 p-4 bg-gray-50 rounded-lg border">
+        <p className="text-sm text-muted-foreground mb-4">Create a formatted reference list for the {papers.length} papers found in your search.</p>
+        <div className="flex flex-col sm:flex-row items-center gap-4 mb-6 p-4 bg-muted/50 rounded-lg border">
             <div className="flex-grow w-full">
-                <label htmlFor="citation-style" className="block text-sm font-medium text-gray-700 mb-1">Citation Style</label>
+                <label htmlFor="citation-style" className="block text-sm font-medium text-foreground mb-1">Citation Style</label>
                 <select
                     id="citation-style"
                     value={citationStyle}
                     onChange={(e) => onStyleChange(e.target.value as CitationStyle)}
-                    className="w-full pl-3 pr-10 py-2 text-base text-black border-gray-300 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm rounded-md bg-white"
+                    className="w-full h-10 pl-3 pr-10 py-2 text-base text-foreground border-input focus:outline-none focus:ring-2 focus:ring-ring sm:text-sm rounded-md bg-background"
                     disabled={isLoading}
                 >
                     {citationStyles.map(style => <option key={style.id} value={style.id}>{style.name}</option>)}
@@ -83,14 +83,14 @@ export const CitationGenerator: React.FC<CitationGeneratorProps> = ({
                 <button
                     onClick={onGenerate}
                     disabled={isLoading || papers.length === 0}
-                    className="w-full sm:w-auto px-6 py-2.5 bg-blue-600 text-white font-semibold rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors duration-200"
+                    className="w-full sm:w-auto h-10 px-6 bg-primary text-primary-foreground font-semibold rounded-md hover:bg-primary/90 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-ring disabled:opacity-50 transition-colors duration-200"
                 >
                     {isLoading ? 'Generating...' : 'Generate List'}
                 </button>
                  <button
                     onClick={handleExportRIS}
                     disabled={isExporting || papers.length === 0}
-                    className="w-full sm:w-auto px-5 py-2.5 bg-orange-600 text-white font-semibold rounded-md hover:bg-orange-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-orange-500 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors duration-200 flex items-center justify-center gap-2"
+                    className="w-full sm:w-auto h-10 px-5 bg-secondary text-secondary-foreground font-semibold rounded-md hover:bg-accent focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-ring disabled:opacity-50 transition-colors duration-200 flex items-center justify-center gap-2"
                 >
                     <ZoteroIcon className="w-4 h-4" />
                     {isExporting ? 'Exporting...' : 'Export .ris for Zotero'}
@@ -98,22 +98,22 @@ export const CitationGenerator: React.FC<CitationGeneratorProps> = ({
             </div>
         </div>
 
-        {isLoading && <div className="flex justify-center items-center py-8"><p className="text-gray-600">Generating citations...</p></div>}
+        {isLoading && <div className="flex justify-center items-center py-8"><p className="text-muted-foreground">Generating citations...</p></div>}
         {error && <ErrorMessage message={error} />}
         
         {!isLoading && citations.length > 0 && (
             <div>
                 <div className="flex justify-between items-center mb-3">
-                    <h3 className="font-semibold text-gray-800">Generated References</h3>
+                    <h3 className="font-semibold text-foreground">Generated References</h3>
                     <button 
                       onClick={handleCopy} 
-                      className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-gray-700 bg-gray-100 rounded-full hover:bg-gray-200"
+                      className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-secondary-foreground bg-secondary rounded-full hover:bg-accent"
                     >
                         <CopyIcon className="w-4 h-4" /> 
                         {copied ? 'Copied!' : 'Copy List'}
                     </button>
                 </div>
-                <div className="p-4 bg-gray-50 border border-gray-200 rounded-md text-sm text-gray-800 leading-relaxed max-h-80 overflow-y-auto">
+                <div className="p-4 bg-muted/50 border border-border rounded-md text-sm text-foreground leading-relaxed max-h-80 overflow-y-auto">
                     <ol className="space-y-3">
                         {citations.map((citation, index) => (
                             <li key={index} className="pl-5 -indent-5" dangerouslySetInnerHTML={{ __html: citation }} />

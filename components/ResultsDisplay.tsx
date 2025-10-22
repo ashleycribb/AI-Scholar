@@ -8,9 +8,10 @@ interface ResultsDisplayProps {
   onSelectPaper: (paper: ResearchPaper) => void;
   sortConfig: SortConfig;
   onSortChange: (config: SortConfig) => void;
+  onMarkAsIrrelevant: (paper: ResearchPaper) => void;
 }
 
-export const ResultsDisplay: React.FC<ResultsDisplayProps> = ({ papers, selectedPaper, onSelectPaper, sortConfig, onSortChange }) => {
+export const ResultsDisplay: React.FC<ResultsDisplayProps> = ({ papers, selectedPaper, onSelectPaper, sortConfig, onSortChange, onMarkAsIrrelevant }) => {
   const handleSort = (key: SortKey) => {
     if (key === 'relevance') {
       onSortChange({ key: 'relevance', direction: 'desc' });
@@ -28,21 +29,21 @@ export const ResultsDisplay: React.FC<ResultsDisplayProps> = ({ papers, selected
   };
 
   const getButtonClasses = (key: SortKey) => {
-    return `flex items-center px-2 py-1 rounded-full font-medium transition-colors ${
+    return `inline-flex items-center justify-center whitespace-nowrap rounded-md text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50 h-8 px-3 gap-1 ${
         sortConfig.key === key 
-        ? 'bg-blue-100 text-blue-700' 
-        : 'text-gray-600 hover:bg-gray-100'
+        ? 'bg-muted text-foreground' 
+        : 'text-muted-foreground hover:bg-muted/50'
     }`;
   };
 
   return (
     <div>
-      <div className="flex justify-between items-center border-b pb-2 mb-2 sticky top-0 bg-white z-10 py-2">
-        <h2 className="text-lg font-bold text-gray-800">
+      <div className="flex justify-between items-center border-b pb-2 mb-2 sticky top-[80px] bg-background z-10 py-2">
+        <h2 className="text-lg font-bold text-foreground">
           Search Results ({papers.length})
         </h2>
         <div className="flex items-center gap-1 text-xs">
-          <span className="font-medium text-gray-500 mr-1">Sort by:</span>
+          <span className="font-medium text-muted-foreground mr-1">Sort by:</span>
           <button onClick={() => handleSort('relevance')} className={getButtonClasses('relevance')}>Relevance</button>
           <button onClick={() => handleSort('year')} className={getButtonClasses('year')}>Year {renderSortIcon('year')}</button>
           <button onClick={() => handleSort('citations')} className={getButtonClasses('citations')}>Citations {renderSortIcon('citations')}</button>
@@ -57,6 +58,7 @@ export const ResultsDisplay: React.FC<ResultsDisplayProps> = ({ papers, selected
                   isOrigin={sortConfig.key === 'relevance' && index === 0}
                   isSelected={selectedPaper?.title === paper.title}
                   onSelectPaper={onSelectPaper}
+                  onMarkAsIrrelevant={onMarkAsIrrelevant}
               />
           );
         })}

@@ -1,0 +1,49 @@
+{
+  "manifest_version": 3,
+  "name": "AI Research Explorer Connector",
+  "version": "1.0.0",
+  "description": "Save papers directly from your browser to AI Research Explorer.",
+  "permissions": [
+    "storage",
+    "activeTab",
+    "scripting"
+  ],
+  "host_permissions": [
+    "*://*.arxiv.org/*",
+    "*://scholar.google.com/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "content_scripts": [
+    {
+      "matches": ["*://*.arxiv.org/abs/*", "*://*.arxiv.org/pdf/*"],
+      "js": ["content-scripts/arxiv.js"],
+      "css": ["content-scripts/common.css"]
+    },
+    {
+      "matches": ["*://scholar.google.com/scholar*"],
+      "js": ["content-scripts/google-scholar.js"],
+      "css": ["content-scripts/common.css"]
+    }
+  ],
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "web_accessible_resources": [
+    {
+      "resources": ["icons/*.png"],
+      "matches": ["<all_urls>"]
+    }
+  ]
+}

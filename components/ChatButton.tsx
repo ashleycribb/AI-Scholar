@@ -11,10 +11,10 @@ export const ChatButton: React.FC<ChatButtonProps> = ({ onClick, disabled }) => 
     <button
       onClick={onClick}
       disabled={disabled}
-      className="p-4 bg-indigo-600 text-white rounded-full shadow-lg hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 transition-transform hover:scale-110 disabled:bg-gray-400 disabled:cursor-not-allowed"
+      className="w-16 h-16 flex items-center justify-center bg-primary text-primary-foreground rounded-full shadow-lg hover:bg-primary/90 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-ring transition-transform hover:scale-110 disabled:bg-primary/50 disabled:cursor-not-allowed"
       aria-label="Refine research with AI chat"
     >
-      <ChatIcon className="w-6 h-6" />
+      <ChatIcon className="w-7 h-7" />
     </button>
   );
 };

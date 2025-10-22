@@ -21,7 +21,7 @@ export interface AdvancedSearchOptions {
 export interface VerificationStatus {
     state: 'unverified' | 'verifying' | 'verified' | 'error' | 'not_found';
     reason?: string;
-    source?: string;
+    source?: 'Unpaywall' | 'Crossref' | 'Google Scholar' | 'arXiv' | 'Publisher Site' | string;
     linkState?: 'valid' | 'invalid' | 'unchecked' | 'paywalled';
     pdfURL?: string;
 }
@@ -39,6 +39,8 @@ export interface ResearchPaper {
   keyConceptsState?: 'idle' | 'loading' | 'loaded' | 'error';
   doi?: string;
   doiState?: 'idle' | 'loading' | 'loaded' | 'error';
+  isIrrelevant?: boolean;
+  enrichmentSource?: 'arXiv';
 }
 
 export type PublicationYearData = { year: number; count: number }[];

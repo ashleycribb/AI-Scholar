@@ -1,0 +1,40 @@
+{
+  "name": "AI Research Explorer",
+  "short_name": "AI Research",
+  "description": "An AI-powered assistant for academic literature reviews.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f9fafb",
+  "theme_color": "#ffffff",
+  "icons": [
+    {
+      "src": "https://www.gstatic.com/images/branding/product/1x/google_research_48dp.png",
+      "sizes": "48x48",
+      "type": "image/png"
+    },
+    {
+      "src": "https://www.gstatic.com/images/branding/product/1x/google_research_96dp.png",
+      "sizes": "96x96",
+      "type": "image/png"
+    },
+    {
+      "src": "https://www.gstatic.com/images/branding/product/2x/google_research_96dp.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "https://ssl.gstatic.com/research/icon/retina/google_research_512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ],
+  "share_target": {
+    "action": "/",
+    "method": "GET",
+    "params": {
+      "title": "title",
+      "text": "text",
+      "url": "url"
+    }
+  }
+}

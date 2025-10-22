@@ -72,16 +72,46 @@ export const fetchPaperFromCrossref = async (paper: ResearchPaper): Promise<Cros
 
 /**
  * Finds the DOI for a given paper using the Crossref API.
+ * It first attempts a highly specific query with title and author, and falls back to a broader search if needed.
  * @param paper The `ResearchPaper` object to search for.
  * @returns A promise that resolves to the DOI string if found, otherwise null.
  */
 export const findDoiForPaper = async (paper: ResearchPaper): Promise<string | null> => {
     try {
+        // Attempt 1: Highly specific query using title and first author's last name.
+        const firstAuthorLastName = paper.authors.split(',')[0].trim().split(' ').pop();
+
+        if (firstAuthorLastName) {
+            const url = `https://api.crossref.org/works?query.title=${encodeURIComponent(paper.title)}&query.author=${encodeURIComponent(firstAuthorLastName)}&rows=1&select=DOI,title,author`;
+            
+            const response = await fetch(url);
+            if (response.ok) {
+                const data = await response.json();
+                const item = data.message?.items?.[0];
+
+                if (item) {
+                    // Perform a confidence check on the result.
+                    const apiTitle = item.title?.[0];
+                    if (apiTitle) {
+                        const normalizedPaperTitle = normalizeString(paper.title);
+                        const normalizedApiTitle = normalizeString(apiTitle);
+                        const titleIsSimilar = normalizedApiTitle.includes(normalizedPaperTitle) || normalizedPaperTitle.includes(normalizedApiTitle);
+
+                        if (titleIsSimilar && checkAuthorMatch(paper.authors, item.author) && item.DOI) {
+                            return item.DOI; // High-confidence match from specific query.
+                        }
+                    }
+                }
+            }
+        }
+        
+        // Attempt 2: Fallback to the broader verification-style search if the specific query fails or yields no confident match.
         const crossrefResult = await fetchPaperFromCrossref(paper);
         if (crossrefResult && crossrefResult.DOI) {
             return crossrefResult.DOI;
         }
-        return null; // No result or result has no DOI
+
+        return null; // No DOI found through either method.
     } catch (error) {
         console.error("Error finding DOI:", error);
         throw new Error("Failed to communicate with Crossref API to find DOI.");

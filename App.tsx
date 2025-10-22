@@ -1,11 +1,13 @@
 
-import React, { useState, useCallback, useMemo, useEffect } from 'react';
+
+import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react';
 
 // Services
 import * as apiService from './services/apiService';
 import * as geminiService from './services/geminiService';
 import * as crossrefService from './services/crossrefService';
 import { analyticsService } from './services/analyticsService';
+import * as extensionService from './services/extensionService';
 
 // Types
 import type {
@@ -31,6 +33,7 @@ import { SearchResultFeedback } from './components/SearchResultFeedback';
 import { AboutIcon } from './components/icons/AboutIcon';
 import { InitialSearchScreen } from './components/InitialSearchScreen';
 import { DetailsPanel } from './components/DetailsPanel';
+import { ExtensionPromo } from './components/ExtensionPromo';
 
 // Modals and Buttons
 import { ChatButton } from './components/ChatButton';
@@ -62,6 +65,7 @@ const App: React.FC = () => {
   const [summaryLength, setSummaryLength] = useState<SummaryLength>('medium');
   const [summaryStyle, setSummaryStyle] = useState<SummaryStyle>('paragraph');
   const [sortConfig, setSortConfig] = useState<SortConfig>({ key: 'relevance', direction: 'desc' });
+  const [lastSearchOptions, setLastSearchOptions] = useState<AdvancedSearchOptions>({ startYear: '', endYear: '', authors: '', excludeKeywords: '' });
 
   // UI/Modal states
   const [isChatModalOpen, setIsChatModalOpen] = useState(false);
@@ -74,12 +78,13 @@ const App: React.FC = () => {
   const [hasSearched, setHasSearched] = useState(false);
   const [isAdmin, setIsAdmin] = useState(false);
 
-
   // Chat state
   const [chatHistory, setChatHistory] = useState<ChatMessage[]>([]);
   const [isChatLoading, setIsChatLoading] = useState(false);
   const [chatError, setChatError] = useState<string | null>(null);
-  const [location, setLocation] = useState<{ latitude: number; longitude: number } | null>(null);
+  
+  // Relevance feedback state
+  const [irrelevantPaperTitles, setIrrelevantPaperTitles] = useState<Set<string>>(new Set());
 
   // Favorite papers state
   const [favoritePapers, setFavoritePapers] = useState<ResearchPaper[]>([]);
@@ -98,27 +103,97 @@ const App: React.FC = () => {
   const [suggestionsError, setSuggestionsError] = useState<string | null>(null);
 
   const [sources, setSources] = useState<SearchSourceInfo[]>([]);
+  const initialSearchHandled = useRef(false);
 
-  // Get user location and check for admin status
+  // State for AI-generated refined queries
+  const [refinedQueries, setRefinedQueries] = useState<string[]>([]);
+  const [isGeneratingRefined, setIsGeneratingRefined] = useState(false);
+
+  // check for admin status
   useEffect(() => {
     // Check for admin flag in URL
     const params = new URLSearchParams(window.location.search);
     if (params.get('admin') === 'true') {
         setIsAdmin(true);
     }
+  }, []);
 
-    // Get user location for maps grounding
-    navigator.geolocation.getCurrentPosition(
-        (position) => setLocation({ latitude: position.coords.latitude, longitude: position.coords.longitude }),
-        (err) => console.warn(`Could not get location: ${err.message}`)
-    );
+  // Load favorites from local storage on initial mount
+  useEffect(() => {
+      try {
+          const storedFavorites = localStorage.getItem('favoritePapers');
+          if (storedFavorites) {
+              setFavoritePapers(JSON.parse(storedFavorites));
+          }
+      } catch (e) {
+          console.error("Failed to load favorites from localStorage", e);
+      }
+  }, []);
+
+  // Sync favorites to local storage whenever they change
+  useEffect(() => {
+      try {
+          localStorage.setItem('favoritePapers', JSON.stringify(favoritePapers));
+      } catch (e) {
+          console.error("Failed to save favorites to localStorage", e);
+      }
+  }, [favoritePapers]);
+
+  // Listen for messages from the browser extension
+  useEffect(() => {
+      const cleanup = extensionService.listenForExtensionMessages(
+          (savedPaper) => {
+              // Add or update paper in favorites
+              setFavoritePapers(prev => {
+                  const paperId = extensionService.createPaperId(savedPaper);
+                  const existingIndex = prev.findIndex(p => extensionService.createPaperId(p) === paperId);
+                  if (existingIndex > -1) {
+                      const updated = [...prev];
+                      updated[existingIndex] = savedPaper;
+                      return updated;
+                  }
+                  return [savedPaper, ...prev];
+              });
+          },
+          (removedPaperId) => {
+              // Remove paper from favorites
+              setFavoritePapers(prev => prev.filter(p => extensionService.createPaperId(p) !== removedPaperId));
+          }
+      );
+      
+      return cleanup;
   }, []);
 
   const logAnalyticsEvent = useCallback((eventName: string, payload: object) => {
     analyticsService.logEvent(eventName, payload);
   }, []);
 
-  const handleSearch = useCallback(async (currentQuery: string, options: AdvancedSearchOptions) => {
+  // Handle content shared to the app via Web Share Target API
+  useEffect(() => {
+    if (initialSearchHandled.current) return;
+
+    const params = new URLSearchParams(window.location.search);
+    const title = params.get('title');
+    const text = params.get('text');
+    const url = params.get('url');
+
+    // Combine title and text for a more robust query, use URL as fallback.
+    const sharedQuery = [title, text].filter(Boolean).join(' ').trim() || url;
+
+    if (sharedQuery) {
+      initialSearchHandled.current = true;
+      logAnalyticsEvent('shared_content_received', { source: 'web_share_target', query: sharedQuery });
+      
+      // Update the input field and trigger the search
+      setQuery(sharedQuery);
+      handleSearch(sharedQuery, { startYear: '', endYear: '', authors: '', excludeKeywords: '' });
+      
+      // Clean the URL to avoid re-triggering on refresh
+      window.history.replaceState({}, document.title, window.location.pathname);
+    }
+  }, [logAnalyticsEvent]);
+
+  const executeSearch = useCallback(async (currentQuery: string, options: AdvancedSearchOptions) => {
     if (!currentQuery.trim()) return;
     setHasSearched(true);
     setIsLoading(true);
@@ -127,7 +202,15 @@ const App: React.FC = () => {
     setSummary('');
     setAnalysis(null);
     setSelectedPaper(null);
+    setLastSearchOptions(options);
     logAnalyticsEvent('search_started', { query: currentQuery, options });
+    
+    // Start generating refined queries in parallel
+    setIsGeneratingRefined(true);
+    setRefinedQueries([]); // Clear old ones
+    geminiService.generateRefinedQueries(currentQuery)
+      .then(queries => setRefinedQueries(queries))
+      .finally(() => setIsGeneratingRefined(false));
 
     try {
       const enhancedQuery = await geminiService.enhanceSearchQuery(currentQuery);
@@ -148,9 +231,21 @@ const App: React.FC = () => {
       setIsLoading(false);
     }
   }, [summaryLength, summaryStyle, logAnalyticsEvent]);
+
+  const handleSearch = useCallback((currentQuery: string, options: AdvancedSearchOptions) => {
+      setIrrelevantPaperTitles(new Set());
+      executeSearch(currentQuery, options);
+  }, [executeSearch]);
+  
+  const papersWithRelevance = useMemo(() => {
+    return papers.map(p => ({ ...p, isIrrelevant: irrelevantPaperTitles.has(p.title) }));
+  }, [papers, irrelevantPaperTitles]);
   
   const sortedPapers = useMemo(() => {
-    return [...papers].sort((a, b) => {
+    const relevantPapers = papersWithRelevance.filter(p => !p.isIrrelevant);
+    const irrelevantPapers = papersWithRelevance.filter(p => p.isIrrelevant);
+
+    const sortedRelevant = [...relevantPapers].sort((a, b) => {
         if (sortConfig.key === 'relevance') return 0; // Keep original order
         const aVal = a[sortConfig.key] || 0;
         const bVal = b[sortConfig.key] || 0;
@@ -158,7 +253,9 @@ const App: React.FC = () => {
         if (aVal > bVal) return sortConfig.direction === 'asc' ? 1 : -1;
         return 0;
     });
-  }, [papers, sortConfig]);
+
+    return [...sortedRelevant, ...irrelevantPapers];
+  }, [papersWithRelevance, sortConfig]);
 
   const handleSelectPaper = useCallback((paper: ResearchPaper) => {
     setSelectedPaper(paper);
@@ -172,16 +269,24 @@ const App: React.FC = () => {
   }, [logAnalyticsEvent]);
 
   const handleToggleFavorite = useCallback((paper: ResearchPaper) => {
+    const paperId = extensionService.createPaperId(paper);
+    let isNowFavorite = false;
+    
     setFavoritePapers(prev => {
-        const isFav = prev.some(p => p.title === paper.title);
-        if (isFav) {
+        const isCurrentlyFav = prev.some(p => extensionService.createPaperId(p) === paperId);
+        if (isCurrentlyFav) {
             logAnalyticsEvent('paper_unfavorited', { title: paper.title });
-            return prev.filter(p => p.title !== paper.title);
+            isNowFavorite = false;
+            return prev.filter(p => extensionService.createPaperId(p) !== paperId);
         } else {
             logAnalyticsEvent('paper_favorited', { title: paper.title });
+            isNowFavorite = true;
             return [...prev, paper];
         }
     });
+    
+    // Notify the extension about the change
+    extensionService.notifyExtensionFavoriteToggled(paper, isNowFavorite);
   }, [logAnalyticsEvent]);
 
   const handleSendMessage = useCallback(async (message: string) => {
@@ -193,7 +298,7 @@ const App: React.FC = () => {
     logAnalyticsEvent('chat_message_sent', { message });
 
     try {
-      const response = await geminiService.chatWithResults(newHistory, papers, location);
+      const response = await geminiService.chatWithResults(newHistory, papers);
       const modelMessage: ChatMessage = { role: 'model', parts: [{ text: response.text }], sources: response.sources };
       setChatHistory(prev => [...prev, modelMessage]);
     } catch (err) {
@@ -202,12 +307,43 @@ const App: React.FC = () => {
     } finally {
       setIsChatLoading(false);
     }
-  }, [chatHistory, papers, location, logAnalyticsEvent]);
+  }, [chatHistory, papers, logAnalyticsEvent]);
 
   const handleVerifyPaper = useCallback(async (paper: ResearchPaper) => {
     setPapers(prev => prev.map(p => p.title === paper.title ? { ...p, verification: { state: 'verifying' } } : p));
     try {
-        const status = await geminiService.verifyPaper(paper);
+        let status = await geminiService.verifyPaper(paper);
+
+        // If verified but the link is bad or missing, try to find a better one via DOI as a fallback.
+        if (status.state === 'verified' && (!status.pdfURL || status.linkState === 'paywalled' || status.linkState === 'invalid')) {
+            // Use existing DOI if available, otherwise fetch it.
+            const doi = paper.doi || await crossrefService.findDoiForPaper(paper);
+            
+            if (doi) {
+                 // Update paper with DOI if it was newly found, so the user sees it.
+                if (!paper.doi) {
+                    setPapers(prev => prev.map(p => p.title === paper.title ? { ...p, doi: doi, doiState: 'loaded' } : p));
+                }
+
+                const doiUrl = `https://doi.org/${doi}`;
+                
+                // Only perform the check if the new URL is different from the one we already have.
+                if (doiUrl !== status.pdfURL) {
+                    const checkResult = await geminiService.checkPdfUrl(doiUrl);
+                    
+                    // If the new link is 'valid' (a direct PDF), it's definitely an improvement.
+                    if (checkResult.linkState === 'valid') {
+                        status = {
+                            ...status,
+                            pdfURL: doiUrl,
+                            linkState: 'valid',
+                            reason: `Found direct PDF via DOI lookup. ${checkResult.reason}`
+                        };
+                    }
+                }
+            }
+        }
+
         setPapers(prev => prev.map(p => p.title === paper.title ? { ...p, verification: status, pdfURL: status.pdfURL || p.pdfURL } : p));
     } catch (err) {
         setPapers(prev => prev.map(p => p.title === paper.title ? { ...p, verification: { state: 'error', reason: 'Verification failed' } } : p));
@@ -277,20 +413,17 @@ const App: React.FC = () => {
     }
   }, []);
   
-  // FIX: Wrapped handleConceptClick in useCallback to prevent unnecessary re-renders.
   const handleConceptClick = useCallback((concept: string) => {
     setQuery(concept);
     handleSearch(concept, { startYear: '', endYear: '', authors: '', excludeKeywords: '' });
   }, [handleSearch]);
   
-  // FIX: Wrapped handleAddSource in useCallback to prevent unnecessary re-renders and use the latest `sources` state.
   const handleAddSource = useCallback((source: SearchSourceInfo) => {
     if (!sources.some(s => s.id === source.id)) {
         setSources(prev => [...prev, source]);
     }
   }, [sources]);
 
-  // FIX: Wrapped handleNewSearch in useCallback as it's a stable function that only uses state setters.
   const handleNewSearch = useCallback(() => {
     setHasSearched(false);
     setPapers([]);
@@ -299,25 +432,73 @@ const App: React.FC = () => {
     setSelectedPaper(null);
     setQuery('');
     setError(null);
+    setIrrelevantPaperTitles(new Set());
   }, []);
 
+  const handleMarkAsIrrelevant = useCallback(async (paperToMark: ResearchPaper) => {
+    logAnalyticsEvent('paper_marked_irrelevant', { title: paperToMark.title });
+    
+    // Immediately update UI for responsiveness
+    setIrrelevantPaperTitles(prev => new Set(prev).add(paperToMark.title));
+    
+    try {
+        // Ensure key concepts are available before proceeding
+        let concepts = paperToMark.keyConcepts;
+        if (!concepts) {
+            concepts = await geminiService.extractKeyConcepts(paperToMark.abstract);
+            // Update the paper object with the newly fetched concepts for future use
+            setPapers(prev => prev.map(p => p.title === paperToMark.title ? { ...p, keyConcepts: concepts } : p));
+        }
+        
+        // Combine new concepts with existing exclusion keywords
+        const currentExcludes = new Set((lastSearchOptions.excludeKeywords || '').split(',').map(k => k.trim()).filter(Boolean));
+        concepts.forEach(c => currentExcludes.add(c.trim().toLowerCase()));
+        const newExcludeKeywords = Array.from(currentExcludes).join(',');
+        
+        // Trigger a refined search without resetting the irrelevant papers list
+        const newOptions = { ...lastSearchOptions, excludeKeywords: newExcludeKeywords };
+        executeSearch(query, newOptions);
+
+    } catch (err) {
+        console.error("Failed to refine search:", err);
+        // If AI fails, the paper remains visually marked as irrelevant, which is acceptable.
+    }
+  }, [query, lastSearchOptions, executeSearch, logAnalyticsEvent]);
+  
+  const handleRefinedQuerySearch = useCallback((newQuery: string) => {
+      setQuery(newQuery);
+      // Use last search options, but clear exclude keywords as it's a new conceptual search
+      const newOptions = { ...lastSearchOptions, excludeKeywords: '' };
+      handleSearch(newQuery, newOptions);
+      logAnalyticsEvent('refined_query_search', { query: newQuery });
+  }, [handleSearch, lastSearchOptions, logAnalyticsEvent]);
+
+  const selectedPaperFromList = useMemo(() => {
+    if (!selectedPaper) {
+        return null;
+    }
+    // Find the most up-to-date version of the paper from the main 'papers' state
+    return papers.find(p => p.title === selectedPaper.title) ?? selectedPaper;
+  }, [selectedPaper, papers]);
+
+
   return (
-    <div className="bg-gray-50 min-h-screen font-sans">
-      <header className="bg-white border-b border-gray-200 sticky top-0 z-20">
+    <div className="bg-background min-h-screen font-sans">
+      <header className="bg-card border-b border-border sticky top-0 z-20">
         <div className="max-w-screen-2xl mx-auto px-4 sm:px-6 lg:px-8 py-3 flex justify-between items-center">
           <div className="flex items-center gap-3">
-            <AboutIcon className="w-8 h-8 text-blue-600" />
+            <AboutIcon className="w-8 h-8 text-primary" />
             <div>
-              <h1 className="text-xl font-bold text-gray-900">AI Research Explorer</h1>
-              <p className="text-sm text-gray-500">Your intelligent gateway to academic literature.</p>
+              <h1 className="text-xl font-bold text-foreground">AI Research Explorer</h1>
+              <p className="text-sm text-muted-foreground">Your intelligent gateway to academic literature.</p>
             </div>
           </div>
           {hasSearched ? (
-            <button onClick={handleNewSearch} className="text-sm font-medium text-blue-600 hover:text-blue-800">
+            <button onClick={handleNewSearch} className="text-sm font-medium text-primary hover:underline">
                 New Search
             </button>
           ) : (
-            <button onClick={() => setIsAboutModalOpen(true)} className="text-sm font-medium text-blue-600 hover:text-blue-800">
+            <button onClick={() => setIsAboutModalOpen(true)} className="text-sm font-medium text-primary hover:underline">
                 About
             </button>
           )}
@@ -336,7 +517,9 @@ const App: React.FC = () => {
                 summaryStyle={summaryStyle}
                 onStyleChange={setSummaryStyle}
                 logAnalyticsEvent={logAnalyticsEvent}
-            />
+            >
+              <ExtensionPromo />
+            </InitialSearchScreen>
         ) : (
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
                 {/* Left Column: Search & Results */}
@@ -351,21 +534,23 @@ const App: React.FC = () => {
                         summaryStyle={summaryStyle}
                         onStyleChange={setSummaryStyle}
                         logAnalyticsEvent={logAnalyticsEvent}
+                        excludeKeywords={lastSearchOptions.excludeKeywords}
                     />
                     <FavoritesList favoritePapers={favoritePapers} onToggleFavorite={handleToggleFavorite} />
-                    <div className="p-4 bg-white rounded-lg shadow-sm border">
-                        <button onClick={() => setIsDbFinderModalOpen(true)} className="w-full text-center text-sm font-medium text-blue-600 hover:text-blue-800">Find More Databases</button>
+                    <div className="p-4 bg-card rounded-lg shadow-sm border">
+                        <button onClick={() => setIsDbFinderModalOpen(true)} className="w-full text-center text-sm font-medium text-primary hover:underline">Find More Databases</button>
                     </div>
-                    {isLoading && <LoadingSpinner message="Searching for papers..." />}
+                    {isLoading && <LoadingSpinner message="Refining search results..." />}
                     {error && <ErrorMessage message={error} />}
                     {!isLoading && !error && papers.length > 0 && (
                         <div>
                             <ResultsDisplay
                                 papers={sortedPapers}
-                                selectedPaper={selectedPaper}
+                                selectedPaper={selectedPaperFromList}
                                 onSelectPaper={handleSelectPaper}
                                 sortConfig={sortConfig}
                                 onSortChange={setSortConfig}
+                                onMarkAsIrrelevant={handleMarkAsIrrelevant}
                             />
                             <SearchResultFeedback query={query} onOpenFeedbackModal={() => setIsSummaryFeedbackModalOpen(true)} />
                         </div>
@@ -375,21 +560,25 @@ const App: React.FC = () => {
                 {/* Right Column: Details Panel */}
                 <div className="lg:col-span-7">
                     <DetailsPanel
-                        selectedPaper={selectedPaper}
+                        selectedPaper={selectedPaperFromList}
                         summary={summary}
                         analysis={analysis}
-                        isFavorite={selectedPaper ? favoritePapers.some(p => p.title === selectedPaper.title) : false}
+                        isFavorite={selectedPaperFromList ? favoritePapers.some(p => extensionService.createPaperId(p) === extensionService.createPaperId(selectedPaperFromList)) : false}
                         onToggleFavorite={handleToggleFavorite}
                         onFindConnectedPapers={handleFindConnectedPapers}
                         isFindingConnected={isFindingConnected}
                         onAnalyzePaper={handleAnalyzePaper}
                         isAnalyzingPaper={isAnalyzingPaper}
                         onVerifyPaper={handleVerifyPaper}
-                        isVerifying={!!selectedPaper?.verification && selectedPaper.verification.state === 'verifying'}
+                        isVerifying={!!selectedPaperFromList?.verification && selectedPaperFromList.verification.state === 'verifying'}
                         onConceptClick={handleConceptClick}
                         onFindDoi={handleFindDoi}
                         onGenerateSuggestions={handleGenerateSuggestions}
                         isGeneratingSuggestions={isGeneratingSuggestions}
+                        logAnalyticsEvent={logAnalyticsEvent}
+                        refinedQueries={refinedQueries}
+                        isGeneratingRefined={isGeneratingRefined}
+                        onRefinedQuerySearch={handleRefinedQuerySearch}
                     />
                 </div>
             </div>

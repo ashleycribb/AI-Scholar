@@ -13,6 +13,7 @@ import type {
   GroundingSource
 } from "../types";
 import * as crossrefService from './crossrefService';
+import * as unpaywallService from './unpaywallService';
 
 // Always use `const ai = new GoogleGenAI({apiKey: process.env.API_KEY});`.
 const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
@@ -28,6 +29,48 @@ const safeJsonParse = (jsonString: string) => {
     return null;
   }
 };
+
+/**
+ * Attempts to verify a URL points to an accessible PDF by making a HEAD request.
+ * This is a best-effort client-side check and may be blocked by CORS policies.
+ * @param url The URL of the PDF to check.
+ * @returns An object with the determined link state and a reason.
+ */
+export const checkPdfUrl = async (url: string): Promise<{ linkState: 'valid' | 'invalid' | 'paywalled' | 'unchecked', reason: string }> => {
+    if (!url) {
+        return { linkState: 'invalid', reason: 'No URL provided.' };
+    }
+
+    try {
+        // Use a timeout to prevent long waits on unresponsive servers
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 5000); // 5-second timeout
+
+        // A HEAD request is lighter than GET. It's still subject to CORS, but it's our best-effort client-side check.
+        const response = await fetch(url, { method: 'HEAD', signal: controller.signal });
+        clearTimeout(timeoutId);
+
+        if (!response.ok) {
+             return { linkState: 'invalid', reason: `Link is broken or inaccessible (Status: ${response.status}).` };
+        }
+
+        const contentType = response.headers.get('Content-Type');
+        if (contentType?.includes('application/pdf')) {
+            return { linkState: 'valid', reason: 'Direct PDF link confirmed.' };
+        }
+        if (contentType?.includes('text/html')) {
+            return { linkState: 'paywalled', reason: 'Link leads to a webpage, not a direct PDF. A paywall is likely.' };
+        }
+
+        return { linkState: 'unchecked', reason: 'Could not definitively determine content type from headers.' };
+
+    } catch (error) {
+        // This will be triggered by timeouts, network errors, and most CORS errors.
+        console.warn(`Could not verify PDF link (${url}):`, error);
+        return { linkState: 'invalid', reason: 'Could not access the link due to network issues, a timeout, or browser security (CORS) restrictions.' };
+    }
+};
+
 
 const searchQueryEnhancementSchema = {
     type: Type.OBJECT,
@@ -79,6 +122,54 @@ export const enhanceSearchQuery = async (userQuery: string): Promise<EnhancedQue
             refined_query: userQuery,
             key_concepts: [userQuery],
         };
+    }
+};
+
+const refinedQueriesSchema = {
+    type: Type.OBJECT,
+    properties: {
+        queries: {
+            type: Type.ARRAY,
+            items: { type: Type.STRING }
+        },
+    },
+    required: ["queries"],
+};
+
+export const generateRefinedQueries = async (userQuery: string): Promise<string[]> => {
+    const prompt = `You are an expert research librarian. Based on the user's research topic, generate 4 distinct and sophisticated search queries for an academic database like OpenAlex or Google Scholar.
+    Each query should use boolean operators (AND, OR), phrase searching (""), and parentheses for grouping to explore different facets of the topic.
+
+    User Topic: "${userQuery}"
+
+    Return your response as a single JSON object with a single key "queries", which is an array of 4 query strings. Do not include any other text or markdown.
+
+    Example for topic "AI in systematic reviews":
+    {
+        "queries": [
+            "(\\"artificial intelligence\\" OR \\"machine learning\\" OR \\"deep learning\\") AND (\\"systematic review\\" OR \\"literature review\\") AND (\\"automation\\" OR \\"screening\\" OR \\"data extraction\\")",
+            "(\\"natural language processing\\" OR \\"NLP\\") AND (\\"systematic review automation\\") AND (\\"bias\\" OR \\"accuracy\\" OR \\"efficiency\\")",
+            "(\\"generative AI\\" OR \\"large language models\\") AND (\\"research synthesis\\" OR \\"literature review support\\")",
+            "(\\"AI\\" OR \\"machine learning\\") AND (\\"challenges\\" OR \\"limitations\\" OR \\"ethical considerations\\") AND (\\"automated literature review\\")"
+        ]
+    }`;
+
+    try {
+        const response = await ai.models.generateContent({
+            model: "gemini-2.5-flash",
+            contents: prompt,
+            config: {
+                responseMimeType: "application/json",
+                responseSchema: refinedQueriesSchema,
+            },
+        });
+        const result = safeJsonParse(response.text ?? '');
+        if (!result || !result.queries) return [];
+        return result.queries;
+    } catch (error) {
+        console.error("Error generating refined queries:", error);
+        // Return empty array on failure, so the UI can handle it gracefully.
+        return [];
     }
 };
 
@@ -186,35 +277,16 @@ export const generatePaperBasedSuggestions = async (paper: ResearchPaper): Promi
 
 export const chatWithResults = async (
     history: ChatMessage[],
-    papers: ResearchPaper[],
-    location: { latitude: number; longitude: number } | null
+    papers: ResearchPaper[]
 ): Promise<{ text: string, sources: GroundingSource[] }> => {
     const paperContext = papers.map((p, i) => `[Paper ${i+1}] ${p.title}\n${p.abstract}`).join('\n\n');
     
     const systemInstruction = `You are a helpful research assistant. The user is asking questions about a set of research papers.
     Your knowledge is limited to the provided papers. Answer the user's questions based *only* on the information in the abstracts below.
     If the answer cannot be found in the papers, say that you cannot answer based on the provided information. Be concise.
-    You can also answer general questions or location-based questions if the user asks them.
 
     Reference Papers:
     ${paperContext}`;
-
-    // FIX: Replaced `findLast` with a compatible alternative (`.reverse().find()`) to support older TS/JS versions.
-    const lastUserMessage = [...history].reverse().find(m => m.role === 'user')?.parts[0].text.toLowerCase() || '';
-    const isLocationQuery = ['nearby', 'where is', 'directions to', 'restaurants near', 'coffee shops', 'map of'].some(kw => lastUserMessage.includes(kw));
-
-    const config: any = { systemInstruction };
-    if (isLocationQuery && location) {
-        config.tools = [{ googleMaps: {} }];
-        config.toolConfig = {
-            retrievalConfig: {
-                latLng: {
-                    latitude: location.latitude,
-                    longitude: location.longitude
-                }
-            }
-        };
-    }
     
     try {
         const contents = history.map(msg => ({
@@ -225,18 +297,11 @@ export const chatWithResults = async (
         const response = await ai.models.generateContent({
             model: 'gemini-2.5-flash',
             contents,
-            config
+            config: { systemInstruction }
         });
         
-        const groundingChunks = response.candidates?.[0]?.groundingMetadata?.groundingChunks || [];
-        const sources: GroundingSource[] = groundingChunks
-            .filter((chunk: any) => chunk.maps)
-            .map((chunk: any) => ({
-                title: chunk.maps.title,
-                uri: chunk.maps.uri,
-            }));
-
-        return { text: response.text ?? '', sources };
+        // Return an empty sources array as we are no longer using grounding tools here.
+        return { text: response.text ?? '', sources: [] };
     } catch (error) {
         console.error("Error in chat:", error);
         throw new Error("Failed to get chat response.");
@@ -356,26 +421,36 @@ export const analyzeSinglePaper = async (paper: ResearchPaper): Promise<PaperAna
 };
 
 export const verifyPaper = async (paper: ResearchPaper): Promise<VerificationStatus> => {
-    // Step 1: Attempt verification with Crossref first for a reliable, structured result.
-    try {
-        const crossrefResult = await crossrefService.fetchPaperFromCrossref(paper);
-        if (crossrefResult) {
-            // Find a direct PDF link if available from Crossref's link-walking service
-            const pdfLink = crossrefResult.link?.find((l) => l['content-type'] === 'application/pdf');
-            const sourceUrl = crossrefResult.URL || (crossrefResult.DOI ? `https://doi.org/${crossrefResult.DOI}` : undefined);
-            
+    // Step 1: Get a canonical DOI from Crossref. This is the most reliable identifier.
+    const doi = await crossrefService.findDoiForPaper(paper);
+
+    if (doi) {
+        // Step 2: Use the DOI to find a legal, open-access PDF via Unpaywall.
+        const openAccessUrl = await unpaywallService.findOpenAccessPdf(doi);
+        if (openAccessUrl) {
             return {
                 state: 'verified',
-                source: 'Crossref',
-                linkState: pdfLink ? 'valid' : 'unchecked',
-                pdfURL: pdfLink?.URL || sourceUrl, // Prioritize the direct PDF link
+                source: 'Unpaywall',
+                linkState: 'valid',
+                reason: 'Found a legal open-access PDF.',
+                pdfURL: openAccessUrl,
             };
         }
-    } catch (error) {
-        console.warn("Crossref verification failed or returned no match. Proceeding to web search.", error);
+        
+        // If no OA link is found, we still know the paper exists because we have a DOI.
+        // The link is likely paywalled.
+        return {
+            state: 'verified',
+            source: 'Crossref',
+            linkState: 'paywalled',
+            reason: 'Paper existence confirmed by DOI, but no free version was found.',
+            pdfURL: `https://doi.org/${doi}`, // Provide the DOI link as a fallback.
+        };
     }
+    
+    console.warn("Could not find DOI via Crossref. Falling back to Gemini web search.", paper.title);
 
-    // Step 2: If Crossref fails or finds no match, fall back to the Gemini-powered web search.
+    // Step 3: If Crossref/Unpaywall fails, fall back to the Gemini-powered web search as a last resort.
     const prompt = `You are a meticulous research assistant. Verify the existence and accessibility of the following academic paper using a web search. Your primary goal is to find a freely accessible PDF. A lookup in the Crossref database was inconclusive, so a broader search is needed.
 
     Paper Details:
@@ -385,22 +460,18 @@ export const verifyPaper = async (paper: ResearchPaper): Promise<VerificationSta
     
     Verification Steps:
     1.  **Confirm Existence:** Use Google Scholar first to confirm the paper's existence. Note the primary source (e.g., Google Scholar, arXiv, Publisher's website).
-    2.  **Validate Provided URL:** If a URL was provided, analyze search results to determine its status. Is it a direct link to the paper, a 404 page, or something else?
-    3.  **Find Free PDF:** Actively search for a direct, publicly accessible PDF link. Look for links from university repositories, arXiv, or author homepages.
-    4.  **Detect Paywalls:** If the primary link leads to a publisher's page that requires payment or a subscription to access the full text, and no free alternative PDF is found, classify it as paywalled.
-    5.  **Format Response:** Respond with a single JSON object. Do not include any other text or markdown.
+    2.  **Find Free PDF:** Actively search for a direct, publicly accessible PDF link. Prioritize links from university repositories, arXiv, or author homepages.
+    3.  **Format Response:** Respond with a single JSON object. Do not include any other text or markdown. My application will perform a direct check on the URL you provide, so it is critical that you find a URL that points directly to a PDF file if one exists.
     
     JSON Response Schema:
     - "state": One of "verified", "not_found", "error".
     - "source": The best source found (e.g., "Google Scholar", "arXiv", "Publisher Site").
-    - "linkState": The status of the paper's accessibility. One of "valid" (free PDF found), "paywalled" (verified existence but PDF is behind a paywall), "invalid" (provided link is broken/404), "unchecked".
-    - "pdfURL": The direct URL to the free PDF, ONLY if "linkState" is "valid".
-    - "reason": A brief explanation for "not_found", "error", or "paywalled" states.
+    - "pdfURL": The direct URL to the free PDF if found. Otherwise, omit this field.
+    - "reason": A brief explanation for "not_found", or "error" states, or if the paper exists but no free PDF was found.
     
     Example Responses:
-    - Free PDF found: { "state": "verified", "source": "arXiv", "linkState": "valid", "pdfURL": "https://arxiv.org/pdf/1234.5678.pdf" }
-    - Paywalled: { "state": "verified", "source": "Elsevier", "linkState": "paywalled", "reason": "Paper is available on the publisher's site but requires a subscription to access the full text." }
-    - Broken Link, but PDF found elsewhere: { "state": "verified", "source": "Google Scholar", "linkState": "invalid", "pdfURL": "https://university.edu/repo/paper.pdf", "reason": "The original link was broken, but an alternative free PDF was found." }
+    - Free PDF found: { "state": "verified", "source": "arXiv", "pdfURL": "https://arxiv.org/pdf/1234.5678.pdf", "reason": "Found on arXiv." }
+    - Paywalled: { "state": "verified", "source": "Elsevier", "reason": "Paper is available on the publisher's site but appears to be behind a paywall." }
     - Not Found: { "state": "not_found", "reason": "Could not find a reliable source for this paper via web search." }
     `;
     
@@ -413,11 +484,27 @@ export const verifyPaper = async (paper: ResearchPaper): Promise<VerificationSta
             },
         });
         
-        const result = safeJsonParse(response.text ?? '');
+        let result = safeJsonParse(response.text ?? '') as VerificationStatus;
         if (!result || !result.state) return { state: 'error', reason: 'Invalid API response for verification.' };
-        return result as VerificationStatus;
+
+        // After getting Gemini's result, perform our own check on the URL it found.
+        if (result.pdfURL) {
+            const checkResult = await checkPdfUrl(result.pdfURL);
+            // Override Gemini's findings with our more reliable, direct check.
+            result.linkState = checkResult.linkState;
+            result.reason = (result.reason || '') + ' ' + checkResult.reason;
+            if (checkResult.linkState === 'invalid') {
+                result.pdfURL = undefined;
+            }
+        } else if (result.state === 'verified') {
+            // If Gemini says verified but found no URL, we mark as unchecked.
+            result.linkState = 'unchecked';
+            result.reason = result.reason || 'Paper existence verified by AI, but no direct PDF link was found.';
+        }
+
+        return result;
     } catch (error) {
-        console.error("Error verifying paper:", error);
+        console.error("Error verifying paper with Gemini:", error);
         return { state: 'error', reason: 'An error occurred during verification.' };
     }
 };

@@ -23,28 +23,28 @@ export const FeedbackForm: React.FC<FeedbackFormProps> = ({ onSubmit }) => {
   if (submitted) {
       return (
           <div className="text-center py-8">
-              <h3 className="text-xl font-semibold text-green-700">Thank you!</h3>
-              <p className="text-gray-600 mt-2">Your feedback has been sent.</p>
+              <h3 className="text-xl font-semibold text-primary">Thank you!</h3>
+              <p className="text-muted-foreground mt-2">Your feedback has been sent.</p>
           </div>
       )
   }
 
   return (
     <div className="w-full max-w-lg mx-auto">
-        <p className="text-gray-600 mb-6 text-center">
+        <p className="text-muted-foreground mb-6 text-center">
           We'd love to hear your thoughts! What can we improve? Is there a feature you're missing?
         </p>
         <form onSubmit={handleSubmit}>
           <div className="space-y-4">
             <div>
-              <label htmlFor="feedback-category" className="block text-sm font-medium text-gray-700 mb-1">
+              <label htmlFor="feedback-category" className="block text-sm font-medium text-foreground mb-1">
                 Feedback Type
               </label>
               <select
                 id="feedback-category"
                 value={category}
                 onChange={(e) => setCategory(e.target.value)}
-                className="w-full px-3 py-2 bg-white text-gray-900 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+                className="w-full h-10 px-3 py-2 bg-background text-foreground border border-input rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-ring"
               >
                 <option value="feature_suggestion">Feature Suggestion</option>
                 <option value="bug_report">Bug Report</option>
@@ -52,7 +52,7 @@ export const FeedbackForm: React.FC<FeedbackFormProps> = ({ onSubmit }) => {
               </select>
             </div>
             <div>
-              <label htmlFor="feedback-text" className="block text-sm font-medium text-gray-700 mb-1">
+              <label htmlFor="feedback-text" className="block text-sm font-medium text-foreground mb-1">
                 Your Message
               </label>
               <textarea
@@ -60,7 +60,7 @@ export const FeedbackForm: React.FC<FeedbackFormProps> = ({ onSubmit }) => {
                 value={text}
                 onChange={(e) => setText(e.target.value)}
                 rows={5}
-                className="w-full px-3 py-2 bg-white text-gray-900 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+                className="w-full px-3 py-2 bg-background text-foreground border border-input rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-ring"
                 placeholder="Please be as detailed as possible..."
                 required
               />
@@ -70,9 +70,9 @@ export const FeedbackForm: React.FC<FeedbackFormProps> = ({ onSubmit }) => {
             <button
               type="submit"
               disabled={!text.trim()}
-              className="px-6 py-2.5 bg-blue-600 text-white font-medium rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:bg-gray-400 disabled:cursor-not-allowed"
+              className="h-10 px-6 py-2.5 bg-primary text-primary-foreground font-medium rounded-md hover:bg-primary/90 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-ring disabled:opacity-50"
             >
-              Send via Email
+              Send Feedback
             </button>
           </div>
         </form>

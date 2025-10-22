@@ -1,4 +1,5 @@
 
+
 import React, { useState, useEffect, useRef } from 'react';
 import type { ChatMessage } from '../types';
 import { SendIcon } from './icons/SendIcon';
@@ -12,7 +13,7 @@ interface ChatPanelProps {
 }
 
 const ChatBlinkingCursor: React.FC = () => (
-    <span className="inline-block w-2 h-5 bg-blue-700 animate-pulse ml-1" />
+    <span className="inline-block w-2 h-5 bg-primary animate-pulse ml-1" />
 );
 
 const FormattedMessage: React.FC<{ text: string }> = ({ text }) => {
@@ -54,11 +55,11 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({ history, isLoading, error,
     };
 
     return (
-        <div className="h-full bg-white p-4 flex flex-col">
+        <div className="h-full bg-card p-4 flex flex-col">
             <div className="flex-grow overflow-y-auto pr-2 space-y-4">
                 {history.map((msg, index) => (
                     <div key={index} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                        <div className={`max-w-prose px-4 py-2 rounded-xl ${msg.role === 'user' ? 'bg-blue-600 text-white' : 'bg-gray-200 text-gray-800'}`}>
+                        <div className={`max-w-prose px-4 py-2 rounded-xl ${msg.role === 'user' ? 'bg-primary text-primary-foreground' : 'bg-secondary text-secondary-foreground'}`}>
                             <p className="text-base whitespace-pre-wrap">
                                 <FormattedMessage text={msg.parts[0].text} />
                                 {isLoading && msg.role === 'model' && index === history.length - 1 && <ChatBlinkingCursor />}
@@ -72,22 +73,22 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({ history, isLoading, error,
                 {/* Invisible element to scroll to */}
                 <div ref={messagesEndRef} />
             </div>
-            {error && <div className="text-red-600 text-sm mt-2 flex-shrink-0">{error}</div>}
-            <div className="mt-4 pt-4 border-t border-gray-200 flex-shrink-0">
+            {error && <div className="text-destructive text-sm mt-2 flex-shrink-0">{error}</div>}
+            <div className="mt-4 pt-4 border-t border-border flex-shrink-0">
                 <form onSubmit={handleSubmit} className="flex items-center gap-2">
                     <input
                         type="text"
                         value={inputValue}
                         onChange={(e) => setInputValue(e.target.value)}
                         placeholder="Ask a follow-up question..."
-                        className="w-full pl-4 pr-4 py-2 bg-gray-100 border border-gray-300 rounded-full focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-shadow duration-200"
+                        className="w-full h-10 pl-4 pr-4 bg-background border border-input rounded-md focus:ring-2 focus:ring-ring focus:ring-offset-2 transition-shadow duration-200"
                         disabled={isLoading}
                         aria-label="Chat input"
                     />
                     <button
                         type="submit"
                         disabled={isLoading || !inputValue.trim()}
-                        className="p-3 bg-blue-600 text-white rounded-full hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors duration-200"
+                        className="h-10 w-10 flex items-center justify-center p-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-ring disabled:opacity-50 transition-colors duration-200"
                         aria-label="Send message"
                     >
                         <SendIcon className="w-5 h-5" />
