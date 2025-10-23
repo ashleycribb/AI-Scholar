@@ -1,3 +1,4 @@
+
 import React from 'react';
 import type { ResearchPaper } from '../types';
 import { ThumbsDownIcon } from './icons/ThumbsDownIcon';
@@ -8,10 +9,12 @@ interface PaperCardProps {
     isSelected: boolean;
     onSelectPaper: (paper: ResearchPaper) => void;
     onMarkAsIrrelevant: (paper: ResearchPaper) => void;
+    isSelectedForCitation: boolean;
+    onToggleForCitation: (paper: ResearchPaper) => void;
 }
 
 export const PaperCard: React.FC<PaperCardProps> = ({ 
-    paper, isOrigin, isSelected, onSelectPaper, onMarkAsIrrelevant
+    paper, isOrigin, isSelected, onSelectPaper, onMarkAsIrrelevant, isSelectedForCitation, onToggleForCitation
 }) => {
     const isIrrelevant = paper.isIrrelevant ?? false;
 
@@ -20,12 +23,17 @@ export const PaperCard: React.FC<PaperCardProps> = ({
         ? 'opacity-60 bg-muted/50 border-border' 
         : isSelected
         ? 'bg-accent border-primary'
-        : 'bg-card hover:bg-accent border-transparent cursor-pointer'
+        : 'bg-card hover:bg-accent border-transparent'
     }`;
 
     const handleIrrelevantClick = (e: React.MouseEvent) => {
         e.stopPropagation(); // Prevent onSelectPaper from firing
         onMarkAsIrrelevant(paper);
+    };
+
+    const handleCheckboxChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+        e.stopPropagation();
+        onToggleForCitation(paper);
     };
     
     const abstractSnippet = paper.abstract && paper.abstract.length > 150 
@@ -33,23 +41,40 @@ export const PaperCard: React.FC<PaperCardProps> = ({
         : paper.abstract;
 
     return (
-        <div onClick={() => !isIrrelevant && onSelectPaper(paper)} className={cardClasses}>
-             {isOrigin && !isIrrelevant && (
-                <p className="text-xs font-bold uppercase text-purple-600 mb-1">
-                    Origin Paper
-                </p>
-            )}
-            <h3 className="text-sm font-bold text-card-foreground truncate">{paper.title}</h3>
-            <div className="flex justify-between items-center mt-1">
-                <p className="text-xs text-muted-foreground truncate flex-grow pr-2">{paper.authors}</p>
-                <p className="text-xs text-muted-foreground font-medium flex-shrink-0">{paper.year}</p>
+        <div className={cardClasses}>
+            <div className="flex items-start gap-3">
+                {!isIrrelevant && (
+                    <input
+                        type="checkbox"
+                        checked={isSelectedForCitation}
+                        onChange={handleCheckboxChange}
+                        onClick={(e) => e.stopPropagation()}
+                        className="mt-1 flex-shrink-0 h-4 w-4 rounded border-input text-primary focus:ring-primary cursor-pointer"
+                        aria-label={`Select ${paper.title} for citation`}
+                    />
+                )}
+                 <div 
+                    className={`flex-grow ${isIrrelevant ? '' : 'cursor-pointer'}`}
+                    onClick={() => !isIrrelevant && onSelectPaper(paper)}
+                >
+                    {isOrigin && !isIrrelevant && (
+                        <p className="text-xs font-bold uppercase text-purple-600 mb-1">
+                            Origin Paper
+                        </p>
+                    )}
+                    <h3 className="text-sm font-bold text-card-foreground break-words">{paper.title}</h3>
+                    <div className="flex justify-between items-center mt-1">
+                        <p className="text-xs text-muted-foreground break-words flex-grow pr-2">{paper.authors}</p>
+                        <p className="text-xs text-muted-foreground font-medium flex-shrink-0">{paper.year}</p>
+                    </div>
+                    
+                    {abstractSnippet && (
+                        <p className="text-xs text-secondary-foreground mt-2 leading-relaxed">
+                            {abstractSnippet}
+                        </p>
+                    )}
+                </div>
             </div>
-            
-            {abstractSnippet && (
-                <p className="text-xs text-secondary-foreground mt-2 leading-relaxed">
-                    {abstractSnippet}
-                </p>
-            )}
             
             {!isIrrelevant && (
                 <button

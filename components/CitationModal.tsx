@@ -10,12 +10,6 @@ import { ZoteroIcon } from './icons/ZoteroIcon';
 
 interface CitationGeneratorProps {
   papers: ResearchPaper[];
-  onGenerate: () => void;
-  isLoading: boolean;
-  citations: string[];
-  error: string | null;
-  citationStyle: CitationStyle;
-  onStyleChange: (style: CitationStyle) => void;
 }
 
 const citationStyles: { id: CitationStyle; name: string }[] = [
@@ -27,15 +21,35 @@ const citationStyles: { id: CitationStyle; name: string }[] = [
     { id: 'vancouver', name: 'Vancouver' },
 ];
 
-export const CitationGenerator: React.FC<CitationGeneratorProps> = ({ 
-    papers, onGenerate, isLoading, citations, error, citationStyle, onStyleChange 
-}) => {
+export const CitationGenerator: React.FC<CitationGeneratorProps> = ({ papers }) => {
+  const [isLoading, setIsLoading] = useState(false);
+  const [citations, setCitations] = useState<string[]>([]);
+  const [error, setError] = useState<string | null>(null);
+  const [citationStyle, setCitationStyle] = useState<CitationStyle>('apa');
+  
   const [copied, setCopied] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
 
+  const handleGenerate = async () => {
+    setIsLoading(true);
+    setError(null);
+    setCitations([]);
+    try {
+      const result = await apiService.generateCitations(papers, citationStyle);
+      setCitations(result);
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : "An unknown error occurred.";
+      setError(errorMessage);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   const handleCopy = () => {
     if (citations.length > 0) {
-      navigator.clipboard.writeText(citations.join('\n\n'));
+      // Create a plain text version for copying by stripping HTML tags
+      const plainText = citations.map(c => c.replace(/<[^>]*>?/gm, '')).join('\n\n');
+      navigator.clipboard.writeText(plainText);
       setCopied(true);
       setTimeout(() => setCopied(false), 2000); // Reset after 2 seconds
     }
@@ -62,17 +76,28 @@ export const CitationGenerator: React.FC<CitationGeneratorProps> = ({
         setIsExporting(false);
     }
   };
+  
+  if (papers.length === 0) {
+    return (
+        <div className="text-center py-10">
+            <h3 className="text-lg font-semibold text-foreground">No Papers Selected</h3>
+            <p className="text-muted-foreground mt-2">
+                Please use the checkboxes in the search results list to select papers for your bibliography.
+            </p>
+        </div>
+    );
+  }
 
   return (
     <div>
-        <p className="text-sm text-muted-foreground mb-4">Create a formatted reference list for the {papers.length} papers found in your search.</p>
+        <p className="text-sm text-muted-foreground mb-4">Create a formatted reference list for the {papers.length} selected paper(s).</p>
         <div className="flex flex-col sm:flex-row items-center gap-4 mb-6 p-4 bg-muted/50 rounded-lg border">
             <div className="flex-grow w-full">
                 <label htmlFor="citation-style" className="block text-sm font-medium text-foreground mb-1">Citation Style</label>
                 <select
                     id="citation-style"
                     value={citationStyle}
-                    onChange={(e) => onStyleChange(e.target.value as CitationStyle)}
+                    onChange={(e) => setCitationStyle(e.target.value as CitationStyle)}
                     className="w-full h-10 pl-3 pr-10 py-2 text-base text-foreground border-input focus:outline-none focus:ring-2 focus:ring-ring sm:text-sm rounded-md bg-background"
                     disabled={isLoading}
                 >
@@ -81,7 +106,7 @@ export const CitationGenerator: React.FC<CitationGeneratorProps> = ({
             </div>
             <div className="w-full sm:w-auto self-end flex flex-col sm:flex-row gap-2">
                 <button
-                    onClick={onGenerate}
+                    onClick={handleGenerate}
                     disabled={isLoading || papers.length === 0}
                     className="w-full sm:w-auto h-10 px-6 bg-primary text-primary-foreground font-semibold rounded-md hover:bg-primary/90 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-ring disabled:opacity-50 transition-colors duration-200"
                 >

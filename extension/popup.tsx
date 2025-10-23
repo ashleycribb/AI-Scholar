@@ -1,4 +1,5 @@
-/// <reference types="chrome" />
+// Fix: Replaced triple-slash directive with a global declaration for 'chrome' to resolve type errors.
+declare const chrome: any;
 
 import React, { useState, useEffect } from 'react';
 import ReactDOM from 'react-dom/client';

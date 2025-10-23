@@ -27,7 +27,7 @@ export const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({ analysis, 
         
         {analysis && (
             <>
-                <div>
+                {analysis.clusters.length > 0 && <div>
                     <h3 className="text-lg font-semibold text-foreground mb-3">Thematic Clusters</h3>
                     <div className="space-y-3">
                         {analysis.clusters.map(cluster => (
@@ -46,10 +46,15 @@ export const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({ analysis, 
                             </div>
                         ))}
                     </div>
-                </div>
+                </div>}
                 
-                <PublicationYearChart data={analysis.publicationYears} />
-                <TopAuthorsChart data={analysis.topAuthors} />
+                {(analysis.publicationYears.length > 0 || analysis.topAuthors.length > 0) &&
+                    <div className="space-y-6 pt-4">
+                        <h3 className="text-xl font-bold text-foreground border-b border-border pb-2">Bibliometric Insights</h3>
+                        <PublicationYearChart data={analysis.publicationYears} />
+                        <TopAuthorsChart data={analysis.topAuthors} />
+                    </div>
+                }
             </>
         )}
     </div>

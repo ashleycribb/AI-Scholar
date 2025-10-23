@@ -19,7 +19,7 @@ interface RefinedQueriesProps {
 }
 
 const RefinedQueries: React.FC<RefinedQueriesProps> = ({ queries, isLoading, onQueryClick }) => {
-  if (!isLoading && queries.length === 0) {
+  if (isLoading || queries.length === 0) {
     return null;
   }
   
@@ -29,11 +29,6 @@ const RefinedQueries: React.FC<RefinedQueriesProps> = ({ queries, isLoading, onQ
         <LightbulbIcon className="w-6 h-6 text-yellow-500" />
         <span>AI-Generated Query Suggestions</span>
       </h3>
-      {isLoading ? (
-         <div className="py-8">
-            <p className="text-center text-muted-foreground">Generating new angles...</p>
-        </div>
-      ) : (
         <div className="space-y-3">
             {queries.map((query, index) => (
             <div
@@ -51,7 +46,6 @@ const RefinedQueries: React.FC<RefinedQueriesProps> = ({ queries, isLoading, onQ
             </div>
             ))}
         </div>
-      )}
     </div>
   );
 };

@@ -15,6 +15,7 @@ interface SearchFormProps {
   onStyleChange: (style: SummaryStyle) => void;
   logAnalyticsEvent: (eventName: string, payload: object) => void;
   excludeKeywords?: string;
+  hideSuggestions?: boolean;
 }
 
 const summaryStyles: { id: SummaryStyle; name: string }[] = [
@@ -33,7 +34,8 @@ export const SearchForm: React.FC<SearchFormProps> = ({
     summaryStyle,
     onStyleChange, 
     logAnalyticsEvent,
-    excludeKeywords
+    excludeKeywords,
+    hideSuggestions = false,
 }) => {
   const [suggestions, setSuggestions] = useState<string[]>([]);
   const [isSuggesting, setIsSuggesting] = useState(false);
@@ -76,7 +78,7 @@ export const SearchForm: React.FC<SearchFormProps> = ({
       clearTimeout(debounceTimeout.current);
     }
 
-    if (isLoading || suggestionsDisabled) {
+    if (isLoading || suggestionsDisabled || hideSuggestions) {
       setSuggestions([]);
       return;
     }
@@ -94,7 +96,7 @@ export const SearchForm: React.FC<SearchFormProps> = ({
         clearTimeout(debounceTimeout.current);
       }
     };
-  }, [query, fetchSuggestions, isLoading, suggestionsDisabled]);
+  }, [query, fetchSuggestions, isLoading, suggestionsDisabled, hideSuggestions]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -213,7 +215,7 @@ export const SearchForm: React.FC<SearchFormProps> = ({
             </div>
         )}
       </form>
-      {!isLoading && (
+      {!isLoading && !hideSuggestions && (
         <SearchSuggestions
             suggestions={suggestions}
             isLoading={isSuggesting}

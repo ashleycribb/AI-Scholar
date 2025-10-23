@@ -5,26 +5,47 @@ let citeConstructorPromise: Promise<any> | null = null;
 /**
  * Returns a promise that resolves with the `Cite` constructor.
  * It assumes Citation.js scripts have been loaded globally via script tags in index.html.
+ * It polls for the library and its plugins to be available.
  * @returns A promise that resolves to the `Cite` constructor.
  */
 const getCiteConstructor = (): Promise<any> => {
-    // If the promise is already created (or resolved), return it.
+    // If the promise is already created (and pending or resolved), return it.
     if (citeConstructorPromise) {
         return citeConstructorPromise;
     }
 
-    // Create a promise that resolves with the global `Cite` object.
+    // Create a promise that polls for the global `Cite` object and its plugins.
     citeConstructorPromise = new Promise((resolve, reject) => {
-        // The scripts are loaded before this module, so Cite should be available on the window object.
-        const GlobalCite = (window as any).Cite;
-        
-        // Final check to ensure everything is ready.
-        if (typeof GlobalCite === 'function' && GlobalCite.plugins?.output.has('ris')) {
-            resolve(GlobalCite);
-        } else {
-            // This case should ideally not be hit if the script tags in index.html are correct.
-            reject(new Error("Citation.js library not found or failed to initialize. Please check the script tags in your HTML."));
-        }
+        const startTime = Date.now();
+        const timeout = 8000; // 8 seconds timeout, generous for slow networks
+
+        const checkLibrary = () => {
+            const GlobalCite = (window as any).Cite;
+            
+            // Check that the core library and both required plugins are ready.
+            const isReady = typeof GlobalCite === 'function' &&
+                            GlobalCite.plugins?.output?.has('ris') &&
+                            GlobalCite.plugins?.csl?.templates?.has('apa');
+
+            if (isReady) {
+                resolve(GlobalCite);
+            } else if (Date.now() - startTime > timeout) {
+                let reason = "Citation.js library failed to initialize in time.";
+                if (typeof GlobalCite !== 'function') {
+                    reason += " Core library (Cite) not found on window.";
+                } else if (!GlobalCite.plugins?.output?.has('ris')) {
+                    reason += " RIS plugin not registered.";
+                } else if (!GlobalCite.plugins?.csl?.templates?.has('apa')) {
+                    reason += " CSL plugin not registered (required for citation styles).";
+                }
+                reject(new Error(reason));
+            } else {
+                // If not ready, poll again shortly.
+                setTimeout(checkLibrary, 100);
+            }
+        };
+
+        checkLibrary();
     });
 
     return citeConstructorPromise;
@@ -58,8 +79,10 @@ const mapPaperToCSL = (paper: ResearchPaper): any => {
         },
     };
     
-    // Add DOI or URL if available
-    if (paper.sourceURL && paper.sourceURL.includes('doi.org')) {
+    // Add DOI or URL if available, prioritizing DOI.
+    if (paper.doi) {
+        cslData.DOI = paper.doi;
+    } else if (paper.sourceURL && paper.sourceURL.includes('doi.org')) {
         cslData.DOI = paper.sourceURL.replace('https://doi.org/', '');
     } else if (paper.sourceURL) {
         cslData.URL = paper.sourceURL;

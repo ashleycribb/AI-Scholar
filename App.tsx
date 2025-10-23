@@ -1,5 +1,4 @@
 
-
 import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react';
 
 // Services
@@ -50,6 +49,8 @@ import { PaperAnalysisModal } from './components/PaperAnalysisModal';
 import { DatabaseFinderModal } from './components/DatabaseFinderModal';
 import { SummaryFeedbackModal } from './components/SummaryFeedbackModal';
 import { SuggestionsModal } from './components/SuggestionsModal';
+import { ReportButton } from './components/ReportButton';
+import { ReportModal } from './components/ReportModal';
 
 const App: React.FC = () => {
   // Main search state
@@ -60,6 +61,8 @@ const App: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [summary, setSummary] = useState('');
   const [analysis, setAnalysis] = useState<AnalysisResult | null>(null);
+  const [executedQuery, setExecutedQuery] = useState('');
+  const [originalQuery, setOriginalQuery] = useState('');
 
   // Search options state
   const [summaryLength, setSummaryLength] = useState<SummaryLength>('medium');
@@ -88,6 +91,9 @@ const App: React.FC = () => {
 
   // Favorite papers state
   const [favoritePapers, setFavoritePapers] = useState<ResearchPaper[]>([]);
+  
+  // Bibliography generation state
+  const [papersForCitation, setPapersForCitation] = useState<Set<string>>(new Set());
 
   // Per-paper action states
   const [connectedPapersResult, setConnectedPapersResult] = useState<{ seedPaper: ResearchPaper, connections: ConnectedPaper[] } | null>(null);
@@ -101,6 +107,12 @@ const App: React.FC = () => {
   const [suggestionsResult, setSuggestionsResult] = useState<{ seedPaper: ResearchPaper, suggestions: string[] } | null>(null);
   const [isGeneratingSuggestions, setIsGeneratingSuggestions] = useState(false);
   const [suggestionsError, setSuggestionsError] = useState<string | null>(null);
+
+  // Research Gap Analysis state
+  const [isGapAnalysisModalOpen, setIsGapAnalysisModalOpen] = useState(false);
+  const [isAnalyzingGaps, setIsAnalyzingGaps] = useState(false);
+  const [gapAnalysisContent, setGapAnalysisContent] = useState<string | null>(null);
+  const [gapAnalysisError, setGapAnalysisError] = useState<string | null>(null);
 
   const [sources, setSources] = useState<SearchSourceInfo[]>([]);
   const initialSearchHandled = useRef(false);
@@ -193,7 +205,19 @@ const App: React.FC = () => {
     }
   }, [logAnalyticsEvent]);
 
-  const executeSearch = useCallback(async (currentQuery: string, options: AdvancedSearchOptions) => {
+  // FIX: Moved handleSelectPaper before executeSearch as it is a dependency of executeSearch.
+  const handleSelectPaper = useCallback((paper: ResearchPaper) => {
+    setSelectedPaper(paper);
+    if (!paper.keyConcepts) {
+        setPapers(prev => prev.map(p => p.title === paper.title ? { ...p, keyConceptsState: 'loading' } : p));
+        geminiService.extractKeyConcepts(paper.abstract)
+            .then(concepts => setPapers(prev => prev.map(p => p.title === paper.title ? { ...p, keyConcepts: concepts, keyConceptsState: 'loaded' } : p)))
+            .catch(() => setPapers(prev => prev.map(p => p.title === paper.title ? { ...p, keyConceptsState: 'error' } : p)));
+    }
+    logAnalyticsEvent('paper_selected', { title: paper.title });
+  }, [logAnalyticsEvent]);
+
+  const executeSearch = useCallback(async (currentQuery: string, options: AdvancedSearchOptions, bypassEnhancement = false) => {
     if (!currentQuery.trim()) return;
     setHasSearched(true);
     setIsLoading(true);
@@ -203,26 +227,32 @@ const App: React.FC = () => {
     setAnalysis(null);
     setSelectedPaper(null);
     setLastSearchOptions(options);
-    logAnalyticsEvent('search_started', { query: currentQuery, options });
+    setPapersForCitation(new Set());
+    setOriginalQuery(currentQuery);
+    logAnalyticsEvent('search_started', { query: currentQuery, options, enhanced: !bypassEnhancement });
     
-    // Start generating refined queries in parallel
     setIsGeneratingRefined(true);
-    setRefinedQueries([]); // Clear old ones
+    setRefinedQueries([]);
     geminiService.generateRefinedQueries(currentQuery)
       .then(queries => setRefinedQueries(queries))
       .finally(() => setIsGeneratingRefined(false));
 
     try {
-      const enhancedQuery = await geminiService.enhanceSearchQuery(currentQuery);
-      setQuery(enhancedQuery.refined_query); // Update query to the enhanced one
-      const result = await apiService.search(enhancedQuery.refined_query, options, summaryLength, summaryStyle);
+      let queryToExecute = currentQuery;
+      if (!bypassEnhancement) {
+        const enhancedQuery = await geminiService.enhanceSearchQuery(currentQuery);
+        queryToExecute = enhancedQuery.refined_query;
+      }
+      setExecutedQuery(queryToExecute);
+      
+      const result = await apiService.search(queryToExecute, options, summaryLength, summaryStyle);
       setPapers(result.papers);
       setSummary(result.summary);
       setAnalysis(result.analysis);
       if (result.papers.length > 0) {
         handleSelectPaper(result.papers[0]);
       }
-      logAnalyticsEvent('search_success', { query: currentQuery, resultsCount: result.papers.length });
+      logAnalyticsEvent('search_success', { query: queryToExecute, resultsCount: result.papers.length });
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'An unknown error occurred.';
       setError(errorMessage);
@@ -230,13 +260,20 @@ const App: React.FC = () => {
     } finally {
       setIsLoading(false);
     }
-  }, [summaryLength, summaryStyle, logAnalyticsEvent]);
+  }, [summaryLength, summaryStyle, logAnalyticsEvent, handleSelectPaper]);
 
   const handleSearch = useCallback((currentQuery: string, options: AdvancedSearchOptions) => {
       setIrrelevantPaperTitles(new Set());
-      executeSearch(currentQuery, options);
+      executeSearch(currentQuery, options, false);
   }, [executeSearch]);
   
+  const handleOriginalSearch = useCallback(() => {
+      if (originalQuery) {
+          executeSearch(originalQuery, lastSearchOptions, true);
+          logAnalyticsEvent('original_query_search_triggered', { query: originalQuery });
+      }
+  }, [executeSearch, originalQuery, lastSearchOptions, logAnalyticsEvent]);
+
   const papersWithRelevance = useMemo(() => {
     return papers.map(p => ({ ...p, isIrrelevant: irrelevantPaperTitles.has(p.title) }));
   }, [papers, irrelevantPaperTitles]);
@@ -256,17 +293,6 @@ const App: React.FC = () => {
 
     return [...sortedRelevant, ...irrelevantPapers];
   }, [papersWithRelevance, sortConfig]);
-
-  const handleSelectPaper = useCallback((paper: ResearchPaper) => {
-    setSelectedPaper(paper);
-    if (!paper.keyConcepts) {
-        setPapers(prev => prev.map(p => p.title === paper.title ? { ...p, keyConceptsState: 'loading' } : p));
-        geminiService.extractKeyConcepts(paper.abstract)
-            .then(concepts => setPapers(prev => prev.map(p => p.title === paper.title ? { ...p, keyConcepts: concepts, keyConceptsState: 'loaded' } : p)))
-            .catch(() => setPapers(prev => prev.map(p => p.title === paper.title ? { ...p, keyConceptsState: 'error' } : p)));
-    }
-    logAnalyticsEvent('paper_selected', { title: paper.title });
-  }, [logAnalyticsEvent]);
 
   const handleToggleFavorite = useCallback((paper: ResearchPaper) => {
     const paperId = extensionService.createPaperId(paper);
@@ -433,37 +459,59 @@ const App: React.FC = () => {
     setQuery('');
     setError(null);
     setIrrelevantPaperTitles(new Set());
+    setPapersForCitation(new Set());
+    setExecutedQuery('');
+    setOriginalQuery('');
   }, []);
 
-  const handleMarkAsIrrelevant = useCallback(async (paperToMark: ResearchPaper) => {
+  const handleMarkAsIrrelevant = useCallback((paperToMark: ResearchPaper) => {
     logAnalyticsEvent('paper_marked_irrelevant', { title: paperToMark.title });
     
-    // Immediately update UI for responsiveness
+    // Immediately update UI for responsiveness by adding the paper's title to the set.
     setIrrelevantPaperTitles(prev => new Set(prev).add(paperToMark.title));
-    
+  }, [logAnalyticsEvent]);
+  
+  const handleRefineSearch = useCallback(async () => {
+    if (irrelevantPaperTitles.size === 0) return;
+
+    logAnalyticsEvent('rerun_search_with_feedback', { count: irrelevantPaperTitles.size });
+
     try {
-        // Ensure key concepts are available before proceeding
-        let concepts = paperToMark.keyConcepts;
-        if (!concepts) {
-            concepts = await geminiService.extractKeyConcepts(paperToMark.abstract);
-            // Update the paper object with the newly fetched concepts for future use
-            setPapers(prev => prev.map(p => p.title === paperToMark.title ? { ...p, keyConcepts: concepts } : p));
-        }
+        const irrelevantPapers = papers.filter(p => irrelevantPaperTitles.has(p.title));
         
-        // Combine new concepts with existing exclusion keywords
+        // Ensure key concepts are available for all irrelevant papers
+        const conceptPromises = irrelevantPapers.map(async (paper) => {
+            if (paper.keyConcepts) {
+                return paper.keyConcepts;
+            }
+            try {
+                const concepts = await geminiService.extractKeyConcepts(paper.abstract);
+                // Update paper in state with new concepts for caching
+                setPapers(prev => prev.map(p => p.title === paper.title ? { ...p, keyConcepts: concepts, keyConceptsState: 'loaded' } : p));
+                return concepts;
+            } catch (e) {
+                console.error(`Failed to extract concepts for ${paper.title}`, e);
+                return []; // Return empty array on failure for this paper
+            }
+        });
+
+        const allConceptsNested = await Promise.all(conceptPromises);
+        const allConcepts = allConceptsNested.flat();
+
+        // Combine new concepts with existing exclusion keywords, ensuring uniqueness
         const currentExcludes = new Set((lastSearchOptions.excludeKeywords || '').split(',').map(k => k.trim()).filter(Boolean));
-        concepts.forEach(c => currentExcludes.add(c.trim().toLowerCase()));
+        allConcepts.forEach(c => currentExcludes.add(c.trim().toLowerCase()));
         const newExcludeKeywords = Array.from(currentExcludes).join(',');
         
-        // Trigger a refined search without resetting the irrelevant papers list
+        // Trigger a refined search
         const newOptions = { ...lastSearchOptions, excludeKeywords: newExcludeKeywords };
         executeSearch(query, newOptions);
 
     } catch (err) {
         console.error("Failed to refine search:", err);
-        // If AI fails, the paper remains visually marked as irrelevant, which is acceptable.
+        setError("Failed to refine search based on your feedback. Please try again.");
     }
-  }, [query, lastSearchOptions, executeSearch, logAnalyticsEvent]);
+  }, [papers, irrelevantPaperTitles, lastSearchOptions, executeSearch, query, logAnalyticsEvent]);
   
   const handleRefinedQuerySearch = useCallback((newQuery: string) => {
       setQuery(newQuery);
@@ -473,6 +521,34 @@ const App: React.FC = () => {
       logAnalyticsEvent('refined_query_search', { query: newQuery });
   }, [handleSearch, lastSearchOptions, logAnalyticsEvent]);
 
+  const handleAnalyzeGaps = useCallback(async () => {
+    setIsGapAnalysisModalOpen(true);
+    setIsAnalyzingGaps(true);
+    setGapAnalysisContent(null);
+    setGapAnalysisError(null);
+
+    const relevantPapers = papers.filter(p => !irrelevantPaperTitles.has(p.title));
+    if (relevantPapers.length < 2) {
+        setGapAnalysisError("Please perform a search with at least two relevant results to analyze for research gaps.");
+        setIsAnalyzingGaps(false);
+        return;
+    }
+
+    logAnalyticsEvent('gap_analysis_started', { paperCount: relevantPapers.length });
+
+    try {
+        const report = await geminiService.analyzeResearchGaps(relevantPapers);
+        setGapAnalysisContent(report);
+        logAnalyticsEvent('gap_analysis_success', { reportLength: report.length });
+    } catch (err) {
+        const errorMessage = err instanceof Error ? err.message : 'An unknown error occurred.';
+        setGapAnalysisError(errorMessage);
+        logAnalyticsEvent('gap_analysis_failed', { error: errorMessage });
+    } finally {
+        setIsAnalyzingGaps(false);
+    }
+  }, [papers, irrelevantPaperTitles, logAnalyticsEvent]);
+
   const selectedPaperFromList = useMemo(() => {
     if (!selectedPaper) {
         return null;
@@ -480,6 +556,31 @@ const App: React.FC = () => {
     // Find the most up-to-date version of the paper from the main 'papers' state
     return papers.find(p => p.title === selectedPaper.title) ?? selectedPaper;
   }, [selectedPaper, papers]);
+
+  const handleTogglePaperForCitation = useCallback((paper: ResearchPaper) => {
+    setPapersForCitation(prev => {
+        const newSet = new Set(prev);
+        if (newSet.has(paper.title)) {
+            newSet.delete(paper.title);
+        } else {
+            newSet.add(paper.title);
+        }
+        return newSet;
+    });
+  }, []);
+
+  const handleSelectAllForCitation = useCallback(() => {
+      const relevantPaperTitles = papers.filter(p => !p.isIrrelevant).map(p => p.title);
+      if (papersForCitation.size === relevantPaperTitles.length) {
+          setPapersForCitation(new Set()); // Deselect all
+      } else {
+          setPapersForCitation(new Set(relevantPaperTitles)); // Select all relevant
+      }
+  }, [papers, papersForCitation, irrelevantPaperTitles]);
+
+  const selectedPapersForCitation = useMemo(() => {
+    return papers.filter(p => papersForCitation.has(p.title));
+  }, [papers, papersForCitation]);
 
 
   return (
@@ -535,6 +636,7 @@ const App: React.FC = () => {
                         onStyleChange={setSummaryStyle}
                         logAnalyticsEvent={logAnalyticsEvent}
                         excludeKeywords={lastSearchOptions.excludeKeywords}
+                        hideSuggestions={true}
                     />
                     <FavoritesList favoritePapers={favoritePapers} onToggleFavorite={handleToggleFavorite} />
                     <div className="p-4 bg-card rounded-lg shadow-sm border">
@@ -544,6 +646,15 @@ const App: React.FC = () => {
                     {error && <ErrorMessage message={error} />}
                     {!isLoading && !error && papers.length > 0 && (
                         <div>
+                             <div className="p-3 mb-4 bg-muted/50 rounded-lg border text-sm">
+                                <p className="text-muted-foreground">Showing results for:</p>
+                                <p className="font-mono text-primary my-1 break-words">{executedQuery}</p>
+                                {executedQuery !== originalQuery && originalQuery && (
+                                    <button onClick={handleOriginalSearch} className="font-semibold text-primary hover:underline">
+                                        Search instead for: <span className="font-normal italic">"{originalQuery}"</span>
+                                    </button>
+                                )}
+                            </div>
                             <ResultsDisplay
                                 papers={sortedPapers}
                                 selectedPaper={selectedPaperFromList}
@@ -551,6 +662,10 @@ const App: React.FC = () => {
                                 sortConfig={sortConfig}
                                 onSortChange={setSortConfig}
                                 onMarkAsIrrelevant={handleMarkAsIrrelevant}
+                                onRefineSearch={handleRefineSearch}
+                                papersForCitation={papersForCitation}
+                                onTogglePaperForCitation={handleTogglePaperForCitation}
+                                onSelectAllForCitation={handleSelectAllForCitation}
                             />
                             <SearchResultFeedback query={query} onOpenFeedbackModal={() => setIsSummaryFeedbackModalOpen(true)} />
                         </div>
@@ -589,7 +704,8 @@ const App: React.FC = () => {
       <div className="fixed bottom-6 right-6 flex flex-col items-center gap-4 z-30">
         {isAdmin && <AnalyticsButton onClick={() => setIsAnalyticsModalOpen(true)} />}
         <FeedbackButton onClick={() => setIsFeedbackModalOpen(true)} />
-        <CitationButton onClick={() => setIsCitationModalOpen(true)} disabled={papers.length === 0} />
+        <ReportButton onClick={handleAnalyzeGaps} disabled={papers.length < 2} />
+        <CitationButton onClick={() => setIsCitationModalOpen(true)} disabled={papersForCitation.size === 0} />
         <ChatButton onClick={() => setIsChatModalOpen(true)} disabled={papers.length === 0} />
       </div>
 
@@ -606,17 +722,9 @@ const App: React.FC = () => {
        <InfoModal
           isOpen={isCitationModalOpen}
           onClose={() => setIsCitationModalOpen(false)}
-          title="Citation Generator"
+          title="Bibliography Generator"
       >
-          <CitationGenerator
-              papers={papers}
-              onGenerate={() => { /* Handled internally now */}}
-              isLoading={false}
-              citations={[]}
-              error={null}
-              citationStyle="apa"
-              onStyleChange={() => {}}
-          />
+          <CitationGenerator papers={selectedPapersForCitation} />
       </InfoModal>
 
 
@@ -683,6 +791,14 @@ const App: React.FC = () => {
             error={suggestionsError}
             isLoading={isGeneratingSuggestions}
             onSuggestionClick={handleSuggestionSearch}
+        />
+
+        <ReportModal
+          isOpen={isGapAnalysisModalOpen}
+          onClose={() => setIsGapAnalysisModalOpen(false)}
+          isLoading={isAnalyzingGaps}
+          content={gapAnalysisContent}
+          error={gapAnalysisError}
         />
     </div>
   );

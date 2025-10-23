@@ -420,6 +420,40 @@ export const analyzeSinglePaper = async (paper: ResearchPaper): Promise<PaperAna
     }
 };
 
+export const analyzeResearchGaps = async (papers: ResearchPaper[]): Promise<string> => {
+    const paperContext = papers.map((p, i) => 
+        `Paper ${i+1}:\nTitle: ${p.title}\nAbstract: ${p.abstract}`
+    ).join('\n\n---\n\n');
+
+    const prompt = `You are an expert research analyst. Your task is to perform a research gap analysis based on the provided academic paper abstracts.
+
+    Context: The user has compiled a list of papers on a specific topic. They need you to synthesize the information and identify potential areas for future research.
+
+    Provided Papers:
+    ${paperContext}
+
+    Instructions:
+    1.  **Synthesize Core Themes:** Briefly summarize the main themes, methodologies, and key findings that are common across the papers.
+    2.  **Identify Contradictions & Tensions:** Point out any areas where the papers present conflicting findings or different perspectives on the same issue.
+    3.  **Highlight Unanswered Questions:** Identify questions that are raised but not fully answered by the collective literature provided. What are the limitations acknowledged by the authors that could be starting points for new research?
+    4.  **Suggest Future Research Directions:** Based on the synthesis and identified gaps, propose 3-5 specific, actionable research questions or directions for future work. These should logically extend from the provided material.
+
+    Please structure your response as a concise, well-organized report in Markdown format. Use headings (e.g., "## Core Themes") for each section.
+    `;
+
+    try {
+        const response = await ai.models.generateContent({
+            model: "gemini-2.5-flash",
+            contents: prompt,
+        });
+        return response.text ?? '';
+    } catch (error) {
+        console.error("Error analyzing research gaps:", error);
+        throw new Error("Failed to perform research gap analysis.");
+    }
+};
+
+
 export const verifyPaper = async (paper: ResearchPaper): Promise<VerificationStatus> => {
     // Step 1: Get a canonical DOI from Crossref. This is the most reliable identifier.
     const doi = await crossrefService.findDoiForPaper(paper);
