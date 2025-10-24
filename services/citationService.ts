@@ -1,4 +1,7 @@
+
+
 import type { ResearchPaper, CitationStyle } from '../types';
+import { extractCitationMetadata } from './geminiService';
 
 let citeConstructorPromise: Promise<any> | null = null;
 
@@ -52,46 +55,6 @@ const getCiteConstructor = (): Promise<any> => {
     return citeConstructorPromise;
 };
 
-
-/**
- * Maps an internal ResearchPaper object to the CSL-JSON format
- * required by Citation.js.
- * @param paper - The research paper to convert.
- * @returns A CSL-JSON object.
- */
-const mapPaperToCSL = (paper: ResearchPaper): any => {
-    // A simple author parser. Assumes "Family, G." or "Given Family" formats.
-    const authors = paper.authors.split(',').map(name => {
-        const trimmedName = name.trim();
-        // More robust parsing could be added here if needed
-        const parts = trimmedName.split(' ');
-        const family = parts.pop() || '';
-        const given = parts.join(' ');
-        return { given, family };
-    });
-
-    const cslData: any = {
-        type: 'article-journal', // A reasonable default assumption
-        id: paper.title.toLowerCase().replace(/\s+/g, '-'),
-        title: paper.title,
-        author: authors,
-        issued: {
-            'date-parts': [[paper.year]],
-        },
-    };
-    
-    // Add DOI or URL if available, prioritizing DOI.
-    if (paper.doi) {
-        cslData.DOI = paper.doi;
-    } else if (paper.sourceURL && paper.sourceURL.includes('doi.org')) {
-        cslData.DOI = paper.sourceURL.replace('https://doi.org/', '');
-    } else if (paper.sourceURL) {
-        cslData.URL = paper.sourceURL;
-    }
-
-    return cslData;
-};
-
 /**
  * Generates formatted citations for a list of papers using Citation.js.
  * @param papers - An array of ResearchPaper objects.
@@ -102,7 +65,10 @@ export const generateCitations = async (papers: ResearchPaper[], style: Citation
     try {
         const Cite = await getCiteConstructor();
         
-        const cslData = papers.map(mapPaperToCSL);
+        // Use AI to get rich metadata for each paper
+        const cslDataPromises = papers.map(paper => extractCitationMetadata(paper));
+        const cslData = await Promise.all(cslDataPromises);
+        
         const cite = new Cite(cslData);
         
         // Maps our internal style names to the template names used by Citation.js
@@ -139,7 +105,11 @@ export const generateCitations = async (papers: ResearchPaper[], style: Citation
 export const generateRIS = async (papers: ResearchPaper[]): Promise<string> => {
     try {
         const Cite = await getCiteConstructor();
-        const cslData = papers.map(mapPaperToCSL);
+
+        // Use AI to get rich metadata for each paper
+        const cslDataPromises = papers.map(paper => extractCitationMetadata(paper));
+        const cslData = await Promise.all(cslDataPromises);
+
         const cite = new Cite(cslData);
 
         // Generate the RIS string

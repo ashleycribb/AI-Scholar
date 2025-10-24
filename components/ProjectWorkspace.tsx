@@ -1,4 +1,5 @@
 
+
 import React, { useState, useMemo } from 'react';
 import type { Project, ResearchPaper } from '../types';
 import { FolderIcon } from './icons/FolderIcon';
@@ -14,8 +15,8 @@ interface ProjectWorkspaceProps {
     onCreateProject: (name: string) => void;
     onDeleteProject: (projectId: string) => void;
     onMovePaperToProject: (paperId: string, projectId: string | null) => void;
-    onSynthesizeProject: (papers: ResearchPaper[]) => void;
-    onAnalyzeGapsInProject: (papers: ResearchPaper[]) => void;
+    onSynthesizeWorkspace: (papers: ResearchPaper[]) => void;
+    onAnalyzeGaps: (papers: ResearchPaper[]) => void;
 }
 
 const ProjectItem: React.FC<{
@@ -24,9 +25,7 @@ const ProjectItem: React.FC<{
     allProjects: Project[];
     onDeleteProject: (id: string) => void;
     onMovePaper: (paperId: string, projectId: string | null) => void;
-    onSynthesize: (papers: ResearchPaper[]) => void;
-    onAnalyzeGaps: (papers: ResearchPaper[]) => void;
-}> = ({ project, papers, allProjects, onDeleteProject, onMovePaper, onSynthesize, onAnalyzeGaps }) => {
+}> = ({ project, papers, allProjects, onDeleteProject, onMovePaper }) => {
     const [isExpanded, setIsExpanded] = useState(true);
     const [activeMenu, setActiveMenu] = useState<string | null>(null);
 
@@ -47,20 +46,6 @@ const ProjectItem: React.FC<{
                     <span className="text-xs font-mono bg-primary/10 text-primary px-2 py-0.5 rounded-full">{papers.length}</span>
                 </div>
                  <div className="flex items-center gap-2" onClick={e => e.stopPropagation()}>
-                    <button 
-                      onClick={() => onSynthesize(papers)}
-                      disabled={papers.length < 2}
-                      title="Synthesize Literature in this Project"
-                      className="p-1.5 text-secondary-foreground hover:bg-background rounded-md disabled:opacity-40 disabled:cursor-not-allowed">
-                        <SynthesisIcon className="w-5 h-5"/>
-                    </button>
-                    <button 
-                      onClick={() => onAnalyzeGaps(papers)}
-                      disabled={papers.length < 2}
-                      title="Find Research Gaps in this Project"
-                      className="p-1.5 text-secondary-foreground hover:bg-background rounded-md disabled:opacity-40 disabled:cursor-not-allowed">
-                        <ReportIcon className="w-5 h-5"/>
-                    </button>
                     <button onClick={() => onDeleteProject(project.id)} className="p-1.5 text-destructive/80 hover:bg-destructive/10 rounded-md">
                         <RemoveIcon className="w-5 h-5" />
                     </button>
@@ -96,7 +81,7 @@ const ProjectItem: React.FC<{
 };
 
 export const ProjectWorkspace: React.FC<ProjectWorkspaceProps> = (props) => {
-    const { workspacePapers, projects, onCreateProject } = props;
+    const { workspacePapers, projects, onCreateProject, onSynthesizeWorkspace, onAnalyzeGaps } = props;
     const [newProjectName, setNewProjectName] = useState('');
 
     const paperMap = useMemo(() => new Map(workspacePapers.map(p => [p.id, p])), [workspacePapers]);
@@ -115,8 +100,31 @@ export const ProjectWorkspace: React.FC<ProjectWorkspaceProps> = (props) => {
     
     return (
         <div className="space-y-6">
+            <div className="p-4 bg-muted/50 rounded-lg border space-y-3">
+              <h3 className="text-lg font-bold text-foreground">Workspace Tools</h3>
+              <p className="text-sm text-muted-foreground">Run analysis on all {workspacePapers.length} paper(s) in your workspace.</p>
+              <div className="flex gap-2">
+                 <button 
+                  onClick={() => onSynthesizeWorkspace(workspacePapers)}
+                  disabled={workspacePapers.length < 2}
+                  title="Synthesize Literature in Workspace"
+                  className="h-9 px-4 text-sm font-semibold rounded-md bg-secondary text-secondary-foreground hover:bg-accent disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-2">
+                    <SynthesisIcon className="w-4 h-4"/>
+                    <span>Synthesize</span>
+                </button>
+                <button 
+                  onClick={() => onAnalyzeGaps(workspacePapers)}
+                  disabled={workspacePapers.length < 2}
+                  title="Find Research Gaps in Workspace"
+                   className="h-9 px-4 text-sm font-semibold rounded-md bg-secondary text-secondary-foreground hover:bg-accent disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-2">
+                    <ReportIcon className="w-4 h-4"/>
+                    <span>Analyze Gaps</span>
+                </button>
+              </div>
+            </div>
+
             <div>
-                <h3 className="text-lg font-bold text-foreground mb-3">Project Workspace</h3>
+                <h3 className="text-lg font-bold text-foreground mb-3">Projects</h3>
                 <form onSubmit={handleCreateProject} className="flex items-center gap-2 mb-6">
                     <input 
                         type="text"
@@ -139,8 +147,6 @@ export const ProjectWorkspace: React.FC<ProjectWorkspaceProps> = (props) => {
                         allProjects={projects}
                         onDeleteProject={props.onDeleteProject}
                         onMovePaper={props.onMovePaperToProject}
-                        onSynthesize={props.onSynthesizeProject}
-                        onAnalyzeGaps={props.onAnalyzeGapsInProject}
                     />
                 ))}
                 

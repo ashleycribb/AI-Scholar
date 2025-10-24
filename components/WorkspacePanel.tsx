@@ -1,4 +1,5 @@
 
+
 import React, { useState, useEffect } from 'react';
 import type { ResearchPaper, AnalysisResult, Project } from '../types';
 import { PaperDetails } from './PaperDetails';
@@ -60,8 +61,6 @@ interface WorkspacePanelProps {
     isFindingConnected: boolean;
     onAnalyzePaper: (paper: ResearchPaper) => void;
     isAnalyzingPaper: boolean;
-    onVerifyPaper: (paper: ResearchPaper) => void;
-    isVerifying: boolean;
     onConceptClick: (concept: string) => void;
     onFindDoi: (paper: ResearchPaper) => void;
     onGenerateSuggestions: (paper: ResearchPaper) => void;
@@ -155,8 +154,6 @@ export const WorkspacePanel: React.FC<WorkspacePanelProps> = (props) => {
                             paper={selectedPaper}
                             isInWorkspace={workspacePapers.some(p => p.id === selectedPaper.id)}
                             onToggleWorkspacePaper={props.onToggleWorkspacePaper}
-                            onVerifyPaper={props.onVerifyPaper}
-                            isVerifying={props.isVerifying}
                             onConceptClick={props.onConceptClick}
                             onFindDoi={props.onFindDoi}
                             logAnalyticsEvent={props.logAnalyticsEvent}
@@ -221,8 +218,8 @@ export const WorkspacePanel: React.FC<WorkspacePanelProps> = (props) => {
                         onCreateProject={props.onCreateProject}
                         onDeleteProject={props.onDeleteProject}
                         onMovePaperToProject={props.onMovePaperToProject}
-                        onSynthesizeProject={props.onSynthesizeWorkspace}
-                        onAnalyzeGapsInProject={props.onAnalyzeGaps}
+                        onSynthesizeWorkspace={props.onSynthesizeWorkspace}
+                        onAnalyzeGaps={props.onAnalyzeGaps}
                     />
                  )
             default:

@@ -1,19 +1,21 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+
+import React, { useState, useEffect } from 'react';
 import { SearchIcon } from './icons/SearchIcon';
 import type { SummaryLength, AdvancedSearchOptions, SummaryStyle } from '../types';
-import { generateSearchSuggestions } from '../services/geminiService';
-import { SearchSuggestions } from './SearchSuggestions';
+import { SemanticSearchToggle } from './SemanticSearchToggle';
 
 interface SearchFormProps {
   query: string;
   onQueryChange: (query: string) => void;
-  onSearch: (query: string, options: AdvancedSearchOptions) => void;
+  onSearch: (query: string, options: Omit<AdvancedSearchOptions, 'searchMode'>) => void;
   isLoading: boolean;
   summaryLength: SummaryLength;
   onLengthChange: (length: SummaryLength) => void;
   summaryStyle: SummaryStyle;
   onStyleChange: (style: SummaryStyle) => void;
   logAnalyticsEvent: (eventName: string, payload: object) => void;
+  searchMode: 'semantic' | 'keyword';
+  onSearchModeChange: (mode: 'semantic' | 'keyword') => void;
   excludeKeywords?: string;
   hideSuggestions?: boolean;
 }
@@ -34,16 +36,13 @@ export const SearchForm: React.FC<SearchFormProps> = ({
     summaryStyle,
     onStyleChange, 
     logAnalyticsEvent,
+    searchMode,
+    onSearchModeChange,
     excludeKeywords,
     hideSuggestions = false,
 }) => {
-  const [suggestions, setSuggestions] = useState<string[]>([]);
-  const [isSuggesting, setIsSuggesting] = useState(false);
-  const [suggestionsDisabled, setSuggestionsDisabled] = useState(false);
-  const debounceTimeout = useRef<number | null>(null);
-  
   const [showAdvanced, setShowAdvanced] = useState(false);
-  const [advancedOptions, setAdvancedOptions] = useState<AdvancedSearchOptions>({
+  const [advancedOptions, setAdvancedOptions] = useState<Omit<AdvancedSearchOptions, 'searchMode'>>({
     startYear: '',
     endYear: '',
     authors: '',
@@ -62,56 +61,12 @@ export const SearchForm: React.FC<SearchFormProps> = ({
     setAdvancedOptions(prev => ({ ...prev, [name]: value }));
   };
 
-  const fetchSuggestions = useCallback(async (currentQuery: string) => {
-    if (currentQuery.trim().length < 5) {
-      setSuggestions([]);
-      return;
-    }
-    setIsSuggesting(true);
-    const result = await generateSearchSuggestions(currentQuery);
-    setSuggestions(result);
-    setIsSuggesting(false);
-  }, []);
-
-  useEffect(() => {
-    if (debounceTimeout.current) {
-      clearTimeout(debounceTimeout.current);
-    }
-
-    if (isLoading || suggestionsDisabled || hideSuggestions) {
-      setSuggestions([]);
-      return;
-    }
-
-    if (query.trim()) {
-      debounceTimeout.current = window.setTimeout(() => {
-        fetchSuggestions(query);
-      }, 500); // 500ms debounce
-    } else {
-        setSuggestions([]);
-    }
-
-    return () => {
-      if (debounceTimeout.current) {
-        clearTimeout(debounceTimeout.current);
-      }
-    };
-  }, [query, fetchSuggestions, isLoading, suggestionsDisabled, hideSuggestions]);
-
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    setSuggestionsDisabled(true); 
     onSearch(query, advancedOptions);
-  };
-
-  const handleSuggestionClick = (suggestion: string) => {
-    logAnalyticsEvent('suggestion_clicked', { suggestion });
-    setSuggestionsDisabled(true);
-    onQueryChange(suggestion);
   };
   
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    setSuggestionsDisabled(false);
     onQueryChange(e.target.value);
   };
   
@@ -194,6 +149,8 @@ export const SearchForm: React.FC<SearchFormProps> = ({
             </button>
         </div>
 
+        <SemanticSearchToggle searchMode={searchMode} onSearchModeChange={onSearchModeChange} />
+
         {showAdvanced && (
             <div className="p-4 bg-muted/50 rounded-lg border grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
@@ -215,13 +172,6 @@ export const SearchForm: React.FC<SearchFormProps> = ({
             </div>
         )}
       </form>
-      {!isLoading && !hideSuggestions && (
-        <SearchSuggestions
-            suggestions={suggestions}
-            isLoading={isSuggesting}
-            onSuggestionClick={handleSuggestionClick}
-        />
-      )}
     </div>
   );
 };

@@ -1,4 +1,5 @@
 
+
 import { GoogleGenAI, Type } from "@google/genai";
 import type {
   ChatMessage,
@@ -10,7 +11,6 @@ import type {
   SummaryLength,
   SummaryStyle,
   SynthesisResult,
-  VerificationStatus,
   GroundingSource
 } from "../types";
 import * as crossrefService from './crossrefService';
@@ -83,25 +83,33 @@ const searchQueryEnhancementSchema = {
 };
 
 export const enhanceSearchQuery = async (userQuery: string): Promise<EnhancedQuery> => {
-    const prompt = `You are an expert research librarian specializing in academic databases. Your task is to take a user's research query and transform it into a highly effective, structured search query for a database like OpenAlex.
+    const prompt = `You are an expert research librarian. Your task is to refine a user's research query for an academic database like OpenAlex.
+
+    **CRITICAL INSTRUCTIONS - FOLLOW THESE RULES STRICTLY:**
+    1.  **STRICT DOMAIN ADHERENCE:** You MUST ONLY use concepts, terms, and synonyms that are explicitly within the domain of the user's original query.
+    2.  **NO DOMAIN CROSSING:** Under NO circumstances should you introduce terms from unrelated fields. For example, if the query is about "financial risk management", concepts like "medical diagnosis" or "climate change" are strictly forbidden.
+    3.  **BASE ON USER'S WORDS:** All generated key concepts and query terms must directly derive from the words provided by the user.
 
     User Query: "${userQuery}"
 
-    Analyze the query to identify its core concepts. Generate synonyms, alternative phrasings, and common acronyms for these concepts. Then, construct a refined search query string that uses boolean operators (AND, OR) and phrase searching (using double quotes) to maximize relevance.
+    Analyze the query to identify its core concepts. Generate synonyms and alternative phrasings for these core concepts ONLY. Then, construct a refined search query string using boolean operators (AND, OR) and phrase searching (using double quotes).
 
     Return your response as a single JSON object with the following structure. Do not include any text, code blocks, or explanations outside of the JSON object.
 
-    {
-      "refined_query": "The structured query string you constructed.",
-      "key_concepts": ["An array of the primary concepts identified."]
-    }
-
-    Example:
+    **CORRECT Example:**
     User Query: "using machine learning for sentiment analysis in social media"
     Your JSON response:
     {
       "refined_query": "(\\"machine learning\\" OR \\"deep learning\\" OR \\"NLP\\") AND (\\"sentiment analysis\\" OR \\"opinion mining\\") AND (\\"social media\\" OR \\"twitter\\" OR \\"facebook\\")",
       "key_concepts": ["machine learning", "sentiment analysis", "social media"]
+    }
+
+    **INCORRECT Example (DOMAIN CROSSING):**
+    User Query: "impact of interest rates on stock market"
+    Incorrect JSON response that introduces unrelated terms:
+    {
+      "refined_query": "(\\"interest rates\\" OR \\"monetary policy\\") AND (\\"stock market\\" OR \\"equity prices\\" OR \\"patient outcomes\\")",
+      "key_concepts": ["interest rates", "stock market", "patient outcomes"]
     }`;
 
     try {
@@ -200,30 +208,6 @@ export const generateSummaryForPapers = async (
         console.error("Error generating summary for papers:", error);
         throw new Error("Failed to generate summary.");
     }
-};
-
-export const generateSearchSuggestions = async (query: string): Promise<string[]> => {
-  if (query.trim().length < 5) {
-    return [];
-  }
-  try {
-    const prompt = `Generate 4 search query suggestions for a research paper search engine, based on the following query. The suggestions should be diverse and explore different facets of the topic. Return only a bulleted list of suggestions.
-    Query: "${query}"`;
-
-    const response = await ai.models.generateContent({
-        model: 'gemini-2.5-flash',
-        contents: prompt,
-    });
-
-    const suggestions = (response.text ?? '').split('\n')
-      .map(s => s.replace(/[-*]\s*/, '').trim())
-      .filter(s => s.length > 0);
-      
-    return suggestions;
-  } catch (error) {
-    console.error("Error generating search suggestions:", error);
-    return [];
-  }
 };
 
 const paperBasedSuggestionsSchema = {
@@ -504,96 +488,6 @@ export const synthesizePapers = async (papers: ResearchPaper[]): Promise<Synthes
     }
 };
 
-
-export const verifyPaper = async (paper: ResearchPaper): Promise<VerificationStatus> => {
-    // Step 1: Get a canonical DOI from Crossref. This is the most reliable identifier.
-    const doi = await crossrefService.findDoiForPaper(paper);
-
-    if (doi) {
-        // Step 2: Use the DOI to find a legal, open-access PDF via Unpaywall.
-        const openAccessUrl = await unpaywallService.findOpenAccessPdf(doi);
-        if (openAccessUrl) {
-            return {
-                state: 'verified',
-                source: 'Unpaywall',
-                linkState: 'valid',
-                reason: 'Found a legal open-access PDF.',
-                pdfURL: openAccessUrl,
-            };
-        }
-        
-        // If no OA link is found, we still know the paper exists because we have a DOI.
-        // The link is likely paywalled.
-        return {
-            state: 'verified',
-            source: 'Crossref',
-            linkState: 'paywalled',
-            reason: 'Paper existence confirmed by DOI, but no free version was found.',
-            pdfURL: `https://doi.org/${doi}`, // Provide the DOI link as a fallback.
-        };
-    }
-    
-    console.warn("Could not find DOI via Crossref. Falling back to Gemini web search.", paper.title);
-
-    // Step 3: If Crossref/Unpaywall fails, fall back to the Gemini-powered web search as a last resort.
-    const prompt = `You are a meticulous research assistant. Verify the existence and accessibility of the following academic paper using a web search. Your primary goal is to find a freely accessible PDF. A lookup in the Crossref database was inconclusive, so a broader search is needed.
-
-    Paper Details:
-    - Title: "${paper.title}"
-    - Authors: "${paper.authors}"
-    - Provided URL: ${paper.sourceURL || 'N/A'}
-    
-    Verification Steps:
-    1.  **Confirm Existence:** Use Google Scholar first to confirm the paper's existence. Note the primary source (e.g., Google Scholar, arXiv, Publisher's website).
-    2.  **Find Free PDF:** Actively search for a direct, publicly accessible PDF link. Prioritize links from university repositories, arXiv, or author homepages.
-    3.  **Format Response:** Respond with a single JSON object. Do not include any other text or markdown. My application will perform a direct check on the URL you provide, so it is critical that you find a URL that points directly to a PDF file if one exists.
-    
-    JSON Response Schema:
-    - "state": One of "verified", "not_found", "error".
-    - "source": The best source found (e.g., "Google Scholar", "arXiv", "Publisher Site").
-    - "pdfURL": The direct URL to the free PDF if found. Otherwise, omit this field.
-    - "reason": A brief explanation for "not_found", or "error" states, or if the paper exists but no free PDF was found.
-    
-    Example Responses:
-    - Free PDF found: { "state": "verified", "source": "arXiv", "pdfURL": "https://arxiv.org/pdf/1234.5678.pdf", "reason": "Found on arXiv." }
-    - Paywalled: { "state": "verified", "source": "Elsevier", "reason": "Paper is available on the publisher's site but appears to be behind a paywall." }
-    - Not Found: { "state": "not_found", "reason": "Could not find a reliable source for this paper via web search." }
-    `;
-    
-    try {
-        const response = await ai.models.generateContent({
-            model: 'gemini-2.5-flash',
-            contents: prompt,
-            config: {
-                tools: [{googleSearch: {}}],
-            },
-        });
-        
-        let result = safeJsonParse(response.text ?? '') as VerificationStatus;
-        if (!result || !result.state) return { state: 'error', reason: 'Invalid API response for verification.' };
-
-        // After getting Gemini's result, perform our own check on the URL it found.
-        if (result.pdfURL) {
-            const checkResult = await checkPdfUrl(result.pdfURL);
-            // Override Gemini's findings with our more reliable, direct check.
-            result.linkState = checkResult.linkState;
-            result.reason = (result.reason || '') + ' ' + checkResult.reason;
-            if (checkResult.linkState === 'invalid') {
-                result.pdfURL = undefined;
-            }
-        } else if (result.state === 'verified') {
-            // If Gemini says verified but found no URL, we mark as unchecked.
-            result.linkState = 'unchecked';
-            result.reason = result.reason || 'Paper existence verified by AI, but no direct PDF link was found.';
-        }
-
-        return result;
-    } catch (error) {
-        console.error("Error verifying paper with Gemini:", error);
-        return { state: 'error', reason: 'An error occurred during verification.' };
-    }
-};
-
 const keyConceptsSchema = {
     type: Type.OBJECT,
     properties: {
@@ -640,5 +534,108 @@ export const extractKeyConcepts = async (abstract: string): Promise<string[]> =>
     } catch (error) {
         console.error("Error extracting key concepts:", error);
         throw new Error("Failed to extract key concepts from abstract.");
+    }
+};
+
+const cslSchema = {
+    type: Type.OBJECT,
+    properties: {
+        type: { 
+            type: Type.STRING, 
+            description: "The CSL type of the publication (e.g., 'article-journal', 'paper-conference', 'book-chapter', 'report', 'thesis')." 
+        },
+        title: { type: Type.STRING },
+        author: {
+            type: Type.ARRAY,
+            items: {
+                type: Type.OBJECT,
+                properties: {
+                    given: { type: Type.STRING },
+                    family: { type: Type.STRING },
+                },
+                required: ["family"]
+            }
+        },
+        issued: {
+            type: Type.OBJECT,
+            properties: {
+                'date-parts': { 
+                    type: Type.ARRAY, 
+                    items: { type: Type.ARRAY, items: { type: Type.NUMBER } } 
+                },
+            },
+        },
+        'container-title': { type: Type.STRING, description: "The title of the journal, conference proceedings, or book." },
+        volume: { type: Type.STRING },
+        issue: { type: Type.STRING },
+        page: { type: Type.STRING },
+        publisher: { type: Type.STRING },
+        DOI: { type: Type.STRING },
+        URL: { type: Type.STRING },
+    },
+    required: ["type", "title", "author", "issued"]
+};
+
+
+export const extractCitationMetadata = async (paper: ResearchPaper): Promise<any> => {
+    // Start with the basic info we already have
+    const initialCsl = {
+        type: 'article-journal', // Default, to be overridden by AI
+        id: paper.id,
+        title: paper.title,
+        author: paper.authors.split(',').map(name => {
+            const trimmedName = name.trim();
+            const parts = trimmedName.split(' ');
+            const family = parts.pop() || '';
+            const given = parts.join(' ');
+            return { given, family };
+        }),
+        issued: { 'date-parts': [[paper.year]] },
+        DOI: paper.doi,
+        URL: paper.doi ? undefined : paper.sourceURL, // Prefer DOI over URL
+    };
+
+
+    const prompt = `You are an expert librarian specializing in bibliographic metadata. Your task is to analyze the provided information for a research paper and extract detailed metadata in CSL-JSON format.
+
+    Paper Information:
+    - Title: "${paper.title}"
+    - Authors: "${paper.authors}"
+    - Year: ${paper.year}
+    - Abstract: "${paper.abstract}"
+    
+    Instructions:
+    1.  Determine the correct publication type. Common types are 'article-journal', 'paper-conference', 'book-chapter', 'report', 'thesis'.
+    2.  If it's a journal article, extract the journal title ('container-title'), volume, issue, and page numbers.
+    3.  If it's a conference paper, extract the conference name ('container-title').
+    4.  If it is a book chapter, extract the book title ('container-title') and publisher.
+    5.  Based on this analysis, complete the provided CSL-JSON object. The 'title', 'author', and 'issued' fields are already provided for you. Focus on correcting the 'type' and adding any other relevant fields you can extract.
+
+    Return only the completed JSON object. Do not include any explanatory text or markdown.
+    
+    Base JSON to complete:
+    ${JSON.stringify(initialCsl, null, 2)}
+    `;
+
+    try {
+        const response = await ai.models.generateContent({
+            model: "gemini-2.5-flash",
+            contents: prompt,
+            config: {
+                responseMimeType: "application/json",
+                responseSchema: cslSchema,
+            },
+        });
+        const result = safeJsonParse(response.text ?? '');
+        if (!result) {
+            console.warn("AI metadata extraction failed, falling back to basic data for:", paper.title);
+            return initialCsl;
+        };
+        // Ensure essential fields from initialCsl are preserved if AI misses them
+        return { ...initialCsl, ...result };
+    } catch (error) {
+        console.error("Error extracting citation metadata for:", paper.title, error);
+        // On error, fall back to the simple, non-AI-enhanced CSL object.
+        return initialCsl;
     }
 };

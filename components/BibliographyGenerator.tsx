@@ -1,9 +1,11 @@
 
+
 import React, { useState, useEffect, useCallback } from 'react';
 import type { ResearchPaper, CitationStyle } from '../types';
 import { ErrorMessage } from './ErrorMessage';
 import { CopyIcon } from './icons/CopyIcon';
-import * as apiService from '../services/apiService';
+// Fix: Imported from citationService instead of apiService for citation-related functions.
+import * as citationService from '../services/citationService';
 import { ZoteroIcon } from './icons/ZoteroIcon';
 
 interface BibliographyGeneratorProps {
@@ -33,7 +35,8 @@ export const BibliographyGenerator: React.FC<BibliographyGeneratorProps> = ({ pa
     setError(null);
     setCitations([]);
     try {
-      const result = await apiService.generateCitations(papers, style);
+      // Fix: Called generateCitations from citationService.
+      const result = await citationService.generateCitations(papers, style);
       setCitations(result);
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : "An unknown error occurred.";
@@ -60,7 +63,8 @@ export const BibliographyGenerator: React.FC<BibliographyGeneratorProps> = ({ pa
     if (papers.length === 0) return;
     setIsExporting(true);
     try {
-        const risString = await apiService.generateRIS(papers);
+        // Fix: Called generateRIS from citationService.
+        const risString = await citationService.generateRIS(papers);
         const blob = new Blob([risString], { type: 'application/x-research-info-systems' });
         const url = URL.createObjectURL(blob);
         const link = document.createElement('a');

@@ -1,10 +1,11 @@
+
 import React from 'react';
 
 interface LoadingSpinnerProps {
   message?: string;
 }
 
-export const LoadingSpinner: React.FC<LoadingSpinnerProps> = ({ message = "Analyzing research papers..." }) => {
+export const LoadingSpinner: React.FC<LoadingSpinnerProps> = ({ message = "Processing..." }) => {
   return (
     <div className="flex justify-center items-center py-12">
       <div className="flex flex-col items-center space-y-3">

@@ -1,4 +1,5 @@
 
+
 import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react';
 
 // Services
@@ -45,6 +46,7 @@ import { SummaryFeedbackModal } from './components/SummaryFeedbackModal';
 import { SuggestionsModal } from './components/SuggestionsModal';
 import { ReportModal } from './components/ReportModal';
 import { SynthesisModal } from './components/SynthesisModal';
+import { Toast } from './components/Toast';
 
 const App: React.FC = () => {
   // Main search state
@@ -52,6 +54,7 @@ const App: React.FC = () => {
   const [papers, setPapers] = useState<ResearchPaper[]>([]);
   const [selectedPaper, setSelectedPaper] = useState<ResearchPaper | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+  const [loadingMessage, setLoadingMessage] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [analysis, setAnalysis] = useState<AnalysisResult | null>(null);
   const [executedQuery, setExecutedQuery] = useState('');
@@ -60,8 +63,10 @@ const App: React.FC = () => {
   // Search options state
   const [summaryLength, setSummaryLength] = useState<SummaryLength>('medium');
   const [summaryStyle, setSummaryStyle] = useState<SummaryStyle>('paragraph');
-  const [sortConfig, setSortConfig] = useState<SortConfig>({ key: 'relevance', direction: 'desc' });
-  const [lastSearchOptions, setLastSearchOptions] = useState<AdvancedSearchOptions>({ startYear: '', endYear: '', authors: '', excludeKeywords: '' });
+  const [sortConfig, setSortConfig] = useState<SortConfig>({ key: 'semanticRelevance', direction: 'desc' });
+  const [searchMode, setSearchMode] = useState<'semantic' | 'keyword'>('semantic');
+  const [lastSearchOptions, setLastSearchOptions] = useState<Omit<AdvancedSearchOptions, 'searchMode'>>({ startYear: '', endYear: '', authors: '', excludeKeywords: '' });
+
 
   // UI/Modal states
   const [isFeedbackModalOpen, setIsFeedbackModalOpen] = useState(false);
@@ -69,6 +74,7 @@ const App: React.FC = () => {
   const [isDbFinderModalOpen, setIsDbFinderModalOpen] = useState(false);
   const [isSummaryFeedbackModalOpen, setIsSummaryFeedbackModalOpen] = useState(false);
   const [hasSearched, setHasSearched] = useState(false);
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
 
   // Workspace state
   const [workspacePapers, setWorkspacePapers] = useState<ResearchPaper[]>([]);
@@ -127,6 +133,17 @@ const App: React.FC = () => {
           console.error("Failed to save workspace to localStorage", e);
       }
   }, [workspacePapers, projects]);
+  
+  // Effect to automatically clear the toast message after a delay
+  useEffect(() => {
+    if (toastMessage) {
+        const timer = setTimeout(() => {
+            setToastMessage(null);
+        }, 3000); // Toast disappears after 3 seconds
+        return () => clearTimeout(timer);
+    }
+  }, [toastMessage]);
+
 
   // Listen for messages from the browser extension
   useEffect(() => {
@@ -180,7 +197,7 @@ const App: React.FC = () => {
     logAnalyticsEvent('paper_selected', { title: paper.title });
   }, [logAnalyticsEvent]);
 
-  const executeSearch = useCallback(async (currentQuery: string, options: AdvancedSearchOptions, bypassEnhancement = false) => {
+  const executeSearch = useCallback(async (fullOptions: AdvancedSearchOptions, currentQuery: string, bypassEnhancement = false) => {
     if (!currentQuery.trim()) return;
     setHasSearched(true);
     setIsLoading(true);
@@ -188,9 +205,10 @@ const App: React.FC = () => {
     setPapers([]);
     setAnalysis(null);
     setSelectedPaper(null);
-    setLastSearchOptions(options);
+    setLastSearchOptions({ startYear: fullOptions.startYear, endYear: fullOptions.endYear, authors: fullOptions.authors, excludeKeywords: fullOptions.excludeKeywords });
     setOriginalQuery(currentQuery);
-    logAnalyticsEvent('search_started', { query: currentQuery, options, enhanced: !bypassEnhancement });
+    logAnalyticsEvent('search_started', { query: currentQuery, options: fullOptions, enhanced: !bypassEnhancement });
+    setLoadingMessage('Initializing search...');
     
     setIsGeneratingRefined(true);
     setRefinedQueries([]);
@@ -206,7 +224,8 @@ const App: React.FC = () => {
       }
       setExecutedQuery(queryToExecute);
       
-      const result = await apiService.search(queryToExecute, options, summaryLength, summaryStyle);
+      const onProgress = (message: string) => setLoadingMessage(message);
+      const result = await apiService.search(queryToExecute, fullOptions, summaryLength, summaryStyle, onProgress);
       setPapers(result.papers);
       setAnalysis(result.analysis);
       logAnalyticsEvent('search_success', { query: queryToExecute, resultsCount: result.papers.length });
@@ -216,25 +235,46 @@ const App: React.FC = () => {
       logAnalyticsEvent('search_failed', { query: currentQuery, error: errorMessage });
     } finally {
       setIsLoading(false);
+      setLoadingMessage('');
     }
   }, [summaryLength, summaryStyle, logAnalyticsEvent]);
 
-  const handleSearch = useCallback((currentQuery: string, options: AdvancedSearchOptions) => {
-      executeSearch(currentQuery, options, false);
-  }, [executeSearch]);
+  const handleSearch = useCallback((currentQuery: string, options: Omit<AdvancedSearchOptions, 'searchMode'>) => {
+      const fullOptions = { ...options, searchMode };
+      executeSearch(fullOptions, currentQuery, false);
+  }, [executeSearch, searchMode]);
   
   const handleOriginalSearch = useCallback(() => {
       if (originalQuery) {
-          executeSearch(originalQuery, lastSearchOptions, true);
+          const fullOptions = { ...lastSearchOptions, searchMode };
+          executeSearch(fullOptions, originalQuery, true);
           logAnalyticsEvent('original_query_search_triggered', { query: originalQuery });
       }
-  }, [executeSearch, originalQuery, lastSearchOptions, logAnalyticsEvent]);
+  }, [executeSearch, originalQuery, lastSearchOptions, searchMode, logAnalyticsEvent]);
   
   const sortedPapers = useMemo(() => {
     return [...papers].sort((a, b) => {
-        if (sortConfig.key === 'relevance') return 0;
-        const aVal = a[sortConfig.key] || 0;
-        const bVal = b[sortConfig.key] || 0;
+        const key = sortConfig.key;
+
+        if (key === 'semanticRelevance') {
+            const aVal = a.semanticScore ?? 0;
+            const bVal = b.semanticScore ?? 0;
+            if (aVal < bVal) return sortConfig.direction === 'asc' ? -1 : 1;
+            if (aVal > bVal) return sortConfig.direction === 'asc' ? 1 : -1;
+            return 0;
+        }
+
+        if (key === 'validationScore') {
+            const aVal = a.validation?.score || 0;
+            const bVal = b.validation?.score || 0;
+            if (aVal < bVal) return sortConfig.direction === 'asc' ? -1 : 1;
+            if (aVal > bVal) return sortConfig.direction === 'asc' ? 1 : -1;
+            return 0;
+        }
+
+        const aVal = a[key as keyof ResearchPaper] as number || 0;
+        const bVal = b[key as keyof ResearchPaper] as number || 0;
+
         if (aVal < bVal) return sortConfig.direction === 'asc' ? -1 : 1;
         if (aVal > bVal) return sortConfig.direction === 'asc' ? 1 : -1;
         return 0;
@@ -248,6 +288,7 @@ const App: React.FC = () => {
         logAnalyticsEvent('paper_added_to_workspace', { title: paper.title });
         setWorkspacePapers(prev => [...prev, paper]);
         extensionService.notifyExtensionFavoriteToggled(paper, true);
+        setToastMessage("Paper added to workspace");
     } else {
         logAnalyticsEvent('paper_removed_from_workspace', { title: paper.title });
         setWorkspacePapers(prev => prev.filter(p => p.id !== paper.id));
@@ -261,33 +302,6 @@ const App: React.FC = () => {
         extensionService.notifyExtensionFavoriteToggled(paper, false);
     }
   }, [workspacePapers, projects, logAnalyticsEvent]);
-
-  const handleVerifyPaper = useCallback(async (paper: ResearchPaper) => {
-    setPapers(prev => prev.map(p => p.id === paper.id ? { ...p, verification: { state: 'verifying' } } : p));
-    try {
-        let status = await geminiService.verifyPaper(paper);
-
-        if (status.state === 'verified' && (!status.pdfURL || status.linkState === 'paywalled' || status.linkState === 'invalid')) {
-            const doi = paper.doi || await crossrefService.findDoiForPaper(paper);
-            
-            if (doi) {
-                if (!paper.doi) {
-                    setPapers(prev => prev.map(p => p.id === paper.id ? { ...p, doi: doi, doiState: 'loaded' } : p));
-                }
-                const doiUrl = `https://doi.org/${doi}`;
-                if (doiUrl !== status.pdfURL) {
-                    const checkResult = await geminiService.checkPdfUrl(doiUrl);
-                    if (checkResult.linkState === 'valid') {
-                        status = { ...status, pdfURL: doiUrl, linkState: 'valid', reason: `Found direct PDF via DOI lookup. ${checkResult.reason}`};
-                    }
-                }
-            }
-        }
-        setPapers(prev => prev.map(p => p.id === paper.id ? { ...p, verification: status, pdfURL: status.pdfURL || p.pdfURL } : p));
-    } catch (err) {
-        setPapers(prev => prev.map(p => p.id === paper.id ? { ...p, verification: { state: 'error', reason: 'Verification failed' } } : p));
-    }
-  }, []);
   
   const handleFindConnectedPapers = useCallback(async (paper: ResearchPaper) => {
       setIsFindingConnected(true);
@@ -391,7 +405,7 @@ const App: React.FC = () => {
     setGapAnalysisContent(null);
     setGapAnalysisError(null);
     if (papersToAnalyze.length < 2) {
-        setGapAnalysisError("Please select a project with at least two papers to analyze.");
+        setGapAnalysisError("Please select at least two papers to analyze.");
         setIsAnalyzingGaps(false);
         return;
     }
@@ -415,7 +429,7 @@ const App: React.FC = () => {
     setSynthesisResult(null);
     setSynthesisError(null);
     if (papersToSynthesize.length < 2) {
-        setSynthesisError("Please select a project with at least two papers to synthesize.");
+        setSynthesisError("Please select at least two papers to synthesize.");
         setIsSynthesizing(false);
         return;
     }
@@ -509,6 +523,8 @@ const App: React.FC = () => {
                 summaryStyle={summaryStyle}
                 onStyleChange={setSummaryStyle}
                 logAnalyticsEvent={logAnalyticsEvent}
+                searchMode={searchMode}
+                onSearchModeChange={setSearchMode}
             >
               <ExtensionPromo />
             </InitialSearchScreen>
@@ -526,10 +542,12 @@ const App: React.FC = () => {
                         onStyleChange={setSummaryStyle}
                         logAnalyticsEvent={logAnalyticsEvent}
                         excludeKeywords={lastSearchOptions.excludeKeywords}
+                        searchMode={searchMode}
+                        onSearchModeChange={setSearchMode}
                         hideSuggestions={true}
                     />
 
-                    {isLoading && <LoadingSpinner message="Searching literature..." />}
+                    {isLoading && <LoadingSpinner message={loadingMessage} />}
                     {error && <ErrorMessage message={error} />}
                     {!isLoading && !error && papers.length > 0 && (
                         <div>
@@ -560,8 +578,6 @@ const App: React.FC = () => {
                         isFindingConnected={isFindingConnected}
                         onAnalyzePaper={handleAnalyzePaper}
                         isAnalyzingPaper={isAnalyzingPaper}
-                        onVerifyPaper={handleVerifyPaper}
-                        isVerifying={!!selectedPaperFromList?.verification && selectedPaperFromList.verification.state === 'verifying'}
                         onConceptClick={handleConceptClick}
                         onFindDoi={handleFindDoi}
                         onGenerateSuggestions={handleGenerateSuggestions}
@@ -584,6 +600,8 @@ const App: React.FC = () => {
       <div className="fixed bottom-6 right-6 flex flex-col items-center gap-4 z-30">
         <FeedbackButton onClick={() => setIsFeedbackModalOpen(true)} />
       </div>
+      
+      <Toast message={toastMessage} onClose={() => setToastMessage(null)} />
       
       <InfoModal
         isOpen={isFeedbackModalOpen}

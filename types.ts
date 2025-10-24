@@ -16,15 +16,22 @@ export interface AdvancedSearchOptions {
   endYear:string;
   authors: string;
   excludeKeywords: string;
+  searchMode: 'keyword' | 'semantic';
 }
 
-export interface VerificationStatus {
-    state: 'unverified' | 'verifying' | 'verified' | 'error' | 'not_found';
-    reason?: string;
-    source?: 'Unpaywall' | 'Crossref' | 'Google Scholar' | 'arXiv' | 'Publisher Site' | string;
-    linkState?: 'valid' | 'invalid' | 'unchecked' | 'paywalled';
-    pdfURL?: string;
+export interface ValidationResult {
+  score: number; // 0-100
+  status: 'unvalidated' | 'validating' | 'validated' | 'error';
+  checks: {
+    crossref_match: boolean;
+    title_match: boolean;
+    author_match: boolean;
+    open_access: boolean;
+    source_enriched: boolean;
+  };
+  log: string[]; // A log of what passed/failed for debugging/display
 }
+
 
 export interface ResearchPaper {
   id: string;
@@ -35,7 +42,8 @@ export interface ResearchPaper {
   sourceURL?: string;
   pdfURL?: string;
   citations?: number;
-  verification?: VerificationStatus;
+  validation?: ValidationResult;
+  semanticScore?: number;
   keyConcepts?: string[];
   keyConceptsState?: 'idle' | 'loading' | 'loaded' | 'error';
   doi?: string;
@@ -107,7 +115,7 @@ export type SynthesisResult = {
   context: string;
 }[];
 
-export type SortKey = 'relevance' | 'year' | 'citations';
+export type SortKey = 'semanticRelevance' | 'year' | 'citations' | 'validationScore';
 export type SortDirection = 'asc' | 'desc';
 
 export interface SortConfig {

@@ -4,6 +4,7 @@ import type { ResearchPaper } from '../types';
 import { AddIcon } from './icons/AddIcon';
 import { CheckIcon } from './icons/CheckIcon';
 import { RemoveIcon } from './icons/RemoveIcon';
+import { SemanticScoreIndicator } from './SemanticScoreIndicator';
 
 interface PaperCardProps {
     paper: ResearchPaper;
@@ -14,6 +15,21 @@ interface PaperCardProps {
     isInWorkspace: boolean;
     onToggleWorkspace: (paper: ResearchPaper) => void;
 }
+
+const ValidationIndicator: React.FC<{ score: number | undefined }> = ({ score }) => {
+    if (score === undefined) return null;
+    let colorClasses = 'bg-slate-300';
+    if (score >= 80) colorClasses = 'bg-green-500';
+    else if (score >= 50) colorClasses = 'bg-yellow-500';
+    else if (score > 0) colorClasses = 'bg-red-500';
+
+    return (
+        <div className="flex items-center gap-1.5" title={`Validation Score: ${score}/100`}>
+            <div className={`w-2.5 h-2.5 rounded-full ${colorClasses}`}></div>
+            <span className="text-xs font-semibold text-muted-foreground">{score}</span>
+        </div>
+    );
+};
 
 export const PaperCard: React.FC<PaperCardProps> = ({ 
     paper, isOrigin, isSelected, onSelectPaper, onRemovePaper,
@@ -51,7 +67,11 @@ export const PaperCard: React.FC<PaperCardProps> = ({
                     <h3 className="text-base font-bold text-card-foreground break-words">{paper.title}</h3>
                     <div className="flex justify-between items-center mt-1">
                         <p className="text-sm text-muted-foreground break-words flex-grow pr-2">{paper.authors}</p>
-                        <p className="text-sm text-muted-foreground font-medium flex-shrink-0">{paper.year}</p>
+                         <div className="flex items-center gap-4 flex-shrink-0">
+                            <SemanticScoreIndicator score={paper.semanticScore} />
+                            <ValidationIndicator score={paper.validation?.score} />
+                            <p className="text-sm text-muted-foreground font-medium">{paper.year}</p>
+                        </div>
                     </div>
                     
                     {abstractSnippet && (

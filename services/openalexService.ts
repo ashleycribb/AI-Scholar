@@ -1,4 +1,5 @@
 
+
 import type { ResearchPaper, AdvancedSearchOptions } from '../types';
 import { createPaperId } from './extensionService';
 
@@ -121,7 +122,6 @@ export const searchOpenAlex = async (query: string, options: AdvancedSearchOptio
                 sourceURL: work.doi ? `https://doi.org/${work.doi.replace('https://doi.org/', '')}` : work.id,
                 pdfURL: work.primary_location?.pdf_url || undefined,
                 citations: work.cited_by_count,
-                verification: { state: 'unverified', linkState: 'unchecked' },
                 doi,
             };
 
