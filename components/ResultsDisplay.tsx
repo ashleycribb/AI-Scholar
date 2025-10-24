@@ -61,12 +61,12 @@ export const ResultsDisplay: React.FC<ResultsDisplayProps> = ({
         </div>
       </div>
       <div className="space-y-2">
-        {papers.map((paper, index) => {
+        {papers.map((paper) => {
           return (
               <PaperCard 
                   key={paper.id} 
                   paper={paper} 
-                  isOrigin={sortConfig.key === 'relevance' && index === 0}
+                  isOrigin={false}
                   isSelected={selectedPaper?.id === paper.id}
                   onSelectPaper={onSelectPaper}
                   onRemovePaper={onRemovePaper}

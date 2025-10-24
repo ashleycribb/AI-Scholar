@@ -137,7 +137,10 @@ export const ProjectWorkspace: React.FC<ProjectWorkspaceProps> = (props) => {
                         project={project}
                         papers={project.paperIds.map(id => paperMap.get(id)).filter((p): p is ResearchPaper => !!p)}
                         allProjects={projects}
-                        {...props}
+                        onDeleteProject={props.onDeleteProject}
+                        onMovePaper={props.onMovePaperToProject}
+                        onSynthesize={props.onSynthesizeProject}
+                        onAnalyzeGaps={props.onAnalyzeGapsInProject}
                     />
                 ))}
                 

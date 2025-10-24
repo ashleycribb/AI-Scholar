@@ -1,3 +1,4 @@
+
 import type { ResearchPaper, AdvancedSearchOptions } from '../types';
 import { createPaperId } from './extensionService';
 
@@ -124,7 +125,6 @@ export const searchOpenAlex = async (query: string, options: AdvancedSearchOptio
                 doi,
             };
 
-            // Fix: Add the required 'id' property to the ResearchPaper object.
             return {
                 ...paperData,
                 id: createPaperId(paperData),

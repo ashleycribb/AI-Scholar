@@ -1,3 +1,4 @@
+
 // Fix: Replaced triple-slash directive with a global declaration for 'chrome' to resolve type errors.
 declare const chrome: any;
 
@@ -30,8 +31,6 @@ function parseScholarResult(resultEl: HTMLElement): ResearchPaper {
 
     const pdfLinkEl = resultEl.querySelector('.gs_or_ggsm a');
     const pdfURL = pdfLinkEl?.getAttribute('href') || undefined;
-
-    // Fix: Add the required 'id' property.
     const id = createPaperId(title, sourceURL);
 
     return { id, title, authors: authors.trim(), year, abstract, sourceURL, pdfURL, citations };

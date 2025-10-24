@@ -1,3 +1,4 @@
+
 // Fix: Replaced triple-slash directive with a global declaration for 'chrome' to resolve type errors.
 declare const chrome: any;
 
@@ -19,7 +20,6 @@ const parseArxivPage = (): ResearchPaper => {
     const year = parseInt(document.querySelector('meta[name="citation_date"]')?.getAttribute('content')?.split('/')[0] || '0', 10);
     const pdfURL = document.querySelector('meta[name="citation_pdf_url"]')?.getAttribute('content') || '';
     const sourceURL = document.querySelector('meta[name="citation_abstract_html_url"]')?.getAttribute('content') || window.location.href;
-    // Fix: Add the required 'id' property.
     const id = createPaperIdFromUrl(sourceURL);
 
     return { id, title, authors, year, abstract, sourceURL, pdfURL, citations: 0 };
@@ -215,6 +215,5 @@ function injectCoPilotButton() {
 
 // --- RUN SCRIPT ---
 injectSaveButton();
-// Fix: Corrected typo in function call. The hyphen was causing a syntax error.
 injectCoPilotButton();
 createCoPilotPanel();
