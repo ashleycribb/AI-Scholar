@@ -1,39 +1,38 @@
 
 import React from 'react';
 import type { ResearchPaper } from '../types';
-import { ThumbsDownIcon } from './icons/ThumbsDownIcon';
+import { AddIcon } from './icons/AddIcon';
+import { CheckIcon } from './icons/CheckIcon';
+import { RemoveIcon } from './icons/RemoveIcon';
 
 interface PaperCardProps {
     paper: ResearchPaper;
     isOrigin: boolean;
     isSelected: boolean;
     onSelectPaper: (paper: ResearchPaper) => void;
-    onMarkAsIrrelevant: (paper: ResearchPaper) => void;
-    isSelectedForCitation: boolean;
-    onToggleForCitation: (paper: ResearchPaper) => void;
+    onRemovePaper: (paper: ResearchPaper) => void;
+    isInWorkspace: boolean;
+    onToggleWorkspace: (paper: ResearchPaper) => void;
 }
 
 export const PaperCard: React.FC<PaperCardProps> = ({ 
-    paper, isOrigin, isSelected, onSelectPaper, onMarkAsIrrelevant, isSelectedForCitation, onToggleForCitation
+    paper, isOrigin, isSelected, onSelectPaper, onRemovePaper,
+    isInWorkspace, onToggleWorkspace
 }) => {
-    const isIrrelevant = paper.isIrrelevant ?? false;
-
-    const cardClasses = `p-3 rounded-md transition-all duration-200 border-l-4 group relative ${
-        isIrrelevant 
-        ? 'opacity-60 bg-muted/50 border-border' 
-        : isSelected
+    const cardClasses = `p-3 rounded-md transition-all duration-200 border-l-4 group relative cursor-pointer ${
+        isSelected
         ? 'bg-accent border-primary'
         : 'bg-card hover:bg-accent border-transparent'
     }`;
 
-    const handleIrrelevantClick = (e: React.MouseEvent) => {
+    const handleWorkspaceClick = (e: React.MouseEvent) => {
         e.stopPropagation(); // Prevent onSelectPaper from firing
-        onMarkAsIrrelevant(paper);
+        onToggleWorkspace(paper);
     };
 
-    const handleCheckboxChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const handleRemoveClick = (e: React.MouseEvent) => {
         e.stopPropagation();
-        onToggleForCitation(paper);
+        onRemovePaper(paper);
     };
     
     const abstractSnippet = paper.abstract && paper.abstract.length > 150 
@@ -41,51 +40,51 @@ export const PaperCard: React.FC<PaperCardProps> = ({
         : paper.abstract;
 
     return (
-        <div className={cardClasses}>
+        <div className={cardClasses} onClick={() => onSelectPaper(paper)}>
             <div className="flex items-start gap-3">
-                {!isIrrelevant && (
-                    <input
-                        type="checkbox"
-                        checked={isSelectedForCitation}
-                        onChange={handleCheckboxChange}
-                        onClick={(e) => e.stopPropagation()}
-                        className="mt-1 flex-shrink-0 h-4 w-4 rounded border-input text-primary focus:ring-primary cursor-pointer"
-                        aria-label={`Select ${paper.title} for citation`}
-                    />
-                )}
-                 <div 
-                    className={`flex-grow ${isIrrelevant ? '' : 'cursor-pointer'}`}
-                    onClick={() => !isIrrelevant && onSelectPaper(paper)}
-                >
-                    {isOrigin && !isIrrelevant && (
+                 <div className="flex-grow">
+                    {isOrigin && (
                         <p className="text-xs font-bold uppercase text-purple-600 mb-1">
                             Origin Paper
                         </p>
                     )}
-                    <h3 className="text-sm font-bold text-card-foreground break-words">{paper.title}</h3>
+                    <h3 className="text-base font-bold text-card-foreground break-words">{paper.title}</h3>
                     <div className="flex justify-between items-center mt-1">
-                        <p className="text-xs text-muted-foreground break-words flex-grow pr-2">{paper.authors}</p>
-                        <p className="text-xs text-muted-foreground font-medium flex-shrink-0">{paper.year}</p>
+                        <p className="text-sm text-muted-foreground break-words flex-grow pr-2">{paper.authors}</p>
+                        <p className="text-sm text-muted-foreground font-medium flex-shrink-0">{paper.year}</p>
                     </div>
                     
                     {abstractSnippet && (
-                        <p className="text-xs text-secondary-foreground mt-2 leading-relaxed">
+                        <p className="text-sm text-secondary-foreground mt-2 leading-relaxed">
                             {abstractSnippet}
                         </p>
                     )}
                 </div>
             </div>
             
-            {!isIrrelevant && (
+            <div className="absolute top-2 right-2 flex items-center gap-2">
                 <button
-                    onClick={handleIrrelevantClick}
-                    className="absolute top-1/2 right-2 -translate-y-1/2 p-1.5 rounded-full bg-muted text-muted-foreground opacity-0 group-hover:opacity-100 hover:bg-destructive/10 hover:text-destructive focus:opacity-100 transition-opacity"
-                    aria-label="Mark as not relevant"
-                    title="Not Relevant"
+                    onClick={handleWorkspaceClick}
+                    className={`flex items-center gap-1.5 h-7 px-2.5 rounded-full text-xs font-semibold transition-all duration-200 opacity-0 group-hover:opacity-100 focus:opacity-100 ${
+                        isInWorkspace 
+                        ? 'bg-green-100 text-green-800'
+                        : 'bg-secondary text-secondary-foreground hover:bg-primary/10 hover:text-primary'
+                    }`}
+                    aria-label={isInWorkspace ? "Remove from Workspace" : "Add to Workspace"}
+                    title={isInWorkspace ? "Remove from Workspace" : "Add to Workspace"}
                 >
-                    <ThumbsDownIcon className="w-4 h-4" />
+                    {isInWorkspace ? <CheckIcon className="w-3.5 h-3.5" /> : <AddIcon className="w-3.5 h-3.5" />}
+                    <span>{isInWorkspace ? 'Added' : 'Add'}</span>
                 </button>
-            )}
+                <button
+                    onClick={handleRemoveClick}
+                    className="flex items-center justify-center h-7 w-7 rounded-full text-xs font-semibold transition-all duration-200 opacity-0 group-hover:opacity-100 focus:opacity-100 bg-secondary text-secondary-foreground hover:bg-destructive/10 hover:text-destructive"
+                    aria-label="Remove from results"
+                    title="Remove from results"
+                >
+                    <RemoveIcon className="w-4 h-4" />
+                </button>
+            </div>
         </div>
     );
 };

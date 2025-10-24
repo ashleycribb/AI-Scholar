@@ -27,6 +27,7 @@ export interface VerificationStatus {
 }
 
 export interface ResearchPaper {
+  id: string;
   title: string;
   authors: string;
   year: number;
@@ -39,7 +40,6 @@ export interface ResearchPaper {
   keyConceptsState?: 'idle' | 'loading' | 'loaded' | 'error';
   doi?: string;
   doiState?: 'idle' | 'loading' | 'loaded' | 'error';
-  isIrrelevant?: boolean;
   enrichmentSource?: 'arXiv';
 }
 
@@ -123,6 +123,14 @@ export interface EnhancedQuery {
 export interface SuggestionsResult {
     seedPaper: ResearchPaper;
     suggestions: string[];
+}
+
+// A project is a user-defined collection of papers.
+export interface Project {
+  id: string;
+  name: string;
+  paperIds: string[];
+  createdAt: number;
 }
 
 // --- Crossref API Types ---

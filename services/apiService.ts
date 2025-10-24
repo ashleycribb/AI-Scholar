@@ -5,6 +5,7 @@ import * as arxivService from './arxivService';
 import { generateSummaryForPapers } from './geminiService';
 import { analyzePapers } from './analysisService';
 import { generateCitations as generateCitationsInternal, generateRIS as generateRISInternal } from './citationService';
+import { createPaperId } from './extensionService';
 
 export const search = async (
     query: string,
@@ -27,14 +28,17 @@ export const search = async (
             return enrichedData ? { ...paper, ...enrichedData } : paper;
         })
     );
+    
+    // Assign a stable ID to each paper for tracking in projects and workspace.
+    const papersWithIds = enrichedPapers.map(p => ({ ...p, id: createPaperId(p) }));
 
     // Run summary and analysis in parallel on the enriched data
     const [summary, analysis] = await Promise.all([
-        generateSummaryForPapers(enrichedPapers, summaryLength, summaryStyle),
-        analyzePapers(enrichedPapers)
+        generateSummaryForPapers(papersWithIds, summaryLength, summaryStyle),
+        analyzePapers(papersWithIds)
     ]);
     
-    return { papers: enrichedPapers, summary, analysis };
+    return { papers: papersWithIds, summary, analysis };
 };
 
 export const generateCitations = async (papers: ResearchPaper[], style: CitationStyle): Promise<string[]> => {

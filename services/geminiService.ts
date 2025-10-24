@@ -9,6 +9,7 @@ import type {
   SearchSourceInfo,
   SummaryLength,
   SummaryStyle,
+  SynthesisResult,
   VerificationStatus,
   GroundingSource
 } from "../types";
@@ -450,6 +451,56 @@ export const analyzeResearchGaps = async (papers: ResearchPaper[]): Promise<stri
     } catch (error) {
         console.error("Error analyzing research gaps:", error);
         throw new Error("Failed to perform research gap analysis.");
+    }
+};
+
+const synthesisSchema = {
+    type: Type.ARRAY,
+    items: {
+        type: Type.OBJECT,
+        properties: {
+            title: { type: Type.STRING },
+            mainFinding: { type: Type.STRING },
+            methodology: { type: Type.STRING },
+            context: { type: Type.STRING },
+        },
+        required: ["title", "mainFinding", "methodology", "context"],
+    }
+};
+
+export const synthesizePapers = async (papers: ResearchPaper[]): Promise<SynthesisResult> => {
+    const paperContext = papers.map(p => `Title: ${p.title}\nAbstract: ${p.abstract}`).join('\n\n---\n\n');
+
+    const prompt = `You are a research synthesis expert. Based on the provided abstracts, create a structured summary for each paper, focusing on four key areas. This will be used to generate a comparative table for a literature review.
+
+    Provided Papers:
+    ${paperContext}
+
+    Instructions:
+    For each paper, extract the following information and return it as an array of JSON objects.
+    1.  **title**: The exact title of the paper.
+    2.  **mainFinding**: A concise, one-sentence summary of the paper's primary conclusion or key finding.
+    3.  **methodology**: A brief description of the research method used (e.g., "Quantitative survey," "Qualitative interviews," "Systematic literature review," "Controlled experiment").
+    4.  **context**: The context of the study, including the sample population or data source (e.g., "250 undergraduate students," "Tweets from 2020," "fMRI data from 30 patients").
+    
+    Ensure your response is a single, valid JSON array.
+    `;
+    
+    try {
+        const response = await ai.models.generateContent({
+            model: "gemini-2.5-pro", // Using a more powerful model for this complex task
+            contents: prompt,
+            config: {
+                responseMimeType: "application/json",
+                responseSchema: synthesisSchema,
+            },
+        });
+        const result = safeJsonParse(response.text ?? '');
+        if (!result) throw new Error("Could not synthesize papers.");
+        return result;
+    } catch (error) {
+        console.error("Error synthesizing papers:", error);
+        throw new Error("Failed to synthesize the provided literature.");
     }
 };
 

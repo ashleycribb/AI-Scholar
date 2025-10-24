@@ -4,6 +4,12 @@ declare const chrome: any;
 import { db } from './lib/db';
 import type { LocalPaper } from './lib/types';
 import type { ResearchPaper } from '../types';
+import { 
+    summarizeAbstract, 
+    analyzeSinglePaper,
+    findOpenAccessVersion,
+    generatePaperBasedSuggestions 
+} from './lib/gemini';
 
 const CHANNEL_NAME = 'ai_research_explorer_channel';
 const channel = new BroadcastChannel(CHANNEL_NAME);
@@ -21,9 +27,42 @@ const createPaperId = (paper: Partial<ResearchPaper>): string => {
     return `title:${paper.title?.toLowerCase().replace(/\s+/g, '-') || Math.random().toString()}`;
 };
 
+async function enrichPaper(paperId: string, paperData: LocalPaper) {
+    console.log(`[Enrichment] Starting for paper: ${paperId}`);
+    try {
+        const pdfUrl = await findOpenAccessVersion(paperData);
+
+        if (pdfUrl) {
+            const existingPaper = await db.getPaper(paperId);
+            if (existingPaper) {
+                const updatedPaper: LocalPaper = {
+                    ...existingPaper,
+                    pdfURL: pdfUrl,
+                    verification: {
+                        state: 'verified',
+                        source: 'Unpaywall',
+                        linkState: 'valid',
+                        reason: 'Found a legal open-access PDF.',
+                        pdfURL: pdfUrl,
+                    }
+                };
+                await db.addPaper(updatedPaper);
+                console.log(`[Enrichment] Success! Updated paper ${paperId} with PDF link.`);
+                // We could post a message back to the UI to inform of the update,
+                // but for now, silent enrichment is sufficient.
+            }
+        } else {
+            console.log(`[Enrichment] No open access PDF found for ${paperId}.`);
+        }
+    } catch (error) {
+        console.error(`[Enrichment] Failed for paper ${paperId}:`, error);
+    }
+}
+
 
 // Listen for messages from content scripts or the popup
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+    // Tier 1 Actions
     if (message.action === 'savePaper') {
         const paperData: ResearchPaper = message.paper;
         const id = createPaperId(paperData);
@@ -32,13 +71,17 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             ...paperData,
             id,
             savedAt: Date.now(),
+            verification: { state: 'unverified', linkState: 'unchecked' },
         };
-
+        
+        // Immediately save the paper for a snappy UI response
         db.addPaper(newPaper).then(() => {
-            console.log('Paper saved:', newPaper);
-            // Notify the web app and popup
+            console.log('Paper saved initially:', newPaper);
             channel.postMessage({ type: 'paper_saved', paper: newPaper });
             sendResponse({ success: true, paperId: id });
+
+            // Start enrichment in the background, don't wait for it
+            enrichPaper(id, newPaper);
         }).catch(error => {
             console.error('Failed to save paper:', error);
             sendResponse({ success: false, error: error.message });
@@ -51,7 +94,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         db.getAllPapers().then(papers => {
             sendResponse({ success: true, papers });
         });
-        return true; // Indicates async response
+        return true;
     }
 
     if (message.action === 'deletePaper') {
@@ -67,6 +110,38 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (message.action === 'getPaperStatus') {
         db.paperExists(message.paperId).then(exists => {
             sendResponse({ exists });
+        });
+        return true;
+    }
+
+    // Tier 2 Co-Pilot Actions
+    if (message.action === 'getAiAnalysisForPaper') {
+        const paper = message.paper;
+        Promise.all([
+            summarizeAbstract(paper),
+            analyzeSinglePaper(paper)
+        ]).then(([summary, analysis]) => {
+            sendResponse({ success: true, data: { summary, analysis } });
+        }).catch(error => {
+            sendResponse({ success: false, error: error.message });
+        });
+        return true;
+    }
+
+    if (message.action === 'findOpenAccessForPaper') {
+        findOpenAccessVersion(message.paper).then(pdfUrl => {
+            sendResponse({ success: true, pdfUrl });
+        }).catch(error => {
+            sendResponse({ success: false, error: error.message });
+        });
+        return true;
+    }
+
+    if (message.action === 'getSuggestionsForPaper') {
+        generatePaperBasedSuggestions(message.paper).then(suggestions => {
+            sendResponse({ success: true, suggestions });
+        }).catch(error => {
+            sendResponse({ success: false, error: error.message });
         });
         return true;
     }

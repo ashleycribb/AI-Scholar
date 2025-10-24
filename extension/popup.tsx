@@ -4,10 +4,13 @@ declare const chrome: any;
 import React, { useState, useEffect } from 'react';
 import ReactDOM from 'react-dom/client';
 import type { LocalPaper } from './lib/types';
+import { scrapePageMetadata } from './lib/scraper';
 
 const Popup: React.FC = () => {
     const [papers, setPapers] = useState<LocalPaper[]>([]);
     const [loading, setLoading] = useState(true);
+    const [isSaving, setIsSaving] = useState(false);
+
 
     useEffect(() => {
         chrome.runtime.sendMessage({ action: 'getSavedPapers' }, (response) => {
@@ -18,29 +21,54 @@ const Popup: React.FC = () => {
         });
         
         const channel = new BroadcastChannel('ai_research_explorer_channel');
-        channel.onmessage = (event) => {
+        const handleChannelMessage = (event: MessageEvent) => {
              if (event.data.type === 'paper_saved') {
-                setPapers(prev => [event.data.paper, ...prev]);
+                setIsSaving(false); // Stop saving indicator when paper is confirmed saved
+                setPapers(prev => [event.data.paper, ...prev.filter(p => p.id !== event.data.paper.id)]);
              }
              if (event.data.type === 'paper_removed') {
                 setPapers(prev => prev.filter(p => p.id !== event.data.paperId));
              }
         };
-        return () => channel.close();
+        channel.addEventListener('message', handleChannelMessage);
+        
+        return () => {
+            channel.removeEventListener('message', handleChannelMessage);
+            channel.close();
+        };
     }, []);
 
     const handleGenericSave = () => {
+        setIsSaving(true);
         chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
             const activeTab = tabs[0];
-            if (activeTab?.title && activeTab.url) {
-                const paper = {
-                    title: activeTab.title,
-                    authors: 'N/A',
-                    year: new Date().getFullYear(),
-                    abstract: 'No abstract captured. Saved from a generic page.',
-                    sourceURL: activeTab.url
-                };
-                chrome.runtime.sendMessage({ action: 'savePaper', paper });
+            if (activeTab?.id) {
+                chrome.scripting.executeScript(
+                    {
+                        target: { tabId: activeTab.id },
+                        func: scrapePageMetadata,
+                    },
+                    (injectionResults) => {
+                        if (chrome.runtime.lastError || !injectionResults || injectionResults.length === 0) {
+                            console.error('Script injection failed:', chrome.runtime.lastError);
+                            // Fallback to old method if injection fails (e.g., on protected pages)
+                            const paper = {
+                                title: activeTab.title || 'Untitled',
+                                authors: 'N/A',
+                                year: new Date().getFullYear(),
+                                abstract: 'Could not automatically extract abstract.',
+                                sourceURL: activeTab.url
+                            };
+                            chrome.runtime.sendMessage({ action: 'savePaper', paper });
+                            return;
+                        }
+                        
+                        const scrapedPaper = injectionResults[0].result;
+                        chrome.runtime.sendMessage({ action: 'savePaper', paper: scrapedPaper });
+                    }
+                );
+            } else {
+                setIsSaving(false);
             }
         });
     };
@@ -61,9 +89,10 @@ const Popup: React.FC = () => {
             <div className="mt-4">
                 <button 
                     onClick={handleGenericSave}
-                    className="w-full text-center px-4 py-2 bg-blue-600 text-white font-semibold rounded-md hover:bg-blue-700 transition-colors"
+                    disabled={isSaving}
+                    className="w-full text-center px-4 py-2 bg-blue-600 text-white font-semibold rounded-md hover:bg-blue-700 transition-colors disabled:bg-blue-400 disabled:cursor-wait"
                 >
-                    Save Current Page
+                    {isSaving ? 'Saving...' : 'Save Current Page'}
                 </button>
             </div>
 

@@ -1,4 +1,5 @@
 import type { ResearchPaper, AdvancedSearchOptions } from '../types';
+import { createPaperId } from './extensionService';
 
 // Client-side cache for OpenAlex results
 interface CacheEntry {
@@ -110,7 +111,8 @@ export const searchOpenAlex = async (query: string, options: AdvancedSearchOptio
                 return null;
             }
 
-            return {
+            const doi = work.doi ? work.doi.replace('https://doi.org/', '') : undefined;
+            const paperData: Omit<ResearchPaper, 'id'> = {
                 title: work.title || work.display_name,
                 authors: (work.authorships || []).map((a: any) => a.author?.display_name || 'Unknown Author').join(', '),
                 year: work.publication_year,
@@ -119,6 +121,13 @@ export const searchOpenAlex = async (query: string, options: AdvancedSearchOptio
                 pdfURL: work.primary_location?.pdf_url || undefined,
                 citations: work.cited_by_count,
                 verification: { state: 'unverified', linkState: 'unchecked' },
+                doi,
+            };
+
+            // Fix: Add the required 'id' property to the ResearchPaper object.
+            return {
+                ...paperData,
+                id: createPaperId(paperData),
             };
         }).filter((p): p is ResearchPaper => p !== null);
 

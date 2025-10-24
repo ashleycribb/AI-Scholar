@@ -1,9 +1,7 @@
 
-
-
 import React from 'react';
 import type { ResearchPaper } from '../types';
-import { StarIcon } from './icons/StarIcon';
+import { AddIcon } from './icons/AddIcon';
 import { VerificationIcon } from './icons/VerificationIcon';
 import { PdfIcon } from './icons/PdfIcon';
 import { ScholarIcon } from './icons/ScholarIcon';
@@ -16,11 +14,12 @@ import { DoiIcon } from './icons/DoiIcon';
 import { SearchIcon } from './icons/SearchIcon';
 import { OpenAccessIcon } from './icons/OpenAccessIcon';
 import { ArxivIcon } from './icons/ArxivIcon';
+import { CheckIcon } from './icons/CheckIcon';
 
 interface PaperDetailsProps {
     paper: ResearchPaper;
-    isFavorite: boolean;
-    onToggleFavorite: (paper: ResearchPaper) => void;
+    isInWorkspace: boolean;
+    onToggleWorkspacePaper: (paper: ResearchPaper) => void;
     onVerifyPaper: (paper: ResearchPaper) => void;
     isVerifying: boolean;
     onConceptClick: (concept: string) => void;
@@ -130,7 +129,7 @@ const DoiDisplay: React.FC<{ paper: ResearchPaper; onFindDoi: () => void }> = ({
 
 
 export const PaperDetails: React.FC<PaperDetailsProps> = ({ 
-    paper, isFavorite, onToggleFavorite, onVerifyPaper, isVerifying, onConceptClick, onFindDoi, logAnalyticsEvent
+    paper, isInWorkspace, onToggleWorkspacePaper, onVerifyPaper, isVerifying, onConceptClick, onFindDoi, logAnalyticsEvent
 }) => {
     const googleScholarSearchUrl = `https://scholar.google.com/scholar?hl=en&as_sdt=0,34&q=${encodeURIComponent(`"${paper.title}"`)}`;
     
@@ -185,10 +184,19 @@ export const PaperDetails: React.FC<PaperDetailsProps> = ({
     return (
         <div className="flex flex-col h-full">
             <div className="flex-grow">
-                <div className="flex justify-between items-start">
+                <div className="flex justify-between items-start gap-4">
                     <h3 className="text-lg font-bold text-foreground flex-grow pr-2">{paper.title}</h3>
-                    <button onClick={() => onToggleFavorite(paper)} aria-label="Toggle favorite" className="p-2 rounded-full hover:bg-yellow-100 flex-shrink-0">
-                        <StarIcon className={`w-6 h-6 transition-colors ${isFavorite ? 'text-yellow-500' : 'text-gray-400'}`} />
+                    <button 
+                        onClick={() => onToggleWorkspacePaper(paper)} 
+                        aria-label={isInWorkspace ? "Remove from Workspace" : "Add to Workspace"} 
+                        className={`flex-shrink-0 flex items-center gap-2 h-9 px-4 rounded-md text-sm font-semibold transition-colors ${
+                            isInWorkspace 
+                            ? 'bg-green-100 text-green-800 hover:bg-green-200' 
+                            : 'bg-secondary text-secondary-foreground hover:bg-accent'
+                        }`}
+                    >
+                        {isInWorkspace ? <CheckIcon className="w-4 h-4" /> : <AddIcon className="w-4 h-4" />}
+                        <span>{isInWorkspace ? 'In Workspace' : 'Add to Workspace'}</span>
                     </button>
                 </div>
                 <div className="flex items-center justify-between mt-1">
