@@ -1,5 +1,4 @@
 
-
 import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react';
 
 // Services
@@ -48,6 +47,8 @@ import { ReportModal } from './components/ReportModal';
 import { SynthesisModal } from './components/SynthesisModal';
 import { Toast } from './components/Toast';
 
+const PROJECT_COLORS = ['sky', 'green', 'yellow', 'red', 'purple', 'pink', 'indigo', 'teal'];
+
 const App: React.FC = () => {
   // Main search state
   const [query, setQuery] = useState('');
@@ -63,9 +64,9 @@ const App: React.FC = () => {
   // Search options state
   const [summaryLength, setSummaryLength] = useState<SummaryLength>('medium');
   const [summaryStyle, setSummaryStyle] = useState<SummaryStyle>('paragraph');
-  const [sortConfig, setSortConfig] = useState<SortConfig>({ key: 'semanticRelevance', direction: 'desc' });
-  const [searchMode, setSearchMode] = useState<'semantic' | 'keyword'>('semantic');
-  const [lastSearchOptions, setLastSearchOptions] = useState<Omit<AdvancedSearchOptions, 'searchMode'>>({ startYear: '', endYear: '', authors: '', excludeKeywords: '' });
+  const [sortConfig, setSortConfig] = useState<SortConfig>({ key: 'relevance', direction: 'desc' });
+  const [lastSearchOptions, setLastSearchOptions] = useState<AdvancedSearchOptions>({ startYear: '', endYear: '', authors: '', excludeKeywords: '' });
+  const [showHighRelevanceOnly, setShowHighRelevanceOnly] = useState(false);
 
 
   // UI/Modal states
@@ -83,6 +84,7 @@ const App: React.FC = () => {
   // Per-paper action states
   const [connectedPapersResult, setConnectedPapersResult] = useState<{ seedPaper: ResearchPaper, connections: ConnectedPaper[] } | null>(null);
   const [isFindingConnected, setIsFindingConnected] = useState(false);
+  const [paperBeingConnected, setPaperBeingConnected] = useState<string | null>(null);
   const [connectedPapersError, setConnectedPapersError] = useState<string | null>(null);
 
   const [paperAnalysisResult, setPaperAnalysisResult] = useState<{ paper: ResearchPaper, analysis: PaperAnalysis } | null>(null);
@@ -197,68 +199,68 @@ const App: React.FC = () => {
     logAnalyticsEvent('paper_selected', { title: paper.title });
   }, [logAnalyticsEvent]);
 
-  const executeSearch = useCallback(async (fullOptions: AdvancedSearchOptions, currentQuery: string, bypassEnhancement = false) => {
-    if (!currentQuery.trim()) return;
+  const executeSearch = useCallback(async (searchQuery: string, options: AdvancedSearchOptions) => {
+    if (!searchQuery.trim()) return;
     setHasSearched(true);
     setIsLoading(true);
     setError(null);
     setPapers([]);
     setAnalysis(null);
     setSelectedPaper(null);
-    setLastSearchOptions({ startYear: fullOptions.startYear, endYear: fullOptions.endYear, authors: fullOptions.authors, excludeKeywords: fullOptions.excludeKeywords });
-    setOriginalQuery(currentQuery);
-    logAnalyticsEvent('search_started', { query: currentQuery, options: fullOptions, enhanced: !bypassEnhancement });
+    setLastSearchOptions(options);
+    setOriginalQuery(searchQuery);
+    logAnalyticsEvent('search_started', { query: searchQuery, options });
     setLoadingMessage('Initializing search...');
     
     setIsGeneratingRefined(true);
     setRefinedQueries([]);
-    geminiService.generateRefinedQueries(currentQuery)
+    geminiService.generateRefinedQueries(searchQuery)
       .then(queries => setRefinedQueries(queries))
       .finally(() => setIsGeneratingRefined(false));
 
     try {
-      let queryToExecute = currentQuery;
-      if (!bypassEnhancement) {
-        const enhancedQuery = await geminiService.enhanceSearchQuery(currentQuery);
-        queryToExecute = enhancedQuery.refined_query;
-      }
-      setExecutedQuery(queryToExecute);
+      setExecutedQuery(searchQuery);
       
       const onProgress = (message: string) => setLoadingMessage(message);
-      const result = await apiService.search(queryToExecute, fullOptions, summaryLength, summaryStyle, onProgress);
+      const result = await apiService.search(searchQuery, options, summaryLength, summaryStyle, onProgress);
       setPapers(result.papers);
       setAnalysis(result.analysis);
-      logAnalyticsEvent('search_success', { query: queryToExecute, resultsCount: result.papers.length });
+      logAnalyticsEvent('search_success', { query: searchQuery, resultsCount: result.papers.length });
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'An unknown error occurred.';
       setError(errorMessage);
-      logAnalyticsEvent('search_failed', { query: currentQuery, error: errorMessage });
+      logAnalyticsEvent('search_failed', { query: searchQuery, error: errorMessage });
     } finally {
       setIsLoading(false);
       setLoadingMessage('');
     }
   }, [summaryLength, summaryStyle, logAnalyticsEvent]);
 
-  const handleSearch = useCallback((currentQuery: string, options: Omit<AdvancedSearchOptions, 'searchMode'>) => {
-      const fullOptions = { ...options, searchMode };
-      executeSearch(fullOptions, currentQuery, false);
-  }, [executeSearch, searchMode]);
+  const handleSearch = useCallback((currentQuery: string, options: AdvancedSearchOptions) => {
+      executeSearch(currentQuery, options);
+  }, [executeSearch]);
   
   const handleOriginalSearch = useCallback(() => {
       if (originalQuery) {
-          const fullOptions = { ...lastSearchOptions, searchMode };
-          executeSearch(fullOptions, originalQuery, true);
+          executeSearch(originalQuery, lastSearchOptions);
           logAnalyticsEvent('original_query_search_triggered', { query: originalQuery });
       }
-  }, [executeSearch, originalQuery, lastSearchOptions, searchMode, logAnalyticsEvent]);
+  }, [executeSearch, originalQuery, lastSearchOptions, logAnalyticsEvent]);
   
+  const filteredPapers = useMemo(() => {
+    if (!showHighRelevanceOnly) {
+        return papers;
+    }
+    return papers.filter(p => (p.combinedScore ?? 0) >= 75);
+  }, [papers, showHighRelevanceOnly]);
+
   const sortedPapers = useMemo(() => {
-    return [...papers].sort((a, b) => {
+    return [...filteredPapers].sort((a, b) => {
         const key = sortConfig.key;
 
-        if (key === 'semanticRelevance') {
-            const aVal = a.semanticScore ?? 0;
-            const bVal = b.semanticScore ?? 0;
+        if (key === 'relevance') {
+            const aVal = a.combinedScore ?? 0;
+            const bVal = b.combinedScore ?? 0;
             if (aVal < bVal) return sortConfig.direction === 'asc' ? -1 : 1;
             if (aVal > bVal) return sortConfig.direction === 'asc' ? 1 : -1;
             return 0;
@@ -279,7 +281,7 @@ const App: React.FC = () => {
         if (aVal > bVal) return sortConfig.direction === 'asc' ? 1 : -1;
         return 0;
     });
-  }, [papers, sortConfig]);
+  }, [filteredPapers, sortConfig]);
 
   const handleToggleWorkspacePaper = useCallback((paper: ResearchPaper) => {
     const isCurrentlyInWorkspace = workspacePapers.some(p => p.id === paper.id);
@@ -304,9 +306,12 @@ const App: React.FC = () => {
   }, [workspacePapers, projects, logAnalyticsEvent]);
   
   const handleFindConnectedPapers = useCallback(async (paper: ResearchPaper) => {
+      if (isFindingConnected) return; // Prevent multiple simultaneous requests
       setIsFindingConnected(true);
+      setPaperBeingConnected(paper.id);
       setConnectedPapersError(null);
       setConnectedPapersResult(null);
+      logAnalyticsEvent('find_connected_papers_started', { title: paper.title });
       try {
           const result = await geminiService.findConnectedPapers(paper);
           setConnectedPapersResult(result);
@@ -316,23 +321,26 @@ const App: React.FC = () => {
           setConnectedPapersResult({ seedPaper: paper, connections: [] });
       } finally {
           setIsFindingConnected(false);
+          setPaperBeingConnected(null);
       }
-  }, []);
+  }, [isFindingConnected, logAnalyticsEvent]);
 
   const handleAnalyzePaper = useCallback(async (paper: ResearchPaper) => {
-      setIsAnalyzingPaper(true);
-      setPaperAnalysisError(null);
-      setPaperAnalysisResult(null);
-      try {
-          const analysisResult = await geminiService.analyzeSinglePaper(paper);
-          setPaperAnalysisResult({ paper, analysis: analysisResult });
-      } catch (err) {
-          const errorMessage = err instanceof Error ? err.message : 'An unknown error occurred.';
-          setPaperAnalysisError(errorMessage);
-          setPaperAnalysisResult({ paper, analysis: { researchQuestion: '', methodology: '', keyFindings: [], limitations: [] } });
-      } finally {
-          setIsAnalyzingPaper(false);
-      }
+    setIsAnalyzingPaper(true);
+    setPaperAnalysisError(null);
+    // Open the modal immediately in a loading state with dummy data
+    setPaperAnalysisResult({ paper, analysis: { researchQuestion: '', methodology: '', keyFindings: [], limitations: [] } });
+    try {
+        const analysisResult = await geminiService.analyzeSinglePaper(paper);
+        // On success, update the result with the actual analysis
+        setPaperAnalysisResult({ paper, analysis: analysisResult });
+    } catch (err) {
+        const errorMessage = err instanceof Error ? err.message : 'An unknown error occurred.';
+        setPaperAnalysisError(errorMessage);
+        // On error, the modal is already open, and now the error will be displayed.
+    } finally {
+        setIsAnalyzingPaper(false);
+    }
   }, []);
   
   const handleGenerateSuggestions = useCallback(async (paper: ResearchPaper) => {
@@ -448,14 +456,17 @@ const App: React.FC = () => {
   }, [logAnalyticsEvent]);
 
   const handleCreateProject = useCallback((name: string) => {
-    const newProject: Project = {
-        id: `proj_${Date.now()}`,
-        name,
-        paperIds: [],
-        createdAt: Date.now(),
-    };
-    setProjects(prev => [...prev, newProject]);
-    logAnalyticsEvent('project_created', { projectName: name });
+    setProjects(prev => {
+        const newProject: Project = {
+            id: `proj_${Date.now()}`,
+            name,
+            paperIds: [],
+            createdAt: Date.now(),
+            color: PROJECT_COLORS[prev.length % PROJECT_COLORS.length],
+        };
+        logAnalyticsEvent('project_created', { projectName: name });
+        return [...prev, newProject];
+    });
   }, [logAnalyticsEvent]);
 
   const handleDeleteProject = useCallback((projectId: string) => {
@@ -483,6 +494,51 @@ const App: React.FC = () => {
     logAnalyticsEvent('paper_moved_to_project', { paperId, projectId });
   }, [logAnalyticsEvent]);
 
+  const handleAddAndAssignToProject = useCallback((paper: ResearchPaper, projectId: string) => {
+      // Ensure paper is in the main workspace list
+      if (!workspacePapers.some(p => p.id === paper.id)) {
+          setWorkspacePapers(prev => [...prev, paper]);
+          extensionService.notifyExtensionFavoriteToggled(paper, true);
+      }
+      
+      // Now, assign it to the project
+      handleMovePaperToProject(paper.id, projectId);
+
+      const projectName = projects.find(p => p.id === projectId)?.name || 'a project';
+      setToastMessage(`Paper added to project "${projectName}"`);
+      logAnalyticsEvent('paper_added_to_project', { paperId: paper.id, projectId });
+  }, [workspacePapers, projects, handleMovePaperToProject, logAnalyticsEvent]);
+
+  const handleExcludeLowScoring = useCallback(() => {
+    const papersToExclude = papers.filter(p => (p.semanticScore ?? 100) < 30);
+    if (papersToExclude.length === 0) {
+        setToastMessage("No papers met the low-score threshold for exclusion.");
+        return;
+    }
+
+    const titlesToExclude = papersToExclude.map(p => p.title);
+    
+    // Update the papers list for immediate UI feedback
+    setPapers(prev => prev.filter(p => (p.semanticScore ?? 100) >= 30));
+
+    // Update the advanced search options for the next search
+    setLastSearchOptions(prev => {
+        const existingExcludes = prev.excludeKeywords ? prev.excludeKeywords.split('|||').filter(Boolean) : [];
+        const newExcludes = new Set([...existingExcludes, ...titlesToExclude]);
+        return { ...prev, excludeKeywords: Array.from(newExcludes).join('|||') };
+    });
+
+    setToastMessage(`${titlesToExclude.length} low-scoring paper(s) hidden and excluded from future searches.`);
+    logAnalyticsEvent('low_scoring_papers_excluded', { count: titlesToExclude.length });
+  }, [papers, logAnalyticsEvent]);
+  
+  const handleChangeProjectColor = useCallback((projectId: string, color: string) => {
+    setProjects(prev => 
+        prev.map(p => p.id === projectId ? { ...p, color } : p)
+    );
+    logAnalyticsEvent('project_color_changed', { projectId, color });
+  }, [logAnalyticsEvent]);
+
   const selectedPaperFromList = useMemo(() => {
     if (!selectedPaper) return null;
     return papers.find(p => p.id === selectedPaper.id) ?? selectedPaper;
@@ -499,15 +555,23 @@ const App: React.FC = () => {
               <p className="text-sm text-muted-foreground">Your intelligent gateway to academic literature.</p>
             </div>
           </div>
-          {hasSearched ? (
-            <button onClick={handleNewSearch} className="text-sm font-medium text-primary hover:underline">
-                New Search
+          <div className="flex items-center gap-4">
+            <button
+                onClick={() => setIsDbFinderModalOpen(true)}
+                className="text-sm font-medium text-primary hover:underline"
+            >
+                Find Databases
             </button>
-          ) : (
-            <button onClick={() => setIsAboutModalOpen(true)} className="text-sm font-medium text-primary hover:underline">
-                About
-            </button>
-          )}
+            {hasSearched ? (
+                <button onClick={handleNewSearch} className="text-sm font-medium text-primary hover:underline">
+                    New Search
+                </button>
+            ) : (
+                <button onClick={() => setIsAboutModalOpen(true)} className="text-sm font-medium text-primary hover:underline">
+                    About
+                </button>
+            )}
+          </div>
         </div>
       </header>
 
@@ -523,8 +587,6 @@ const App: React.FC = () => {
                 summaryStyle={summaryStyle}
                 onStyleChange={setSummaryStyle}
                 logAnalyticsEvent={logAnalyticsEvent}
-                searchMode={searchMode}
-                onSearchModeChange={setSearchMode}
             >
               <ExtensionPromo />
             </InitialSearchScreen>
@@ -542,8 +604,6 @@ const App: React.FC = () => {
                         onStyleChange={setSummaryStyle}
                         logAnalyticsEvent={logAnalyticsEvent}
                         excludeKeywords={lastSearchOptions.excludeKeywords}
-                        searchMode={searchMode}
-                        onSearchModeChange={setSearchMode}
                         hideSuggestions={true}
                     />
 
@@ -560,6 +620,13 @@ const App: React.FC = () => {
                                 onRemovePaper={handleRemovePaperFromResults}
                                 onToggleWorkspacePaper={handleToggleWorkspacePaper}
                                 workspacePapers={workspacePapers}
+                                onFindConnectedPapers={handleFindConnectedPapers}
+                                paperBeingConnected={paperBeingConnected}
+                                projects={projects}
+                                onAddAndAssignToProject={handleAddAndAssignToProject}
+                                onExcludeLowScoring={handleExcludeLowScoring}
+                                showHighRelevanceOnly={showHighRelevanceOnly}
+                                onShowHighRelevanceOnlyChange={setShowHighRelevanceOnly}
                             />
                             <SearchResultFeedback query={query} onOpenFeedbackModal={() => setIsSummaryFeedbackModalOpen(true)} />
                         </div>
@@ -573,6 +640,7 @@ const App: React.FC = () => {
                         analysis={analysis}
                         workspacePapers={workspacePapers}
                         projects={projects}
+                        sources={sources}
                         onToggleWorkspacePaper={handleToggleWorkspacePaper}
                         onFindConnectedPapers={handleFindConnectedPapers}
                         isFindingConnected={isFindingConnected}
@@ -591,6 +659,7 @@ const App: React.FC = () => {
                         onCreateProject={handleCreateProject}
                         onDeleteProject={handleDeleteProject}
                         onMovePaperToProject={handleMovePaperToProject}
+                        onUpdateProjectColor={handleChangeProjectColor}
                     />
                 </div>
             </div>
@@ -618,8 +687,12 @@ const App: React.FC = () => {
       />
       <PaperAnalysisModal
           result={paperAnalysisResult}
-          onClose={() => setPaperAnalysisResult(null)}
+          onClose={() => {
+            setPaperAnalysisResult(null);
+            setPaperAnalysisError(null);
+          }}
           error={paperAnalysisError}
+          isLoading={isAnalyzingPaper}
       />
 
       <DatabaseFinderModal

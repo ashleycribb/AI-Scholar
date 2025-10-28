@@ -1,7 +1,7 @@
-
-import React from 'react';
-import type { ResearchPaper, SortConfig, SortKey } from '../types';
+import React, { useMemo } from 'react';
+import type { ResearchPaper, SortConfig, SortKey, Project } from '../types';
 import { PaperCard } from './PaperCard';
+import { RemoveIcon } from './icons/RemoveIcon';
 
 interface ResultsDisplayProps {
   papers: ResearchPaper[];
@@ -12,17 +12,27 @@ interface ResultsDisplayProps {
   onRemovePaper: (paper: ResearchPaper) => void;
   onToggleWorkspacePaper: (paper: ResearchPaper) => void;
   workspacePapers: ResearchPaper[];
+  onFindConnectedPapers: (paper: ResearchPaper) => void;
+  paperBeingConnected: string | null;
+  projects: Project[];
+  onAddAndAssignToProject: (paper: ResearchPaper, projectId: string) => void;
+  onExcludeLowScoring: () => void;
+  showHighRelevanceOnly: boolean;
+  onShowHighRelevanceOnlyChange: (show: boolean) => void;
 }
 
 export const ResultsDisplay: React.FC<ResultsDisplayProps> = ({
   papers, selectedPaper, onSelectPaper, sortConfig, onSortChange, onRemovePaper,
-  onToggleWorkspacePaper, workspacePapers
+  onToggleWorkspacePaper, workspacePapers, onFindConnectedPapers, paperBeingConnected,
+  projects, onAddAndAssignToProject, onExcludeLowScoring, showHighRelevanceOnly, onShowHighRelevanceOnlyChange
 }) => {
 
   const handleSort = (key: SortKey) => {
     const newDirection = sortConfig.key === key && sortConfig.direction === 'desc' ? 'asc' : 'desc';
     onSortChange({ key, direction: newDirection });
   };
+
+  const hasLowScoringPapers = useMemo(() => papers.some(p => (p.semanticScore ?? 100) < 30), [papers]);
 
   const renderSortIcon = (key: SortKey) => {
     if (sortConfig.key !== key) return null;
@@ -43,14 +53,40 @@ export const ResultsDisplay: React.FC<ResultsDisplayProps> = ({
 
   return (
     <div>
-      <div className="flex justify-between items-center border-b pb-2 mb-2 sticky top-[80px] bg-background z-10 py-2">
+      <div className="flex justify-between items-center border-b pb-2 mb-2 sticky top-[80px] bg-background z-10 py-2 flex-wrap gap-2">
         <h2 className="text-lg font-bold text-foreground">
           Search Results ({papers.length})
         </h2>
         <div className="flex items-center gap-2">
+             {hasLowScoringPapers && (
+                <button 
+                    onClick={onExcludeLowScoring}
+                    className="h-8 px-3 text-xs font-semibold rounded-md bg-destructive/10 text-destructive hover:bg-destructive/20 transition-colors flex items-center gap-1.5"
+                    title="Hide papers with a relevance score below 30 and exclude them from subsequent searches in this session."
+                >
+                    <RemoveIcon className="w-4 h-4"/>
+                    Exclude Low-Scoring
+                </button>
+            )}
+            <div className="flex items-center gap-1.5">
+                <label htmlFor="high-relevance-toggle" className="text-xs font-medium text-muted-foreground">High Relevance (75+)</label>
+                <button
+                    type="button"
+                    role="switch"
+                    aria-checked={showHighRelevanceOnly}
+                    onClick={() => onShowHighRelevanceOnlyChange(!showHighRelevanceOnly)}
+                    className={`${showHighRelevanceOnly ? 'bg-primary' : 'bg-muted'} relative inline-flex h-5 w-9 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2`}
+                >
+                    <span
+                        aria-hidden="true"
+                        className={`${showHighRelevanceOnly ? 'translate-x-4' : 'translate-x-0'} pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out`}
+                    />
+                </button>
+            </div>
+             <div className="h-5 w-px bg-border mx-1"></div>
             <div className="flex items-center gap-1 text-xs">
                 <span className="font-medium text-muted-foreground mr-1">Sort by:</span>
-                <button onClick={() => handleSort('semanticRelevance')} className={getButtonClasses('semanticRelevance')}>Semantic Relevance {renderSortIcon('semanticRelevance')}</button>
+                <button onClick={() => handleSort('relevance')} className={getButtonClasses('relevance')}>Relevance {renderSortIcon('relevance')}</button>
                 <button onClick={() => handleSort('year')} className={getButtonClasses('year')}>Year {renderSortIcon('year')}</button>
                 <button onClick={() => handleSort('citations')} className={getButtonClasses('citations')}>Citations {renderSortIcon('citations')}</button>
                 <button onClick={() => handleSort('validationScore')} className={getButtonClasses('validationScore')}>Validity {renderSortIcon('validationScore')}</button>
@@ -63,12 +99,17 @@ export const ResultsDisplay: React.FC<ResultsDisplayProps> = ({
               <PaperCard 
                   key={paper.id} 
                   paper={paper} 
+                  semanticScore={paper.semanticScore}
                   isOrigin={false}
                   isSelected={selectedPaper?.id === paper.id}
                   onSelectPaper={onSelectPaper}
                   onRemovePaper={onRemovePaper}
                   isInWorkspace={workspacePaperIds.has(paper.id)}
                   onToggleWorkspace={onToggleWorkspacePaper}
+                  onFindConnectedPapers={onFindConnectedPapers}
+                  isFindingConnected={paperBeingConnected === paper.id}
+                  projects={projects}
+                  onAddAndAssignToProject={onAddAndAssignToProject}
               />
           );
         })}

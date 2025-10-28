@@ -1,7 +1,6 @@
 
-
 import React, { useState, useEffect } from 'react';
-import type { ResearchPaper, AnalysisResult, Project } from '../types';
+import type { ResearchPaper, AnalysisResult, Project, SearchSourceInfo } from '../types';
 import { PaperDetails } from './PaperDetails';
 import { AnalysisDashboard } from './AnalysisDashboard';
 import { NetworkIcon } from './icons/NetworkIcon';
@@ -56,6 +55,7 @@ interface WorkspacePanelProps {
     analysis: AnalysisResult | null;
     workspacePapers: ResearchPaper[];
     projects: Project[];
+    sources: SearchSourceInfo[];
     onToggleWorkspacePaper: (paper: ResearchPaper) => void;
     onFindConnectedPapers: (paper: ResearchPaper) => void;
     isFindingConnected: boolean;
@@ -74,6 +74,7 @@ interface WorkspacePanelProps {
     onCreateProject: (name: string) => void;
     onDeleteProject: (projectId: string) => void;
     onMovePaperToProject: (paperId: string, projectId: string | null) => void;
+    onUpdateProjectColor: (projectId: string, color: string) => void;
 }
 
 const TabButton: React.FC<{
@@ -220,6 +221,8 @@ export const WorkspacePanel: React.FC<WorkspacePanelProps> = (props) => {
                         onMovePaperToProject={props.onMovePaperToProject}
                         onSynthesizeWorkspace={props.onSynthesizeWorkspace}
                         onAnalyzeGaps={props.onAnalyzeGaps}
+                        onRemovePaperFromWorkspace={props.onToggleWorkspacePaper}
+                        onUpdateProjectColor={props.onUpdateProjectColor}
                     />
                  )
             default:

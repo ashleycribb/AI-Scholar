@@ -1,7 +1,11 @@
+
 import React from 'react';
 import type { ResearchPaper, PaperAnalysis } from '../types';
 import { ErrorMessage } from './ErrorMessage';
 import { AnalyzeIcon } from './icons/AnalyzeIcon';
+import { LoadingSpinner } from './LoadingSpinner';
+import { DoiIcon } from './icons/DoiIcon';
+import { ExternalLinkIcon } from './icons/ExternalLinkIcon';
 
 interface PaperAnalysisModalProps {
   result: {
@@ -10,6 +14,7 @@ interface PaperAnalysisModalProps {
   } | null;
   onClose: () => void;
   error: string | null;
+  isLoading: boolean;
 }
 
 const AnalysisSection: React.FC<{ title: string; children: React.ReactNode }> = ({ title, children }) => (
@@ -21,7 +26,7 @@ const AnalysisSection: React.FC<{ title: string; children: React.ReactNode }> = 
     </div>
 );
 
-export const PaperAnalysisModal: React.FC<PaperAnalysisModalProps> = ({ result, onClose, error }) => {
+export const PaperAnalysisModal: React.FC<PaperAnalysisModalProps> = ({ result, onClose, error, isLoading }) => {
   if (!result) {
     return null;
   }
@@ -64,33 +69,53 @@ export const PaperAnalysisModal: React.FC<PaperAnalysisModalProps> = ({ result, 
         </header>
         
         <main className="p-6 overflow-y-auto">
-          {error && <ErrorMessage message={error} />}
-          {analysis && !error && (
-            <div className="space-y-5">
-              <AnalysisSection title="Research Question">
-                <p>{analysis.researchQuestion}</p>
-              </AnalysisSection>
+          {isLoading ? (
+            <LoadingSpinner message="Analyzing paper..." />
+          ) : error ? (
+            <ErrorMessage message={error} />
+          ) : (
+            analysis && (
+                <div className="space-y-5">
+                  <AnalysisSection title="Research Question">
+                    <p>{analysis.researchQuestion}</p>
+                  </AnalysisSection>
+    
+                  <AnalysisSection title="Methodology">
+                    <p>{analysis.methodology}</p>
+                  </AnalysisSection>
+    
+                  <AnalysisSection title="Key Findings">
+                    <ul className="list-disc list-inside space-y-1">
+                      {analysis.keyFindings.map((finding, index) => (
+                        <li key={index}>{finding}</li>
+                      ))}
+                    </ul>
+                  </AnalysisSection>
+                  
+                  <AnalysisSection title="Potential Limitations">
+                     <ul className="list-disc list-inside space-y-1">
+                      {analysis.limitations.map((limitation, index) => (
+                        <li key={index}>{limitation}</li>
+                      ))}
+                    </ul>
+                  </AnalysisSection>
 
-              <AnalysisSection title="Methodology">
-                <p>{analysis.methodology}</p>
-              </AnalysisSection>
-
-              <AnalysisSection title="Key Findings">
-                <ul className="list-disc list-inside space-y-1">
-                  {analysis.keyFindings.map((finding, index) => (
-                    <li key={index}>{finding}</li>
-                  ))}
-                </ul>
-              </AnalysisSection>
-              
-              <AnalysisSection title="Potential Limitations">
-                 <ul className="list-disc list-inside space-y-1">
-                  {analysis.limitations.map((limitation, index) => (
-                    <li key={index}>{limitation}</li>
-                  ))}
-                </ul>
-              </AnalysisSection>
-            </div>
+                  {paper.doi && (
+                    <AnalysisSection title="DOI (Digital Object Identifier)">
+                        <a
+                            href={`https://doi.org/${paper.doi}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex items-center gap-2 text-sm font-medium text-primary hover:underline"
+                        >
+                            <DoiIcon className="w-4 h-4" />
+                            <span>{paper.doi}</span>
+                            <ExternalLinkIcon className="w-3 h-3 text-muted-foreground" />
+                        </a>
+                    </AnalysisSection>
+                  )}
+                </div>
+            )
           )}
         </main>
       </div>

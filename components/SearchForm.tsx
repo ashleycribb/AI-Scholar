@@ -1,21 +1,19 @@
 
+
 import React, { useState, useEffect } from 'react';
 import { SearchIcon } from './icons/SearchIcon';
 import type { SummaryLength, AdvancedSearchOptions, SummaryStyle } from '../types';
-import { SemanticSearchToggle } from './SemanticSearchToggle';
 
 interface SearchFormProps {
   query: string;
   onQueryChange: (query: string) => void;
-  onSearch: (query: string, options: Omit<AdvancedSearchOptions, 'searchMode'>) => void;
+  onSearch: (query: string, options: AdvancedSearchOptions) => void;
   isLoading: boolean;
   summaryLength: SummaryLength;
   onLengthChange: (length: SummaryLength) => void;
   summaryStyle: SummaryStyle;
   onStyleChange: (style: SummaryStyle) => void;
   logAnalyticsEvent: (eventName: string, payload: object) => void;
-  searchMode: 'semantic' | 'keyword';
-  onSearchModeChange: (mode: 'semantic' | 'keyword') => void;
   excludeKeywords?: string;
   hideSuggestions?: boolean;
 }
@@ -36,13 +34,11 @@ export const SearchForm: React.FC<SearchFormProps> = ({
     summaryStyle,
     onStyleChange, 
     logAnalyticsEvent,
-    searchMode,
-    onSearchModeChange,
     excludeKeywords,
     hideSuggestions = false,
 }) => {
   const [showAdvanced, setShowAdvanced] = useState(false);
-  const [advancedOptions, setAdvancedOptions] = useState<Omit<AdvancedSearchOptions, 'searchMode'>>({
+  const [advancedOptions, setAdvancedOptions] = useState<AdvancedSearchOptions>({
     startYear: '',
     endYear: '',
     authors: '',
@@ -70,7 +66,7 @@ export const SearchForm: React.FC<SearchFormProps> = ({
     onQueryChange(e.target.value);
   };
   
-  const placeholderText = `Search academic papers for 'machine learning in biology'`;
+  const placeholderText = `Ask a research question, e.g., 'What is the impact of LLMs on scientific writing?'`;
 
   return (
     <div className="relative">
@@ -148,8 +144,6 @@ export const SearchForm: React.FC<SearchFormProps> = ({
                 <span className="ml-1 transition-transform inline-block" style={{ transform: showAdvanced ? 'rotate(180deg)' : 'rotate(0deg)' }}>▼</span>
             </button>
         </div>
-
-        <SemanticSearchToggle searchMode={searchMode} onSearchModeChange={onSearchModeChange} />
 
         {showAdvanced && (
             <div className="p-4 bg-muted/50 rounded-lg border grid grid-cols-1 sm:grid-cols-2 gap-4">

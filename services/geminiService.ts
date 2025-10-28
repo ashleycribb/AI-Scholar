@@ -1,10 +1,8 @@
 
-
 import { GoogleGenAI, Type } from "@google/genai";
 import type {
   ChatMessage,
   ConnectedPaper,
-  EnhancedQuery,
   PaperAnalysis,
   ResearchPaper,
   SearchSourceInfo,
@@ -13,8 +11,6 @@ import type {
   SynthesisResult,
   GroundingSource
 } from "../types";
-import * as crossrefService from './crossrefService';
-import * as unpaywallService from './unpaywallService';
 
 // Always use `const ai = new GoogleGenAI({apiKey: process.env.API_KEY});`.
 const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
@@ -73,43 +69,35 @@ export const checkPdfUrl = async (url: string): Promise<{ linkState: 'valid' | '
 };
 
 
-const searchQueryEnhancementSchema = {
+const hypotheticalAnswerSchema = {
     type: Type.OBJECT,
     properties: {
-        refined_query: { type: Type.STRING },
-        key_concepts: { type: Type.ARRAY, items: { type: Type.STRING } },
+        hypothetical_abstract: { 
+            type: Type.STRING,
+            description: "A concise, academic-style abstract for a hypothetical paper that directly answers the user's question."
+        },
     },
-    required: ["refined_query", "key_concepts"],
+    required: ["hypothetical_abstract"],
 };
 
-export const enhanceSearchQuery = async (userQuery: string): Promise<EnhancedQuery> => {
-    const prompt = `You are an expert research librarian. Your task is to refine a user's research query for an academic database like OpenAlex.
+export const generateHypotheticalAnswer = async (userQuery: string): Promise<string> => {
+    const prompt = `You are an expert academic researcher. A user has provided a research question. Your task is to generate a concise, hypothetical abstract for a non-existent paper that would be the *perfect* answer to their question. This abstract will be used to find real papers that are semantically similar to it.
 
-    **CRITICAL INSTRUCTIONS - FOLLOW THESE RULES STRICTLY:**
-    1.  **STRICT DOMAIN ADHERENCE:** You MUST ONLY use concepts, terms, and synonyms that are explicitly within the domain of the user's original query.
-    2.  **NO DOMAIN CROSSING:** Under NO circumstances should you introduce terms from unrelated fields. For example, if the query is about "financial risk management", concepts like "medical diagnosis" or "climate change" are strictly forbidden.
-    3.  **BASE ON USER'S WORDS:** All generated key concepts and query terms must directly derive from the words provided by the user.
+    **CRITICAL INSTRUCTIONS:**
+    1.  **Directly Answer:** The abstract must directly address and answer the user's question.
+    2.  **Use Academic Language:** Write in a formal, academic style, incorporating relevant keywords and concepts from the user's query domain.
+    3.  **Be Factual and Plausible:** The content should be plausible and sound like a real research summary. Do not use phrases like "In this hypothetical paper...".
+    4.  **Keep it Concise:** The abstract should be around 150-250 words.
 
-    User Query: "${userQuery}"
+    **User's Research Question:** "${userQuery}"
 
-    Analyze the query to identify its core concepts. Generate synonyms and alternative phrasings for these core concepts ONLY. Then, construct a refined search query string using boolean operators (AND, OR) and phrase searching (using double quotes).
+    Return your response as a single JSON object with a single key "hypothetical_abstract". Do not include any other text or markdown.
 
-    Return your response as a single JSON object with the following structure. Do not include any text, code blocks, or explanations outside of the JSON object.
-
-    **CORRECT Example:**
-    User Query: "using machine learning for sentiment analysis in social media"
-    Your JSON response:
+    **Example:**
+    User Question: "What is the impact of using large language models on the quality of scientific literature reviews?"
+    Your JSON Response:
     {
-      "refined_query": "(\\"machine learning\\" OR \\"deep learning\\" OR \\"NLP\\") AND (\\"sentiment analysis\\" OR \\"opinion mining\\") AND (\\"social media\\" OR \\"twitter\\" OR \\"facebook\\")",
-      "key_concepts": ["machine learning", "sentiment analysis", "social media"]
-    }
-
-    **INCORRECT Example (DOMAIN CROSSING):**
-    User Query: "impact of interest rates on stock market"
-    Incorrect JSON response that introduces unrelated terms:
-    {
-      "refined_query": "(\\"interest rates\\" OR \\"monetary policy\\") AND (\\"stock market\\" OR \\"equity prices\\" OR \\"patient outcomes\\")",
-      "key_concepts": ["interest rates", "stock market", "patient outcomes"]
+      "hypothetical_abstract": "This study investigates the impact of Large Language Models (LLMs) on the quality and efficiency of scientific literature reviews. We conducted a comparative analysis of reviews produced by human researchers versus those augmented by state-of-the-art LLMs like GPT-4. Quality was assessed using metrics such as comprehensiveness, bias detection, and synthesis accuracy. Our findings indicate that LLM-assisted reviews are completed approximately 40% faster and demonstrate a 15% increase in comprehensiveness by identifying a broader range of relevant studies. However, we also identified a novel 'automation bias,' where researchers tended to over-rely on the LLM's initial filtering, potentially missing nuanced or conflicting studies. We conclude that while LLMs are powerful tools for accelerating literature synthesis, they require structured human oversight to mitigate inherent biases and ensure high-quality, reliable scientific conclusions."
     }`;
 
     try {
@@ -118,19 +106,70 @@ export const enhanceSearchQuery = async (userQuery: string): Promise<EnhancedQue
             contents: prompt,
             config: {
                 responseMimeType: "application/json",
-                responseSchema: searchQueryEnhancementSchema,
+                responseSchema: hypotheticalAnswerSchema,
             },
         });
         const result = safeJsonParse(response.text ?? '');
-        if (!result) throw new Error("Could not enhance search query.");
-        return result;
+        // If generation fails or returns an empty string, fall back to the original query.
+        // This ensures the search can still proceed, albeit with less accuracy.
+        if (!result || !result.hypothetical_abstract) {
+            console.warn("Hypothetical answer generation failed. Falling back to original query.");
+            return userQuery;
+        }
+        return result.hypothetical_abstract;
     } catch (error) {
-        console.error("Error enhancing search query:", error);
-        // Fallback to the original query in case of an error
-        return {
-            refined_query: userQuery,
-            key_concepts: [userQuery],
-        };
+        console.error("Error generating hypothetical answer:", error);
+        // Fallback to the original query in case of an API error
+        return userQuery;
+    }
+};
+
+// FIX: Implement extractKeyConcepts to resolve error in App.tsx
+const keyConceptsSchema = {
+    type: Type.OBJECT,
+    properties: {
+        concepts: {
+            type: Type.ARRAY,
+            items: { type: Type.STRING }
+        },
+    },
+    required: ["concepts"],
+};
+
+export const extractKeyConcepts = async (abstract: string): Promise<string[]> => {
+    const prompt = `Based on the following academic abstract, extract the 5 most important key concepts, terms, or phrases.
+    
+    Abstract: "${abstract}"
+
+    Return your response as a single JSON object with a single key "concepts", which is an array of strings. Do not include any other text or markdown.
+
+    Example:
+    {
+        "concepts": [
+            "Large Language Models (LLMs)",
+            "Scientific Literature Reviews",
+            "Automation Bias",
+            "Comprehensiveness",
+            "Synthesis Accuracy"
+        ]
+    }
+    `;
+
+    try {
+        const response = await ai.models.generateContent({
+            model: "gemini-2.5-flash",
+            contents: prompt,
+            config: {
+                responseMimeType: "application/json",
+                responseSchema: keyConceptsSchema,
+            },
+        });
+        const result = safeJsonParse(response.text ?? '');
+        if (!result || !result.concepts) return [];
+        return result.concepts;
+    } catch (error) {
+        console.error("Error extracting key concepts:", error);
+        throw new Error("Failed to extract key concepts from the abstract.");
     }
 };
 
@@ -327,41 +366,7 @@ export const findConnectedPapers = async (seedPaper: ResearchPaper): Promise<{ s
     }
 };
 
-const databaseFinderSchema = {
-    type: Type.ARRAY,
-    items: {
-        type: Type.OBJECT,
-        properties: {
-            id: { type: Type.STRING, description: "A unique ID for the database, e.g., 'pubmed'." },
-            name: { type: Type.STRING, description: "The full name of the database, e.g., 'PubMed'." },
-            description: { type: Type.STRING, description: "A short description of the database's focus." },
-        },
-        required: ["id", "name", "description"]
-    }
-};
-
-export const findDatabasesForField = async (field: string): Promise<SearchSourceInfo[]> => {
-    const prompt = `List the top 3-5 most relevant and reputable academic databases for the field of "${field}". For each, provide a unique ID, its name, and a brief description. Return the result as a JSON array.`;
-
-    try {
-        const response = await ai.models.generateContent({
-            model: "gemini-2.5-flash",
-            contents: prompt,
-            config: {
-                responseMimeType: "application/json",
-                responseSchema: databaseFinderSchema,
-            },
-        });
-        
-        const result = safeJsonParse(response.text ?? '');
-        if (!result) throw new Error("Could not find databases.");
-        return result;
-    } catch (error) {
-        console.error("Error finding databases:", error);
-        throw new Error("Failed to find academic databases.");
-    }
-};
-
+// FIX: Implement analyzeSinglePaper to resolve error in App.tsx
 const paperAnalysisSchema = {
     type: Type.OBJECT,
     properties: {
@@ -405,39 +410,39 @@ export const analyzeSinglePaper = async (paper: ResearchPaper): Promise<PaperAna
     }
 };
 
+// FIX: Implement analyzeResearchGaps to resolve error in App.tsx
 export const analyzeResearchGaps = async (papers: ResearchPaper[]): Promise<string> => {
-    const paperContext = papers.map((p, i) => 
-        `Paper ${i+1}:\nTitle: ${p.title}\nAbstract: ${p.abstract}`
-    ).join('\n\n---\n\n');
+    const paperContext = papers.map((p, i) => `[Paper ${i+1}] Title: ${p.title}\nAbstract: ${p.abstract}`).join('\n\n---\n\n');
 
-    const prompt = `You are an expert research analyst. Your task is to perform a research gap analysis based on the provided academic paper abstracts.
+    const prompt = `You are an expert research analyst. Based on the provided abstracts from several research papers, identify and articulate the potential research gaps, contradictions, or areas for future investigation. Structure your response as a formal report in Markdown.
 
-    Context: The user has compiled a list of papers on a specific topic. They need you to synthesize the information and identify potential areas for future research.
+    **Instructions:**
+    1.  **Introduction:** Briefly summarize the general theme connecting the papers.
+    2.  **Identified Gaps:** Create a section titled "## Potential Research Gaps" and list the identified gaps as bullet points. For each gap, explain the reasoning based on the provided abstracts.
+    3.  **Contradictions:** If any contradictions or diverging results are apparent, create a section titled "## Apparent Contradictions" and detail them.
+    4.  **Future Directions:** Create a section titled "## Future Research Directions" suggesting specific studies or questions that could address the identified gaps.
+    5.  **Conclusion:** Provide a brief concluding summary.
+    6.  **Formatting:** Use Markdown for headings (##) and bullet points (*).
 
-    Provided Papers:
+    **Provided Papers:**
     ${paperContext}
 
-    Instructions:
-    1.  **Synthesize Core Themes:** Briefly summarize the main themes, methodologies, and key findings that are common across the papers.
-    2.  **Identify Contradictions & Tensions:** Point out any areas where the papers present conflicting findings or different perspectives on the same issue.
-    3.  **Highlight Unanswered Questions:** Identify questions that are raised but not fully answered by the collective literature provided. What are the limitations acknowledged by the authors that could be starting points for new research?
-    4.  **Suggest Future Research Directions:** Based on the synthesis and identified gaps, propose 3-5 specific, actionable research questions or directions for future work. These should logically extend from the provided material.
-
-    Please structure your response as a concise, well-organized report in Markdown format. Use headings (e.g., "## Core Themes") for each section.
+    **Report:**
     `;
 
     try {
         const response = await ai.models.generateContent({
-            model: "gemini-2.5-flash",
+            model: "gemini-2.5-pro", // Use a more powerful model for this complex task
             contents: prompt,
         });
-        return response.text ?? '';
+        return response.text ?? 'No research gaps could be identified.';
     } catch (error) {
         console.error("Error analyzing research gaps:", error);
-        throw new Error("Failed to perform research gap analysis.");
+        throw new Error("Failed to generate research gap analysis.");
     }
 };
 
+// FIX: Implement synthesizePapers to resolve error in App.tsx
 const synthesisSchema = {
     type: Type.ARRAY,
     items: {
@@ -446,77 +451,25 @@ const synthesisSchema = {
             title: { type: Type.STRING },
             mainFinding: { type: Type.STRING },
             methodology: { type: Type.STRING },
-            context: { type: Type.STRING },
+            context: { type: Type.STRING, description: "The context or sample population of the study (e.g., 'University students', 'Clinical trial patients')." },
         },
         required: ["title", "mainFinding", "methodology", "context"],
-    }
+    },
 };
 
 export const synthesizePapers = async (papers: ResearchPaper[]): Promise<SynthesisResult> => {
     const paperContext = papers.map(p => `Title: ${p.title}\nAbstract: ${p.abstract}`).join('\n\n---\n\n');
 
-    const prompt = `You are a research synthesis expert. Based on the provided abstracts, create a structured summary for each paper, focusing on four key areas. This will be used to generate a comparative table for a literature review.
+    const prompt = `You are a research assistant. Based on the provided list of research paper abstracts, synthesize the key information for each paper into a structured table format. For each paper, extract the following:
+    1.  **title**: The original title of the paper.
+    2.  **mainFinding**: A concise summary of the primary result or conclusion.
+    3.  **methodology**: A brief description of the method used (e.g., "Systematic Review", "RCT", "Qualitative Survey").
+    4.  **context**: The context or sample population of the study (e.g., "350 undergraduate students", "fMRI data from 20 participants").
 
-    Provided Papers:
+    **Papers to Synthesize:**
     ${paperContext}
 
-    Instructions:
-    For each paper, extract the following information and return it as an array of JSON objects.
-    1.  **title**: The exact title of the paper.
-    2.  **mainFinding**: A concise, one-sentence summary of the paper's primary conclusion or key finding.
-    3.  **methodology**: A brief description of the research method used (e.g., "Quantitative survey," "Qualitative interviews," "Systematic literature review," "Controlled experiment").
-    4.  **context**: The context of the study, including the sample population or data source (e.g., "250 undergraduate students," "Tweets from 2020," "fMRI data from 30 patients").
-    
-    Ensure your response is a single, valid JSON array.
-    `;
-    
-    try {
-        const response = await ai.models.generateContent({
-            model: "gemini-2.5-pro", // Using a more powerful model for this complex task
-            contents: prompt,
-            config: {
-                responseMimeType: "application/json",
-                responseSchema: synthesisSchema,
-            },
-        });
-        const result = safeJsonParse(response.text ?? '');
-        if (!result) throw new Error("Could not synthesize papers.");
-        return result;
-    } catch (error) {
-        console.error("Error synthesizing papers:", error);
-        throw new Error("Failed to synthesize the provided literature.");
-    }
-};
-
-const keyConceptsSchema = {
-    type: Type.OBJECT,
-    properties: {
-        concepts: {
-            type: Type.ARRAY,
-            items: { type: Type.STRING }
-        },
-    },
-    required: ["concepts"],
-};
-
-export const extractKeyConcepts = async (abstract: string): Promise<string[]> => {
-    if (!abstract || abstract.trim().length < 100) {
-        return [];
-    }
-
-    const prompt = `You are a research expert skilled in identifying the core themes of academic literature.
-    Read the following abstract and extract the 5-7 most important keywords or key concepts.
-    These concepts should be concise and represent the main topics of the research.
-
-    Abstract: "${abstract}"
-
-    Return your response as a single JSON object with a single key "concepts" which is an array of strings.
-    Do not include any other text or markdown.
-
-    Example:
-    {
-        "concepts": ["machine learning", "sentiment analysis", "social media", "opinion mining", "natural language processing"]
-    }
+    Return your response as a single JSON array of objects, where each object represents a paper. Do not include any other text or markdown.
     `;
 
     try {
@@ -525,96 +478,73 @@ export const extractKeyConcepts = async (abstract: string): Promise<string[]> =>
             contents: prompt,
             config: {
                 responseMimeType: "application/json",
-                responseSchema: keyConceptsSchema,
+                responseSchema: synthesisSchema,
             },
         });
         const result = safeJsonParse(response.text ?? '');
-        if (!result || !result.concepts) return [];
-        return result.concepts;
+        if (!result) throw new Error("Failed to parse synthesis response.");
+        return result;
     } catch (error) {
-        console.error("Error extracting key concepts:", error);
-        throw new Error("Failed to extract key concepts from abstract.");
+        console.error("Error synthesizing papers:", error);
+        throw new Error("Failed to synthesize the provided papers.");
     }
 };
 
+// FIX: Implement extractCitationMetadata to resolve error in citationService.ts
 const cslSchema = {
     type: Type.OBJECT,
     properties: {
-        type: { 
-            type: Type.STRING, 
-            description: "The CSL type of the publication (e.g., 'article-journal', 'paper-conference', 'book-chapter', 'report', 'thesis')." 
-        },
-        title: { type: Type.STRING },
-        author: {
-            type: Type.ARRAY,
-            items: {
+        "type": { type: Type.STRING, description: "The type of the work, e.g., 'article-journal'." },
+        "title": { type: Type.STRING },
+        "author": { 
+            type: Type.ARRAY, 
+            items: { 
                 type: Type.OBJECT,
                 properties: {
                     given: { type: Type.STRING },
-                    family: { type: Type.STRING },
+                    family: { type: Type.STRING }
                 },
                 required: ["family"]
-            }
+            } 
         },
-        issued: {
+        "issued": { 
             type: Type.OBJECT,
             properties: {
-                'date-parts': { 
-                    type: Type.ARRAY, 
-                    items: { type: Type.ARRAY, items: { type: Type.NUMBER } } 
-                },
+                "date-parts": { 
+                    type: Type.ARRAY,
+                    items: {
+                        type: Type.ARRAY,
+                        items: { type: Type.NUMBER }
+                    }
+                }
             },
+            required: ["date-parts"]
         },
-        'container-title': { type: Type.STRING, description: "The title of the journal, conference proceedings, or book." },
-        volume: { type: Type.STRING },
-        issue: { type: Type.STRING },
-        page: { type: Type.STRING },
-        publisher: { type: Type.STRING },
-        DOI: { type: Type.STRING },
-        URL: { type: Type.STRING },
+        "container-title": { type: Type.STRING, description: "The name of the journal or publication." },
+        "URL": { type: Type.STRING },
+        "DOI": { type: Type.STRING }
     },
     required: ["type", "title", "author", "issued"]
 };
 
-
 export const extractCitationMetadata = async (paper: ResearchPaper): Promise<any> => {
-    // Start with the basic info we already have
-    const initialCsl = {
-        type: 'article-journal', // Default, to be overridden by AI
-        id: paper.id,
-        title: paper.title,
-        author: paper.authors.split(',').map(name => {
-            const trimmedName = name.trim();
-            const parts = trimmedName.split(' ');
-            const family = parts.pop() || '';
-            const given = parts.join(' ');
-            return { given, family };
-        }),
-        issued: { 'date-parts': [[paper.year]] },
-        DOI: paper.doi,
-        URL: paper.doi ? undefined : paper.sourceURL, // Prefer DOI over URL
-    };
-
-
-    const prompt = `You are an expert librarian specializing in bibliographic metadata. Your task is to analyze the provided information for a research paper and extract detailed metadata in CSL-JSON format.
-
-    Paper Information:
-    - Title: "${paper.title}"
-    - Authors: "${paper.authors}"
-    - Year: ${paper.year}
-    - Abstract: "${paper.abstract}"
+    const prompt = `You are a bibliographic expert. Based on the provided research paper metadata, extract the information and format it as a CSL-JSON object.
     
-    Instructions:
-    1.  Determine the correct publication type. Common types are 'article-journal', 'paper-conference', 'book-chapter', 'report', 'thesis'.
-    2.  If it's a journal article, extract the journal title ('container-title'), volume, issue, and page numbers.
-    3.  If it's a conference paper, extract the conference name ('container-title').
-    4.  If it is a book chapter, extract the book title ('container-title') and publisher.
-    5.  Based on this analysis, complete the provided CSL-JSON object. The 'title', 'author', and 'issued' fields are already provided for you. Focus on correcting the 'type' and adding any other relevant fields you can extract.
+    **Instructions:**
+    1.  Parse the author names into 'given' and 'family' parts. If only one name is present, use it as 'family'.
+    2.  The 'issued' date-part should be an array containing a single array with just the year, like [[${paper.year}]].
+    3.  Set the 'type' to 'article-journal'.
+    4.  Include 'container-title' if a journal name can be inferred, otherwise omit it.
+    5.  Include 'URL' and 'DOI' if available.
 
-    Return only the completed JSON object. Do not include any explanatory text or markdown.
-    
-    Base JSON to complete:
-    ${JSON.stringify(initialCsl, null, 2)}
+    **Paper Metadata:**
+    Title: ${paper.title}
+    Authors: ${paper.authors}
+    Year: ${paper.year}
+    Source URL: ${paper.sourceURL}
+    DOI: ${paper.doi}
+
+    Return a single, valid CSL-JSON object. Do not include any other text or markdown.
     `;
 
     try {
@@ -628,14 +558,69 @@ export const extractCitationMetadata = async (paper: ResearchPaper): Promise<any
         });
         const result = safeJsonParse(response.text ?? '');
         if (!result) {
-            console.warn("AI metadata extraction failed, falling back to basic data for:", paper.title);
-            return initialCsl;
-        };
-        // Ensure essential fields from initialCsl are preserved if AI misses them
-        return { ...initialCsl, ...result };
+            // Fallback for safety
+            return {
+                type: 'article-journal',
+                title: paper.title,
+                author: paper.authors.split(',').map(name => ({ family: name.trim() })),
+                issued: { 'date-parts': [[paper.year]] },
+                URL: paper.sourceURL,
+                DOI: paper.doi
+            };
+        }
+        return result;
     } catch (error) {
-        console.error("Error extracting citation metadata for:", paper.title, error);
-        // On error, fall back to the simple, non-AI-enhanced CSL object.
-        return initialCsl;
+        console.error("Error extracting citation metadata:", error);
+        throw new Error("Failed to extract metadata for citation generation.");
+    }
+};
+
+const databaseFinderSchema = {
+    type: Type.ARRAY,
+    items: {
+        type: Type.OBJECT,
+        properties: {
+            id: { type: Type.STRING, description: "A unique ID for the database, e.g., 'pubmed' or 'scopus'" },
+            name: { type: Type.STRING, description: "The full name of the database, e.g., 'PubMed Central'" },
+            description: { type: Type.STRING, description: "A one-sentence description of the database's focus." },
+        },
+        required: ['id', 'name', 'description'],
+    }
+};
+
+// FIX: Implement findDatabasesForField to resolve error in App.tsx
+export const findDatabasesForField = async (fieldOfStudy: string): Promise<SearchSourceInfo[]> => {
+    const prompt = `You are an expert academic librarian. For the given field of study, recommend the top 5 most relevant and reputable academic databases or search engines.
+    
+    Field of Study: "${fieldOfStudy}"
+
+    Provide a unique ID, the database name, and a concise one-sentence description for each.
+    Return your response as a single JSON array of objects. Do not include any other text or markdown.
+
+    Example for "Computer Science":
+    [
+      { "id": "acm_dl", "name": "ACM Digital Library", "description": "A comprehensive collection of articles and conference proceedings from the Association for Computing Machinery." },
+      { "id": "ieee_xplore", "name": "IEEE Xplore", "description": "Provides access to technical literature in electrical engineering, computer science, and electronics." },
+      { "id": "dblp", "name": "DBLP Computer Science Bibliography", "description": "An online reference for bibliographic information on major computer science publications." },
+      { "id": "scopus", "name": "Scopus", "description": "A large abstract and citation database of peer-reviewed literature: scientific journals, books and conference proceedings." },
+      { "id": "google_scholar", "name": "Google Scholar", "description": "A freely accessible web search engine that indexes the full text or metadata of scholarly literature." }
+    ]
+    `;
+
+    try {
+        const response = await ai.models.generateContent({
+            model: "gemini-2.5-flash",
+            contents: prompt,
+            config: {
+                responseMimeType: "application/json",
+                responseSchema: databaseFinderSchema,
+            },
+        });
+        const result = safeJsonParse(response.text ?? '');
+        if (!result) throw new Error("Could not parse database finder response.");
+        return result;
+    } catch (error) {
+        console.error("Error finding databases:", error);
+        throw new Error("Failed to find academic databases for the specified field.");
     }
 };

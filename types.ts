@@ -1,4 +1,5 @@
 
+
 export type SummaryLength = 'short' | 'medium' | 'detailed';
 export type SummaryStyle = 'paragraph' | 'bullets' | 'qa';
 export type CitationStyle = 'apa' | 'mla' | 'chicago' | 'harvard' | 'ieee' | 'vancouver';
@@ -16,7 +17,6 @@ export interface AdvancedSearchOptions {
   endYear:string;
   authors: string;
   excludeKeywords: string;
-  searchMode: 'keyword' | 'semantic';
 }
 
 export interface ValidationResult {
@@ -28,6 +28,7 @@ export interface ValidationResult {
     author_match: boolean;
     open_access: boolean;
     source_enriched: boolean;
+    has_citations: boolean;
   };
   log: string[]; // A log of what passed/failed for debugging/display
 }
@@ -44,6 +45,8 @@ export interface ResearchPaper {
   citations?: number;
   validation?: ValidationResult;
   semanticScore?: number;
+  impactScore?: number;
+  combinedScore?: number;
   keyConcepts?: string[];
   keyConceptsState?: 'idle' | 'loading' | 'loaded' | 'error';
   doi?: string;
@@ -115,7 +118,7 @@ export type SynthesisResult = {
   context: string;
 }[];
 
-export type SortKey = 'semanticRelevance' | 'year' | 'citations' | 'validationScore';
+export type SortKey = 'relevance' | 'year' | 'citations' | 'validationScore';
 export type SortDirection = 'asc' | 'desc';
 
 export interface SortConfig {
@@ -139,6 +142,7 @@ export interface Project {
   name: string;
   paperIds: string[];
   createdAt: number;
+  color: string;
 }
 
 // --- Crossref API Types ---

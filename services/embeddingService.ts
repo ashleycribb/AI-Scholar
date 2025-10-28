@@ -25,29 +25,30 @@ export const cosineSimilarity = (vecA: number[], vecB: number[]): number => {
  * Generates an embedding for a single piece of text.
  */
 const getEmbedding = async (text: string): Promise<number[]> => {
-    const response = await ai.models.embedContent({ model, content: text });
+    const response = await ai.models.embedContent({ model, content: { parts: [{ text }] } });
     return response.embedding.values;
 };
 
 /**
- * Takes a query and a list of papers, calculates semantic scores, and returns the papers with scores.
+ * Takes a query (or a hypothetical answer) and a list of papers, calculates semantic scores, and returns the papers with scores.
  */
-export const calculateSemanticScores = async (query: string, papers: ResearchPaper[]): Promise<ResearchPaper[]> => {
+export const calculateSemanticScores = async (queryOrHypotheticalAnswer: string, papers: ResearchPaper[]): Promise<ResearchPaper[]> => {
     if (papers.length === 0) return [];
     
     try {
-        const queryEmbedding = await getEmbedding(query);
+        const queryEmbedding = await getEmbedding(queryOrHypotheticalAnswer);
         
         const paperContents = papers.map(p => p.abstract);
         const batchResponse = await ai.models.batchEmbedContents({
             model,
-            requests: paperContents.map(content => ({ content }))
+            requests: paperContents.map(content => ({ content: { parts: [{ text: content }] } }))
         });
         const paperEmbeddings = batchResponse.embeddings.map(e => e.values);
         
         return papers.map((paper, index) => {
             const paperEmbedding = paperEmbeddings[index];
             const similarity = cosineSimilarity(queryEmbedding, paperEmbedding);
+            // Convert similarity from [-1, 1] to [0, 100]
             const score = Math.round(((similarity + 1) / 2) * 100);
             return {
                 ...paper,
@@ -57,6 +58,7 @@ export const calculateSemanticScores = async (query: string, papers: ResearchPap
 
     } catch (error) {
         console.error("Error calculating semantic scores:", error);
+        // If embedding fails, return papers with a score of 0 so the app doesn't crash.
         return papers.map(p => ({ ...p, semanticScore: 0 }));
     }
 };

@@ -111,12 +111,14 @@ export const PaperDetails: React.FC<PaperDetailsProps> = ({
             return (
                 <div className="flex flex-wrap gap-2">
                     {paper.keyConcepts.map((concept) => (
-                        <button 
-                            key={concept} 
+                        <button
+                            key={concept}
                             onClick={() => onConceptClick(concept)}
-                            className="px-2.5 py-1 bg-secondary text-secondary-foreground text-xs font-medium rounded-full hover:bg-accent hover:text-accent-foreground transition-colors"
+                            className="group flex items-center gap-1.5 px-2.5 py-1 bg-secondary text-secondary-foreground text-xs font-medium rounded-full hover:bg-primary/10 hover:text-primary transition-colors"
+                            title={`Search for "${concept}"`}
                         >
-                            {concept}
+                            <span>{concept}</span>
+                            <SearchIcon className="w-3 h-3 opacity-0 group-hover:opacity-100 transition-opacity" />
                         </button>
                     ))}
                 </div>

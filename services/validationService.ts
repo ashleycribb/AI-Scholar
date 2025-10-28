@@ -34,6 +34,7 @@ export const validatePaper = async (paper: ResearchPaper): Promise<{ validation:
         author_match: false,
         open_access: false,
         source_enriched: paper.enrichmentSource === 'arXiv',
+        has_citations: (paper.citations || 0) > 10,
     };
     const log: string[] = [];
     const updatedPaperData: Partial<ResearchPaper> = {};
@@ -44,13 +45,20 @@ export const validatePaper = async (paper: ResearchPaper): Promise<{ validation:
         log.push('+10: Enriched from a high-quality source (arXiv).');
     }
 
+    // Add points for having a notable number of citations
+    if (checks.has_citations) {
+        score += 10;
+        log.push('+10: Paper has a notable number of citations, indicating academic validation.');
+    }
+
+
     // Use Crossref as the primary source of truth for metadata.
     const crossrefData = await crossrefService.fetchPaperFromCrossref(paper);
 
     if (crossrefData && crossrefData.DOI) {
         checks.crossref_match = true;
-        score += 40;
-        log.push(`+40: Found a confident match in Crossref (DOI: ${crossrefData.DOI}).`);
+        score += 30; // Reduced from 40 to balance with citation score
+        log.push(`+30: Found a confident match in Crossref (DOI: ${crossrefData.DOI}).`);
         updatedPaperData.doi = crossrefData.DOI;
 
         // Check title similarity against the Crossref record.
