@@ -1,8 +1,12 @@
 
 
-import React, { useState, useEffect } from 'react';
+
+
+
+import React from 'react';
 import { SearchIcon } from './icons/SearchIcon';
-import type { SummaryLength, AdvancedSearchOptions, SummaryStyle } from '../types';
+import type { SummaryLength, AdvancedSearchOptions, SummaryStyle, ModelDefinition } from '../types';
+import { ChevronDownIcon } from './icons/ChevronDownIcon';
 
 interface SearchFormProps {
   query: string;
@@ -13,9 +17,10 @@ interface SearchFormProps {
   onLengthChange: (length: SummaryLength) => void;
   summaryStyle: SummaryStyle;
   onStyleChange: (style: SummaryStyle) => void;
+  model: ModelDefinition;
+  onModelChange: (model: ModelDefinition) => void;
+  availableModels: ModelDefinition[];
   logAnalyticsEvent: (eventName: string, payload: object) => void;
-  excludeKeywords?: string;
-  hideSuggestions?: boolean;
 }
 
 const summaryStyles: { id: SummaryStyle; name: string }[] = [
@@ -32,34 +37,23 @@ export const SearchForm: React.FC<SearchFormProps> = ({
     summaryLength, 
     onLengthChange,
     summaryStyle,
-    onStyleChange, 
-    logAnalyticsEvent,
-    excludeKeywords,
-    hideSuggestions = false,
+    onStyleChange,
+    model,
+    onModelChange,
+    availableModels
 }) => {
-  const [showAdvanced, setShowAdvanced] = useState(false);
-  const [advancedOptions, setAdvancedOptions] = useState<AdvancedSearchOptions>({
+  const searchOptions: AdvancedSearchOptions = {
     startYear: '',
     endYear: '',
     authors: '',
     excludeKeywords: '',
-  });
-
-  useEffect(() => {
-    // Sync exclude keywords from parent if provided
-    if (excludeKeywords !== undefined) {
-      setAdvancedOptions(prev => ({...prev, excludeKeywords }));
-    }
-  }, [excludeKeywords]);
-
-  const handleAdvancedChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const { name, value } = e.target;
-    setAdvancedOptions(prev => ({ ...prev, [name]: value }));
+    inclusionCriteria: '',
+    exclusionCriteria: '',
   };
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    onSearch(query, advancedOptions);
+    onSearch(query, searchOptions);
   };
   
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -86,6 +80,26 @@ export const SearchForm: React.FC<SearchFormProps> = ({
                 <SearchIcon className="w-5 h-5 text-muted-foreground" />
             </div>
           </div>
+           <div className="relative">
+              <select
+                id="model-select"
+                value={model.id}
+                onChange={(e) => {
+                    const selectedModel = availableModels.find(m => m.id === e.target.value);
+                    if (selectedModel) {
+                        onModelChange(selectedModel);
+                    }
+                }}
+                disabled={isLoading}
+                className="h-11 pl-3 pr-8 bg-background border border-input rounded-md appearance-none focus:ring-2 focus:ring-ring transition-shadow duration-200 text-sm font-medium"
+                aria-label="Select AI Model"
+              >
+                {availableModels.map(m => <option key={m.id} value={m.id}>{m.name}{m.isMock ? ' (Mock)' : ''}</option>)}
+              </select>
+              <div className="absolute inset-y-0 right-0 flex items-center pr-2 pointer-events-none">
+                <ChevronDownIcon className="w-4 h-4 text-muted-foreground" />
+              </div>
+            </div>
           <button
             type="submit"
             disabled={isLoading || !query.trim()}
@@ -95,8 +109,8 @@ export const SearchForm: React.FC<SearchFormProps> = ({
           </button>
         </div>
         
-        <div className="flex flex-col sm:flex-row justify-between items-center gap-4">
-            <div className="flex flex-wrap items-center gap-x-6 gap-y-3">
+        <div className="flex flex-col sm:flex-row justify-center items-center gap-4">
+            <div className="flex flex-wrap items-center justify-center gap-x-6 gap-y-3">
                 <div className="flex items-center gap-2">
                     <span className="text-sm font-medium text-muted-foreground">Summary:</span>
                     {(['short', 'medium', 'detailed'] as SummaryLength[]).map((len) => (
@@ -134,37 +148,7 @@ export const SearchForm: React.FC<SearchFormProps> = ({
                     ))}
                 </div>
             </div>
-            <button
-                type="button"
-                onClick={() => setShowAdvanced(!showAdvanced)}
-                className="text-sm font-medium text-primary hover:underline flex-shrink-0"
-                aria-expanded={showAdvanced}
-            >
-                {showAdvanced ? 'Hide Advanced' : 'Advanced Search'}
-                <span className="ml-1 transition-transform inline-block" style={{ transform: showAdvanced ? 'rotate(180deg)' : 'rotate(0deg)' }}>▼</span>
-            </button>
         </div>
-
-        {showAdvanced && (
-            <div className="p-4 bg-muted/50 rounded-lg border grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div>
-                    <label htmlFor="startYear" className="block text-sm font-medium text-foreground mb-1">Publication Year</label>
-                    <div className="flex items-center gap-2">
-                        <input type="number" name="startYear" id="startYear" value={advancedOptions.startYear} onChange={handleAdvancedChange} placeholder="From" className="h-9 w-full px-3 py-2 text-sm border border-input rounded-md focus:ring-1 focus:ring-ring bg-background text-foreground"/>
-                        <span className="text-muted-foreground">-</span>
-                        <input type="number" name="endYear" id="endYear" value={advancedOptions.endYear} onChange={handleAdvancedChange} placeholder="To" className="h-9 w-full px-3 py-2 text-sm border border-input rounded-md focus:ring-1 focus:ring-ring bg-background text-foreground"/>
-                    </div>
-                </div>
-                 <div>
-                    <label htmlFor="authors" className="block text-sm font-medium text-foreground mb-1">Authors</label>
-                    <input type="text" name="authors" id="authors" value={advancedOptions.authors} onChange={handleAdvancedChange} placeholder="e.g., Hinton, LeCun" className="h-9 w-full px-3 py-2 text-sm border border-input rounded-md focus:ring-1 focus:ring-ring bg-background text-foreground"/>
-                </div>
-                <div className="sm:col-span-2">
-                    <label htmlFor="excludeKeywords" className="block text-sm font-medium text-foreground mb-1">Exclude Keywords</label>
-                    <input type="text" name="excludeKeywords" id="excludeKeywords" value={advancedOptions.excludeKeywords} onChange={handleAdvancedChange} placeholder="e.g., review, meta-analysis" className="h-9 w-full px-3 py-2 text-sm border border-input rounded-md focus:ring-1 focus:ring-ring bg-background text-foreground"/>
-                </div>
-            </div>
-        )}
       </form>
     </div>
   );

@@ -1,6 +1,8 @@
 
 
-import type { ResearchPaper, CitationStyle } from '../types';
+
+
+import type { ResearchPaper, CitationStyle, ModelDefinition } from '../types';
 import { extractCitationMetadata } from './geminiService';
 
 let citeConstructorPromise: Promise<any> | null = null;
@@ -61,12 +63,12 @@ const getCiteConstructor = (): Promise<any> => {
  * @param style - The citation style to use (e.g., 'apa', 'mla').
  * @returns An array of HTML-formatted citation strings.
  */
-export const generateCitations = async (papers: ResearchPaper[], style: CitationStyle): Promise<string[]> => {
+export const generateCitations = async (papers: ResearchPaper[], style: CitationStyle, model: ModelDefinition): Promise<string[]> => {
     try {
         const Cite = await getCiteConstructor();
         
         // Use AI to get rich metadata for each paper
-        const cslDataPromises = papers.map(paper => extractCitationMetadata(paper));
+        const cslDataPromises = papers.map(paper => extractCitationMetadata(paper, model));
         const cslData = await Promise.all(cslDataPromises);
         
         const cite = new Cite(cslData);
@@ -102,12 +104,12 @@ export const generateCitations = async (papers: ResearchPaper[], style: Citation
  * @param papers - An array of ResearchPaper objects.
  * @returns A single string containing all references in RIS format.
  */
-export const generateRIS = async (papers: ResearchPaper[]): Promise<string> => {
+export const generateRIS = async (papers: ResearchPaper[], model: ModelDefinition): Promise<string> => {
     try {
         const Cite = await getCiteConstructor();
 
         // Use AI to get rich metadata for each paper
-        const cslDataPromises = papers.map(paper => extractCitationMetadata(paper));
+        const cslDataPromises = papers.map(paper => extractCitationMetadata(paper, model));
         const cslData = await Promise.all(cslDataPromises);
 
         const cite = new Cite(cslData);

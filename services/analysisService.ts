@@ -1,3 +1,4 @@
+
 import type { AnalysisResult, AuthorFrequencyData, Cluster, PublicationYearData, ResearchPaper, GraphEdge, GraphNode } from '../types';
 
 // Client-side cache for analysis results using a simple Map
@@ -104,8 +105,8 @@ const simpleKMeans = (data: number[][], k: number, maxIterations = 50) => {
 // --- End of Custom Implementations ---
 
 
-export const analyzePapers = async (papers: ResearchPaper[]): Promise<AnalysisResult> => {
-    const cacheKey = JSON.stringify(papers.map(p => p.title).sort());
+export const analyzePapers = async (papers: ResearchPaper[], topAuthors: AuthorFrequencyData): Promise<AnalysisResult> => {
+    const cacheKey = JSON.stringify({ papers: papers.map(p => p.id), topAuthors });
     const cachedEntry = analysisCache.get(cacheKey);
     if (cachedEntry && (Date.now() - cachedEntry.timestamp < CACHE_TTL_MS)) {
         return cachedEntry.result;
@@ -121,18 +122,6 @@ export const analyzePapers = async (papers: ResearchPaper[]): Promise<AnalysisRe
             return acc;
         }, {} as { [year: number]: { year: number, count: number } })
     ).sort((a,b) => a.year - b.year);
-
-    const authorFreq: AuthorFrequencyData = Object.values(
-        papers.flatMap(p => p.authors.split(',').map(a => a.trim())).reduce((acc, author) => {
-            if (author) {
-                acc[author] = acc[author] || { author, count: 0, totalCitations: 0 };
-                acc[author].count++;
-                const paper = papers.find(p => p.authors.includes(author));
-                acc[author].totalCitations += paper?.citations || 0;
-            }
-            return acc;
-        }, {} as { [author: string]: { author: string, count: number, totalCitations: number } })
-    ).sort((a,b) => b.count - a.count).slice(0, 10);
 
     // 2. TF-IDF and Clustering
     const documents = papers.map(p => p.abstract || '');
@@ -239,7 +228,7 @@ export const analyzePapers = async (papers: ResearchPaper[]): Promise<AnalysisRe
     const result: AnalysisResult = {
         clusters,
         publicationYears,
-        topAuthors: authorFreq,
+        topAuthors,
         graph: { nodes, edges }
     };
     

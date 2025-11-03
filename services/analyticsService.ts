@@ -1,3 +1,5 @@
+import { firestoreService } from './firestoreService';
+
 // A simple UUID generator for session tracking
 const generateUUID = (): string => {
     return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
@@ -56,13 +58,16 @@ class AnalyticsService {
             ...payload,
         };
         
-        // Add to in-memory array for current session use
+        // 1. Add to in-memory array for current session UI
         this.events.push({ eventName, data: eventData });
         
-        // Persist to localStorage for cross-session analysis
+        // 2. Persist to localStorage for cross-session analysis on the client
         this.saveEventsToStorage();
 
-        // In a real-world application, this would send data to an analytics backend.
+        // 3. Log to Firestore for persistent, server-side storage
+        firestoreService.logAnalyticsEvent(eventName, eventData);
+
+        // 4. In a real-world application, this would also send data to an analytics backend.
         console.log(`[ANALYTICS] Event: ${eventName}`, eventData);
     }
 

@@ -1,8 +1,17 @@
 
 
+
 export type SummaryLength = 'short' | 'medium' | 'detailed';
 export type SummaryStyle = 'paragraph' | 'bullets' | 'qa';
 export type CitationStyle = 'apa' | 'mla' | 'chicago' | 'harvard' | 'ieee' | 'vancouver';
+export type ModelProvider = 'gemini' | 'openai' | 'anthropic';
+
+export interface ModelDefinition {
+  id: string;
+  name: string;
+  provider: ModelProvider;
+  isMock?: boolean;
+}
 
 export type SearchSource = string;
 
@@ -17,6 +26,8 @@ export interface AdvancedSearchOptions {
   endYear:string;
   authors: string;
   excludeKeywords: string;
+  inclusionCriteria: string;
+  exclusionCriteria: string;
 }
 
 export interface ValidationResult {
@@ -42,9 +53,14 @@ export interface ResearchPaper {
   abstract: string;
   sourceURL?: string;
   pdfURL?: string;
+  // Fix: Add properties to track open access PDF fetching status
+  openAccessPdfUrl?: string;
+  openAccessState?: 'idle' | 'loading' | 'loaded' | 'error';
   citations?: number;
   validation?: ValidationResult;
   semanticScore?: number;
+  screeningFitScore?: number;
+  screeningRationale?: string;
   impactScore?: number;
   combinedScore?: number;
   keyConcepts?: string[];
@@ -52,6 +68,9 @@ export interface ResearchPaper {
   doi?: string;
   doiState?: 'idle' | 'loading' | 'loaded' | 'error';
   enrichmentSource?: 'arXiv';
+  savedAnalysis?: PaperAnalysis;
+  verificationResult?: VerificationResult;
+  journal?: string;
 }
 
 export type PublicationYearData = { year: number; count: number }[];
@@ -118,7 +137,7 @@ export type SynthesisResult = {
   context: string;
 }[];
 
-export type SortKey = 'relevance' | 'year' | 'citations' | 'validationScore';
+export type SortKey = 'relevance' | 'year' | 'citations' | 'validationScore' | 'screeningFitScore';
 export type SortDirection = 'asc' | 'desc';
 
 export interface SortConfig {
@@ -165,4 +184,96 @@ export interface CrossrefWork {
   URL: string;
   DOI: string;
   link?: CrossrefLink[];
+}
+
+// --- Advanced Verification System Types ---
+// These types represent a more granular and evidence-based approach to paper validation.
+
+export type Verdict = 'SUPPORT' | 'REFUTE' | 'NEI';
+
+export interface Metadata {
+  doi?: string;
+  title?: string;
+  authors?: string[];
+  journal?: string;
+  year?: number;
+  citations?: number;
+  isRetracted?: boolean;
+  isOpenAccess?: boolean;
+  hasData?: boolean;
+  hasCode?: boolean;
+  credibilityScore?: number; // 0-1
+  reproducibilityScore?: number; // 0-1
+  temporalScore?: number; // 0-1
+}
+
+export interface EvidenceSpan {
+  source: string; // DOI or URL
+  passage: string; // the exact supporting sentence(s)
+  location?: { page?: number; paragraph?: number };
+  score?: number; // entailment confidence 0-1
+}
+
+export interface CitationStats {
+  total: number;
+  supportCount: number;
+  contradictCount: number;
+  supportRatio: number; // 0-1
+}
+
+export interface VerificationBreakdown {
+  credibility: number;
+  evidence: number;
+  reproducibility: number;
+  citations: number;
+  temporal: number;
+}
+
+export interface VerificationResult {
+  doi?: string;
+  title?: string;
+  vacs: number; // 0 - 100
+  verdict: 'Verified' | 'Inconclusive' | 'Questionable';
+  breakdown: VerificationBreakdown;
+  evidence: EvidenceSpan[]; // must be non-empty for any "Verified" verdict
+  rationale: string[]; // human readable bullets
+}
+
+// --- Dissertation Study Specific Types ---
+export type AppMode = 'search' | 'dashboard' | 'evaluation';
+
+export interface GoldStandardPaper {
+  paper_id: string; // DOI
+  title: string;
+  authors: string;
+  year: number;
+  abstract: string;
+  source?: string; // journal name
+  crossref_verified: boolean;
+  peer_reviewed: boolean;
+  open_access: boolean;
+  author_verified: boolean;
+  factual_accuracy_score: number; // 0-100
+  notes: string;
+  label: 'verified' | 'inconclusive' | 'refuted';
+}
+
+
+export interface TestHarnessResult {
+  paperId: string;
+  vacsResult: VerificationResult;
+  groundTruth: GoldStandardPaper;
+  isCorrect: boolean;
+  precisionAt1: number;
+}
+
+export interface UserStudyData {
+  participantId: string;
+  task: { paper: ResearchPaper; claim: string };
+  group: 'A' | 'B'; // A: Control, B: Treatment (with VACS)
+  vacsResult?: VerificationResult;
+  userVerdict: 'Correct' | 'Incorrect';
+  isAdequate: 'Yes' | 'No';
+  usefulness: number; // 1-5
+  timeToVerify: number; // in milliseconds
 }

@@ -1,6 +1,7 @@
 
+
 import React, { useState, useEffect } from 'react';
-import type { ResearchPaper, AnalysisResult, Project, SearchSourceInfo } from '../types';
+import type { ResearchPaper, AnalysisResult, Project, SearchSourceInfo, ModelDefinition } from '../types';
 import { PaperDetails } from './PaperDetails';
 import { AnalysisDashboard } from './AnalysisDashboard';
 import { NetworkIcon } from './icons/NetworkIcon';
@@ -9,6 +10,8 @@ import { LightbulbIcon } from './icons/LightbulbIcon';
 import { SearchIcon } from './icons/SearchIcon';
 import { BibliographyGenerator } from './BibliographyGenerator';
 import { ProjectWorkspace } from './ProjectWorkspace';
+import { ShieldCheckIcon } from './icons/ShieldCheckIcon';
+import { CitationIcon } from './icons/CitationIcon';
 
 
 interface RefinedQueriesProps {
@@ -60,21 +63,24 @@ interface WorkspacePanelProps {
     onFindConnectedPapers: (paper: ResearchPaper) => void;
     isFindingConnected: boolean;
     onAnalyzePaper: (paper: ResearchPaper) => void;
+    onCitePaper: (paper: ResearchPaper) => void;
     isAnalyzingPaper: boolean;
     onConceptClick: (concept: string) => void;
     onFindDoi: (paper: ResearchPaper) => void;
     onGenerateSuggestions: (paper: ResearchPaper) => void;
     isGeneratingSuggestions: boolean;
+    onVerifyPaper: (paper: ResearchPaper) => void;
     logAnalyticsEvent: (eventName: string, payload: object) => void;
     refinedQueries: string[];
     isGeneratingRefined: boolean;
     onRefinedQuerySearch: (query: string) => void;
-    onAnalyzeGaps: (papers: ResearchPaper[]) => void;
-    onSynthesizeWorkspace: (papers: ResearchPaper[]) => void;
+    onAnalyzeGaps: (papers: ResearchPaper[], model: ModelDefinition) => void;
+    onSynthesizeWorkspace: (papers: ResearchPaper[], model: ModelDefinition) => void;
     onCreateProject: (name: string) => void;
     onDeleteProject: (projectId: string) => void;
     onMovePaperToProject: (paperId: string, projectId: string | null) => void;
     onUpdateProjectColor: (projectId: string, color: string) => void;
+    model: ModelDefinition;
 }
 
 const TabButton: React.FC<{
@@ -105,8 +111,9 @@ const ToolCard: React.FC<{
     description: string;
     actionText: string;
     onAction: () => void;
-    isLoading: boolean;
-}> = ({ icon, title, description, actionText, onAction, isLoading }) => {
+    isLoading?: boolean;
+    disabled?: boolean;
+}> = ({ icon, title, description, actionText, onAction, isLoading = false, disabled = false }) => {
     return (
         <div className="bg-muted/50 border border-border rounded-lg p-4 flex items-center justify-between gap-4">
             <div className="flex items-center gap-4">
@@ -120,7 +127,7 @@ const ToolCard: React.FC<{
             </div>
             <button
                 onClick={onAction}
-                disabled={isLoading}
+                disabled={isLoading || disabled}
                 className="h-9 px-4 py-2 bg-primary text-primary-foreground text-sm font-semibold rounded-md hover:bg-primary/90 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-ring disabled:opacity-50 flex-shrink-0"
             >
                 {isLoading ? 'Loading...' : actionText}
@@ -132,7 +139,7 @@ const ToolCard: React.FC<{
 export const WorkspacePanel: React.FC<WorkspacePanelProps> = (props) => {
     const { 
         papers, selectedPaper, analysis, workspacePapers, projects,
-        refinedQueries, isGeneratingRefined, onRefinedQuerySearch 
+        refinedQueries, isGeneratingRefined, onRefinedQuerySearch, model
     } = props;
     const [activeTab, setActiveTab] = useState<'details' | 'analysis' | 'workspace' | 'bibliography'>('analysis');
 
@@ -157,6 +164,7 @@ export const WorkspacePanel: React.FC<WorkspacePanelProps> = (props) => {
                             onToggleWorkspacePaper={props.onToggleWorkspacePaper}
                             onConceptClick={props.onConceptClick}
                             onFindDoi={props.onFindDoi}
+                            onVerifyPaper={props.onVerifyPaper}
                             logAnalyticsEvent={props.logAnalyticsEvent}
                         />
                         <div className="border-t border-border pt-6 mt-6 space-y-4">
@@ -177,6 +185,14 @@ export const WorkspacePanel: React.FC<WorkspacePanelProps> = (props) => {
                                  onAction={() => props.onAnalyzePaper(selectedPaper)}
                                  isLoading={props.isAnalyzingPaper}
                              />
+                              <ToolCard
+                                 icon={<ShieldCheckIcon className="w-5 h-5" />}
+                                 title="Advanced Verification (VACS)"
+                                 description="Verify a claim using the paper's text, citations, and metadata."
+                                 actionText="Verify Claim"
+                                 onAction={() => props.onVerifyPaper(selectedPaper)}
+                                 disabled={!selectedPaper.doi}
+                             />
                              <ToolCard
                                  icon={<LightbulbIcon className="w-5 h-5" />}
                                  title="Generate Search Ideas"
@@ -185,6 +201,13 @@ export const WorkspacePanel: React.FC<WorkspacePanelProps> = (props) => {
                                  onAction={() => props.onGenerateSuggestions(selectedPaper)}
                                  isLoading={props.isGeneratingSuggestions}
                              />
+                             <ToolCard
+                                icon={<CitationIcon className="w-5 h-5" />}
+                                title="Generate Citation"
+                                description="Create a formatted citation in various styles (APA, MLA, etc.)."
+                                actionText="Cite Paper"
+                                onAction={() => props.onCitePaper(selectedPaper)}
+                            />
                         </div>
                     </div>
                 ) : (
@@ -210,7 +233,7 @@ export const WorkspacePanel: React.FC<WorkspacePanelProps> = (props) => {
                     </div>
                 );
             case 'bibliography':
-                return <BibliographyGenerator papers={papers} />;
+                return <BibliographyGenerator papers={papers} model={model} />;
             case 'workspace':
                 return (
                     <ProjectWorkspace
@@ -223,6 +246,7 @@ export const WorkspacePanel: React.FC<WorkspacePanelProps> = (props) => {
                         onAnalyzeGaps={props.onAnalyzeGaps}
                         onRemovePaperFromWorkspace={props.onToggleWorkspacePaper}
                         onUpdateProjectColor={props.onUpdateProjectColor}
+                        model={model}
                     />
                  )
             default:
@@ -232,8 +256,8 @@ export const WorkspacePanel: React.FC<WorkspacePanelProps> = (props) => {
 
     return (
         <div className="bg-card rounded-lg shadow-sm border sticky top-24">
-            <div className="border-b border-border p-1">
-                <nav className="flex space-x-1 bg-muted rounded-md p-1" aria-label="Tabs">
+            <div className="border-b border-border p-1 flex justify-between items-center">
+                <nav className="flex space-x-1 bg-muted p-1 rounded-md" aria-label="Tabs">
                     <TabButton onClick={() => setActiveTab('details')} isActive={activeTab === 'details'} disabled={!selectedPaper}>
                         Paper Details
                     </TabButton>

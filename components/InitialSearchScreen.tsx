@@ -1,9 +1,12 @@
 
 
+
+
+
 import React from 'react';
 import { SearchForm } from './SearchForm';
 import { AboutIcon } from './icons/AboutIcon';
-import type { SummaryLength, AdvancedSearchOptions, SummaryStyle } from '../types';
+import type { SummaryLength, AdvancedSearchOptions, SummaryStyle, ModelDefinition } from '../types';
 
 interface InitialSearchScreenProps {
   query: string;
@@ -14,6 +17,9 @@ interface InitialSearchScreenProps {
   onLengthChange: (length: SummaryLength) => void;
   summaryStyle: SummaryStyle;
   onStyleChange: (style: SummaryStyle) => void;
+  model: ModelDefinition;
+  onModelChange: (model: ModelDefinition) => void;
+  availableModels: ModelDefinition[];
   logAnalyticsEvent: (eventName: string, payload: object) => void;
   children?: React.ReactNode;
 }

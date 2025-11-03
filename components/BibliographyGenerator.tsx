@@ -1,7 +1,10 @@
 
 
+
+
+
 import React, { useState, useEffect, useCallback } from 'react';
-import type { ResearchPaper, CitationStyle } from '../types';
+import type { ResearchPaper, CitationStyle, ModelDefinition } from '../types';
 import { ErrorMessage } from './ErrorMessage';
 import { CopyIcon } from './icons/CopyIcon';
 // Fix: Imported from citationService instead of apiService for citation-related functions.
@@ -10,6 +13,7 @@ import { ZoteroIcon } from './icons/ZoteroIcon';
 
 interface BibliographyGeneratorProps {
   papers: ResearchPaper[];
+  model: ModelDefinition;
 }
 
 const citationStyles: { id: CitationStyle; name: string }[] = [
@@ -21,7 +25,7 @@ const citationStyles: { id: CitationStyle; name: string }[] = [
     { id: 'vancouver', name: 'Vancouver' },
 ];
 
-export const BibliographyGenerator: React.FC<BibliographyGeneratorProps> = ({ papers }) => {
+export const BibliographyGenerator: React.FC<BibliographyGeneratorProps> = ({ papers, model }) => {
   const [isLoading, setIsLoading] = useState(false);
   const [citations, setCitations] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -36,7 +40,7 @@ export const BibliographyGenerator: React.FC<BibliographyGeneratorProps> = ({ pa
     setCitations([]);
     try {
       // Fix: Called generateCitations from citationService.
-      const result = await citationService.generateCitations(papers, style);
+      const result = await citationService.generateCitations(papers, style, model);
       setCitations(result);
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : "An unknown error occurred.";
@@ -44,7 +48,7 @@ export const BibliographyGenerator: React.FC<BibliographyGeneratorProps> = ({ pa
     } finally {
       setIsLoading(false);
     }
-  }, [papers]);
+  }, [papers, model]);
 
   useEffect(() => {
     handleGenerate(citationStyle);
@@ -64,7 +68,7 @@ export const BibliographyGenerator: React.FC<BibliographyGeneratorProps> = ({ pa
     setIsExporting(true);
     try {
         // Fix: Called generateRIS from citationService.
-        const risString = await citationService.generateRIS(papers);
+        const risString = await citationService.generateRIS(papers, model);
         const blob = new Blob([risString], { type: 'application/x-research-info-systems' });
         const url = URL.createObjectURL(blob);
         const link = document.createElement('a');

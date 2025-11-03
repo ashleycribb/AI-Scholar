@@ -1,33 +1,10 @@
-
 import { GoogleGenAI } from "@google/genai";
 import type { ResearchPaper } from '../types';
+import { cosineSimilarity } from '../utils/math';
+import { embedText } from '../utils/embeddings';
 
 const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 const model = "gemini-2.5-flash-preview-embedder";
-
-/**
- * Calculates the cosine similarity between two vectors.
- */
-export const cosineSimilarity = (vecA: number[], vecB: number[]): number => {
-    let dotProduct = 0;
-    let normA = 0;
-    let normB = 0;
-    for (let i = 0; i < vecA.length; i++) {
-        dotProduct += vecA[i] * vecB[i];
-        normA += vecA[i] * vecA[i];
-        normB += vecB[i] * vecB[i];
-    }
-    if (normA === 0 || normB === 0) return 0;
-    return dotProduct / (Math.sqrt(normA) * Math.sqrt(normB));
-};
-
-/**
- * Generates an embedding for a single piece of text.
- */
-const getEmbedding = async (text: string): Promise<number[]> => {
-    const response = await ai.models.embedContent({ model, content: { parts: [{ text }] } });
-    return response.embedding.values;
-};
 
 /**
  * Takes a query (or a hypothetical answer) and a list of papers, calculates semantic scores, and returns the papers with scores.
@@ -36,17 +13,45 @@ export const calculateSemanticScores = async (queryOrHypotheticalAnswer: string,
     if (papers.length === 0) return [];
     
     try {
-        const queryEmbedding = await getEmbedding(queryOrHypotheticalAnswer);
+        const queryEmbedding = await embedText(queryOrHypotheticalAnswer);
         
-        const paperContents = papers.map(p => p.abstract);
-        const batchResponse = await ai.models.batchEmbedContents({
+        // Defensively filter papers to ensure they have a valid, non-empty abstract for embedding.
+        // The Gemini API can fail on batch requests if any item has empty content.
+        const papersToEmbed = papers.filter(p => 
+            p.abstract && 
+            typeof p.abstract === 'string' && 
+            p.abstract.trim() !== ''
+        );
+
+        // If no papers have valid abstracts, return the original list with a score of 0.
+        if (papersToEmbed.length === 0) {
+            return papers.map(p => ({ ...p, semanticScore: 0 }));
+        }
+
+        // Prepare the content for the batch embedding request.
+        const paperContents = papersToEmbed.map(p => ({ parts: [{ text: p.abstract }] }));
+        
+        // Get embeddings for all valid papers in a single batch call.
+        const response = await ai.models.embedContents({
             model,
-            requests: paperContents.map(content => ({ content: { parts: [{ text: content }] } }))
+            contents: paperContents,
         });
-        const paperEmbeddings = batchResponse.embeddings.map(e => e.values);
+        const paperEmbeddings = response.embeddings.map(e => e.values);
         
-        return papers.map((paper, index) => {
-            const paperEmbedding = paperEmbeddings[index];
+        // Create a map of paper ID to its embedding for efficient lookup.
+        const embeddingMap = new Map<string, number[]>();
+        papersToEmbed.forEach((paper, index) => {
+            embeddingMap.set(paper.id, paperEmbeddings[index]);
+        });
+        
+        // Map the calculated scores back to the original list of papers.
+        // Papers that were filtered out will not be in the map and will receive a score of 0.
+        return papers.map((paper) => {
+            const paperEmbedding = embeddingMap.get(paper.id);
+            if (!paperEmbedding) {
+                return { ...paper, semanticScore: 0 };
+            }
+            
             const similarity = cosineSimilarity(queryEmbedding, paperEmbedding);
             // Convert similarity from [-1, 1] to [0, 100]
             const score = Math.round(((similarity + 1) / 2) * 100);
@@ -58,7 +63,7 @@ export const calculateSemanticScores = async (queryOrHypotheticalAnswer: string,
 
     } catch (error) {
         console.error("Error calculating semantic scores:", error);
-        // If embedding fails, return papers with a score of 0 so the app doesn't crash.
+        // Fallback: If the API call fails for any reason, return all papers with a score of 0.
         return papers.map(p => ({ ...p, semanticScore: 0 }));
     }
 };

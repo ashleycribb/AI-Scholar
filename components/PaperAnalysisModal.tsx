@@ -1,4 +1,5 @@
 
+
 import React from 'react';
 import type { ResearchPaper, PaperAnalysis } from '../types';
 import { ErrorMessage } from './ErrorMessage';
@@ -6,6 +7,7 @@ import { AnalyzeIcon } from './icons/AnalyzeIcon';
 import { LoadingSpinner } from './LoadingSpinner';
 import { DoiIcon } from './icons/DoiIcon';
 import { ExternalLinkIcon } from './icons/ExternalLinkIcon';
+import { CheckIcon } from './icons/CheckIcon';
 
 interface PaperAnalysisModalProps {
   result: {
@@ -15,6 +17,8 @@ interface PaperAnalysisModalProps {
   onClose: () => void;
   error: string | null;
   isLoading: boolean;
+  onSaveAnalysis: (paper: ResearchPaper, analysis: PaperAnalysis) => void;
+  isAnalysisSaved: boolean;
 }
 
 const AnalysisSection: React.FC<{ title: string; children: React.ReactNode }> = ({ title, children }) => (
@@ -26,7 +30,7 @@ const AnalysisSection: React.FC<{ title: string; children: React.ReactNode }> = 
     </div>
 );
 
-export const PaperAnalysisModal: React.FC<PaperAnalysisModalProps> = ({ result, onClose, error, isLoading }) => {
+export const PaperAnalysisModal: React.FC<PaperAnalysisModalProps> = ({ result, onClose, error, isLoading, onSaveAnalysis, isAnalysisSaved }) => {
   if (!result) {
     return null;
   }
@@ -74,7 +78,7 @@ export const PaperAnalysisModal: React.FC<PaperAnalysisModalProps> = ({ result, 
           ) : error ? (
             <ErrorMessage message={error} />
           ) : (
-            analysis && (
+            analysis && Object.keys(analysis).length > 0 && (
                 <div className="space-y-5">
                   <AnalysisSection title="Research Question">
                     <p>{analysis.researchQuestion}</p>
@@ -118,6 +122,29 @@ export const PaperAnalysisModal: React.FC<PaperAnalysisModalProps> = ({ result, 
             )
           )}
         </main>
+        
+        {!isLoading && !error && analysis && Object.keys(analysis).length > 0 && (
+            <footer className="p-4 border-t border-gray-200 bg-gray-50 rounded-b-xl flex justify-end">
+                <button
+                    onClick={() => onSaveAnalysis(paper, analysis)}
+                    disabled={isAnalysisSaved}
+                    className={`flex items-center gap-2 h-9 px-4 rounded-md text-sm font-semibold transition-colors ${
+                        isAnalysisSaved 
+                        ? 'bg-green-100 text-green-800 cursor-default' 
+                        : 'bg-primary text-primary-foreground hover:bg-primary/90'
+                    }`}
+                >
+                    {isAnalysisSaved ? (
+                        <>
+                            <CheckIcon className="w-4 h-4" />
+                            <span>Analysis Saved</span>
+                        </>
+                    ) : (
+                        'Save Analysis to Workspace'
+                    )}
+                </button>
+            </footer>
+        )}
       </div>
     </div>
   );

@@ -1,7 +1,6 @@
 
-
 import React from 'react';
-import type { ResearchPaper } from '../types';
+import type { ResearchPaper, PaperAnalysis } from '../types';
 import { AddIcon } from './icons/AddIcon';
 import { PdfIcon } from './icons/PdfIcon';
 import { ScholarIcon } from './icons/ScholarIcon';
@@ -12,6 +11,8 @@ import { SearchIcon } from './icons/SearchIcon';
 import { ArxivIcon } from './icons/ArxivIcon';
 import { CheckIcon } from './icons/CheckIcon';
 import { ValidationScoreDisplay } from './ValidationScoreDisplay';
+import { AnalyzeIcon } from './icons/AnalyzeIcon';
+import { ShieldCheckIcon } from './icons/ShieldCheckIcon';
 
 interface PaperDetailsProps {
     paper: ResearchPaper;
@@ -19,6 +20,7 @@ interface PaperDetailsProps {
     onToggleWorkspacePaper: (paper: ResearchPaper) => void;
     onConceptClick: (concept: string) => void;
     onFindDoi: (paper: ResearchPaper) => void;
+    onVerifyPaper: (paper: ResearchPaper) => void;
     logAnalyticsEvent: (eventName: string, payload: object) => void;
 }
 
@@ -58,12 +60,10 @@ const DoiDisplay: React.FC<{ paper: ResearchPaper; onFindDoi: () => void }> = ({
         );
     }
     
-    // The validation process runs findDoi, so if it's loaded and not present, it's not found.
     if (paper.validation?.status === 'validated' && !doi) {
         return <span className="text-xs text-muted-foreground italic flex items-center gap-1.5"><DoiIcon className="w-4 h-4" /> Not found</span>;
     }
 
-    // Fallback button if validation hasn't run or failed early
     return (
         <button onClick={onFindDoi} className="flex items-center gap-1.5 text-sm font-medium text-primary hover:underline">
             <SearchIcon className="w-4 h-4" />
@@ -72,9 +72,40 @@ const DoiDisplay: React.FC<{ paper: ResearchPaper; onFindDoi: () => void }> = ({
     );
 };
 
+const SavedAnalysis: React.FC<{ analysis: PaperAnalysis }> = ({ analysis }) => (
+    <div className="bg-muted/50 p-4 rounded-lg border space-y-3">
+        <h4 className="font-semibold text-foreground flex items-center gap-2">
+            <AnalyzeIcon className="w-4 h-4 text-muted-foreground" />
+            Saved AI Analysis
+        </h4>
+        <div>
+            <h5 className="text-sm font-semibold text-foreground">Research Question</h5>
+            <p className="text-sm text-muted-foreground mt-1">{analysis.researchQuestion}</p>
+        </div>
+        <div>
+            <h5 className="text-sm font-semibold text-foreground">Methodology</h5>
+            <p className="text-sm text-muted-foreground mt-1">{analysis.methodology}</p>
+        </div>
+        <div>
+            <h5 className="text-sm font-semibold text-foreground">Key Findings</h5>
+            <ul className="list-disc list-inside mt-1 text-sm text-muted-foreground space-y-1 pl-2">
+                {analysis.keyFindings.map((f, i) => <li key={i}>{f}</li>)}
+            </ul>
+        </div>
+        {analysis.limitations && analysis.limitations.length > 0 && (
+             <div>
+                <h5 className="text-sm font-semibold text-foreground">Potential Limitations</h5>
+                <ul className="list-disc list-inside mt-1 text-sm text-muted-foreground space-y-1 pl-2">
+                    {analysis.limitations.map((l, i) => <li key={i}>{l}</li>)}
+                </ul>
+            </div>
+        )}
+    </div>
+);
+
 
 export const PaperDetails: React.FC<PaperDetailsProps> = ({ 
-    paper, isInWorkspace, onToggleWorkspacePaper, onConceptClick, onFindDoi, logAnalyticsEvent
+    paper, isInWorkspace, onToggleWorkspacePaper, onConceptClick, onFindDoi, onVerifyPaper, logAnalyticsEvent
 }) => {
     const googleScholarSearchUrl = `https://scholar.google.com/scholar?hl=en&as_sdt=0,34&q=${encodeURIComponent(`"${paper.title}"`)}`;
     
@@ -184,6 +215,8 @@ export const PaperDetails: React.FC<PaperDetailsProps> = ({
                 <h4 className="font-semibold text-foreground">Abstract</h4>
                 <p className="mt-1 text-sm text-muted-foreground leading-relaxed">{paper.abstract}</p>
             </div>
+
+            {paper.savedAnalysis && <SavedAnalysis analysis={paper.savedAnalysis} />}
 
             <div>
                 <h4 className="font-semibold text-foreground mb-2 flex items-center gap-2">

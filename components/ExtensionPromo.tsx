@@ -11,14 +11,12 @@ export const ExtensionPromo: React.FC = () => {
                 <p className="mt-1 text-sm text-muted-foreground">
                     Install the AI Research Explorer browser extension to save and analyze papers directly from Google Scholar or arXiv.
                 </p>
-                <a 
-                    href={CHROME_STORE_URL}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="mt-4 inline-block px-5 h-10 leading-10 bg-primary text-primary-foreground font-semibold rounded-md hover:bg-primary/90"
+                <button 
+                    disabled
+                    className="mt-4 inline-block px-5 h-10 leading-10 bg-primary text-primary-foreground font-semibold rounded-md disabled:bg-primary/50 disabled:cursor-not-allowed"
                 >
-                    Get the Chrome Extension
-                </a>
+                    Get the Chrome Extension (coming soon)
+                </button>
             </div>
         </div>
     );

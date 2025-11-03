@@ -1,6 +1,6 @@
 
 import React, { useState, useMemo, useRef, useEffect } from 'react';
-import type { Project, ResearchPaper } from '../types';
+import type { Project, ResearchPaper, ModelDefinition } from '../types';
 import { FolderIcon } from './icons/FolderIcon';
 import { AddIcon } from './icons/AddIcon';
 import { RemoveIcon } from './icons/RemoveIcon';
@@ -31,10 +31,11 @@ interface ProjectWorkspaceProps {
     onCreateProject: (name: string) => void;
     onDeleteProject: (projectId: string) => void;
     onMovePaperToProject: (paperId: string, projectId: string | null) => void;
-    onSynthesizeWorkspace: (papers: ResearchPaper[]) => void;
-    onAnalyzeGaps: (papers: ResearchPaper[]) => void;
+    onSynthesizeWorkspace: (papers: ResearchPaper[], model: ModelDefinition) => void;
+    onAnalyzeGaps: (papers: ResearchPaper[], model: ModelDefinition) => void;
     onRemovePaperFromWorkspace: (paper: ResearchPaper) => void;
     onUpdateProjectColor: (projectId: string, color: string) => void;
+    model: ModelDefinition;
 }
 
 const useOutsideClick = (ref: React.RefObject<HTMLDivElement>, callback: () => void) => {
@@ -67,9 +68,15 @@ const PaperListItem: React.FC<{
         setIsMenuOpen(false);
     };
 
+    const project = currentProjectId ? allProjects.find(p => p.id === currentProjectId) : null;
+    const dotColorClass = project ? (colorClassMap[project.color]?.bg || 'bg-primary') : 'bg-slate-400';
+
     return (
         <div className="flex items-center justify-between p-2 rounded-md hover:bg-background group transition-colors duration-150">
-            <p className="text-sm text-muted-foreground group-hover:text-foreground transition-colors duration-150 flex-grow pr-4 truncate" title={paper.title}>{paper.title}</p>
+            <div className="flex items-center gap-2.5 flex-grow min-w-0 pr-2">
+                <span className={`w-2 h-2 rounded-full flex-shrink-0 ${dotColorClass}`}></span>
+                <p className="text-sm text-muted-foreground group-hover:text-foreground transition-colors duration-150 truncate" title={paper.title}>{paper.title}</p>
+            </div>
             <div className="flex items-center gap-1">
                 <div className="relative" ref={menuRef}>
                     <button
@@ -181,7 +188,7 @@ const CollapsibleSection: React.FC<{
 };
 
 export const ProjectWorkspace: React.FC<ProjectWorkspaceProps> = (props) => {
-    const { workspacePapers, projects, onCreateProject, onSynthesizeWorkspace, onAnalyzeGaps, onRemovePaperFromWorkspace, onUpdateProjectColor } = props;
+    const { workspacePapers, projects, onCreateProject, onSynthesizeWorkspace, onAnalyzeGaps, onRemovePaperFromWorkspace, onUpdateProjectColor, model } = props;
     const [newProjectName, setNewProjectName] = useState('');
     const [projectToDelete, setProjectToDelete] = useState<Project | null>(null);
 
@@ -211,7 +218,7 @@ export const ProjectWorkspace: React.FC<ProjectWorkspaceProps> = (props) => {
               <p className="text-sm text-muted-foreground">Run analysis on all {workspacePapers.length} paper(s) in your workspace.</p>
               <div className="flex gap-2">
                  <button 
-                  onClick={() => onSynthesizeWorkspace(workspacePapers)}
+                  onClick={() => onSynthesizeWorkspace(workspacePapers, model)}
                   disabled={workspacePapers.length < 2}
                   title="Synthesize Literature in Workspace"
                   className="h-9 px-4 text-sm font-semibold rounded-md bg-secondary text-secondary-foreground hover:bg-accent disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-2">
@@ -219,7 +226,7 @@ export const ProjectWorkspace: React.FC<ProjectWorkspaceProps> = (props) => {
                     <span>Synthesize</span>
                 </button>
                 <button 
-                  onClick={() => onAnalyzeGaps(workspacePapers)}
+                  onClick={() => onAnalyzeGaps(workspacePapers, model)}
                   disabled={workspacePapers.length < 2}
                   title="Find Research Gaps in Workspace"
                    className="h-9 px-4 text-sm font-semibold rounded-md bg-secondary text-secondary-foreground hover:bg-accent disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-2">
@@ -294,7 +301,7 @@ export const ProjectWorkspace: React.FC<ProjectWorkspaceProps> = (props) => {
                            onMove={props.onMovePaperToProject}
                            onRemove={onRemovePaperFromWorkspace}
                         />
-                    )) : <p className="text-sm text-muted-foreground italic text-center p-4">Drag papers here or use the 'Move' option to unsort them.</p>}
+                    )) : <p className="text-sm text-muted-foreground italic text-center p-4">Add papers to your workspace to see them here.</p>}
                 </CollapsibleSection>
             </div>
             
