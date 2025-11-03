@@ -3,7 +3,8 @@
 
 
 
-import React from 'react';
+
+import React, { useState } from 'react';
 import { SearchIcon } from './icons/SearchIcon';
 import type { SummaryLength, AdvancedSearchOptions, SummaryStyle, ModelDefinition } from '../types';
 import { ChevronDownIcon } from './icons/ChevronDownIcon';
@@ -29,6 +30,15 @@ const summaryStyles: { id: SummaryStyle; name: string }[] = [
     { id: 'qa', name: 'Q&A' },
 ];
 
+const studyDesigns = [
+    { id: 'any', name: 'Any Study Design' },
+    { id: 'randomized_controlled_trial', name: 'Randomized Controlled Trial' },
+    { id: 'systematic_review', name: 'Systematic Review' },
+    { id: 'observational_study', name: 'Observational Study' },
+    { id: 'qualitative_study', name: 'Qualitative Study' },
+];
+
+
 export const SearchForm: React.FC<SearchFormProps> = ({ 
     query,
     onQueryChange,
@@ -42,17 +52,19 @@ export const SearchForm: React.FC<SearchFormProps> = ({
     onModelChange,
     availableModels
 }) => {
-  const searchOptions: AdvancedSearchOptions = {
-    startYear: '',
-    endYear: '',
-    authors: '',
-    excludeKeywords: '',
-    inclusionCriteria: '',
-    exclusionCriteria: '',
-  };
+  const [studyDesign, setStudyDesign] = useState('any');
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    const searchOptions: AdvancedSearchOptions = {
+      startYear: '',
+      endYear: '',
+      authors: '',
+      excludeKeywords: '',
+      inclusionCriteria: '',
+      exclusionCriteria: '',
+      studyDesign: studyDesign
+    };
     onSearch(query, searchOptions);
   };
   
@@ -109,8 +121,8 @@ export const SearchForm: React.FC<SearchFormProps> = ({
           </button>
         </div>
         
-        <div className="flex flex-col sm:flex-row justify-center items-center gap-4">
-            <div className="flex flex-wrap items-center justify-center gap-x-6 gap-y-3">
+        <div className="flex flex-col sm:flex-row justify-between items-center gap-4">
+            <div className="flex flex-wrap items-center justify-center sm:justify-start gap-x-6 gap-y-3">
                 <div className="flex items-center gap-2">
                     <span className="text-sm font-medium text-muted-foreground">Summary:</span>
                     {(['short', 'medium', 'detailed'] as SummaryLength[]).map((len) => (
@@ -146,6 +158,21 @@ export const SearchForm: React.FC<SearchFormProps> = ({
                         {style.name}
                         </button>
                     ))}
+                </div>
+            </div>
+            <div className="relative">
+                <select
+                    id="study-design-select"
+                    value={studyDesign}
+                    onChange={(e) => setStudyDesign(e.target.value)}
+                    disabled={isLoading}
+                    className="h-9 pl-3 pr-8 bg-background border border-input rounded-md appearance-none focus:ring-2 focus:ring-ring text-sm"
+                    aria-label="Filter by Study Design"
+                >
+                    {studyDesigns.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
+                </select>
+                <div className="absolute inset-y-0 right-0 flex items-center pr-2 pointer-events-none">
+                    <ChevronDownIcon className="w-4 h-4 text-muted-foreground" />
                 </div>
             </div>
         </div>

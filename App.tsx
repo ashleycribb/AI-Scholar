@@ -1,8 +1,13 @@
 
 
+
+
+
+
 import React, { useState, useEffect, useMemo } from 'react';
-import type { ResearchPaper, SummaryLength, SummaryStyle, AdvancedSearchOptions, AnalysisResult, Project, VerificationResult, PaperAnalysis, SortConfig, SortKey, SynthesisResult, AppMode, GoldStandardPaper, UserStudyData, TestHarnessResult, ModelDefinition } from './types';
+import type { ResearchPaper, SummaryLength, SummaryStyle, AdvancedSearchOptions, AnalysisResult, Project, VerificationResult, PaperAnalysis, SortConfig, SortKey, SynthesisResult, AppMode, GoldStandardPaper, UserStudyData, TestHarnessResult, ModelDefinition, ChatMessage } from './types';
 import * as apiService from './services/apiService';
+import * as ragService from './services/ragService';
 import { ResultsDisplay } from './components/ResultsDisplay';
 import { LoadingSpinner } from './components/LoadingSpinner';
 import { ErrorMessage } from './components/ErrorMessage';
@@ -26,6 +31,7 @@ import { HelpButton } from './components/HelpButton';
 import { AboutButton } from './components/AboutButton';
 import { analyticsService } from './services/analyticsService';
 import { CitationModal } from './components/CitationModal';
+import * as extensionService from './services/extensionService';
 
 
 const PROJECT_COLORS = ['sky', 'green', 'yellow', 'red', 'purple', 'pink', 'indigo', 'teal'];
@@ -58,6 +64,9 @@ const App: React.FC = () => {
     const [projects, setProjects] = useState<Project[]>([]);
     const [analysis, setAnalysis] = useState<AnalysisResult | null>(null);
     const [refinedQueries, setRefinedQueries] = useState<string[]>([]);
+    const [isScreeningMode, setIsScreeningMode] = useState(false);
+    const [isReranking, setIsReranking] = useState(false);
+    const [projectChats, setProjectChats] = useState<{ [projectId: string]: { history: ChatMessage[], isLoading: boolean } }>({});
     
     // Modals State
     const [isVerificationModalOpen, setIsVerificationModalOpen] = useState(false);
@@ -84,6 +93,26 @@ const App: React.FC = () => {
     const [testHarnessResults, setTestHarnessResults] = useState<TestHarnessResult[]>([]);
     const [userStudyData, setUserStudyData] = useState<UserStudyData[]>([]);
 
+    useEffect(() => {
+        const handlePaperReceived = (paper: ResearchPaper) => {
+            setWorkspacePapers(prev => {
+                if (prev.some(p => p.id === paper.id)) {
+                    return prev; // Already in workspace
+                }
+                return [paper, ...prev];
+            });
+        };
+
+        const cleanup = extensionService.listenForExtensionMessages(
+            handlePaperReceived, // onPaperSaved (now used for adding to workspace)
+            (paperId) => { // onPaperRemoved
+                setWorkspacePapers(prev => prev.filter(p => p.id !== paperId));
+            }
+        );
+
+        return cleanup;
+    }, []);
+
     const handleSearch = async (searchQuery: string, options: AdvancedSearchOptions) => {
         if (!searchQuery.trim()) return;
 
@@ -93,6 +122,7 @@ const App: React.FC = () => {
         setHasSearched(true);
         setSelectedPaper(null);
         setAnalysis(null);
+        setIsScreeningMode(false);
         setSortConfig({ key: 'relevance', direction: 'desc' });
 
         try {
@@ -222,7 +252,7 @@ const App: React.FC = () => {
     const handleConceptSearch = (concept: string) => {
         const currentQuery = query;
         setQuery(concept);
-        handleSearch(concept, { startYear: '', endYear: '', authors: '', excludeKeywords: '', inclusionCriteria: `"${concept}" OR "${currentQuery}"`, exclusionCriteria: '' });
+        handleSearch(concept, { startYear: '', endYear: '', authors: '', excludeKeywords: '', inclusionCriteria: `"${concept}" OR "${currentQuery}"`, exclusionCriteria: '', studyDesign: 'any' });
     };
     
     const handleOpenCitationModal = (paper: ResearchPaper) => {
@@ -238,6 +268,51 @@ const App: React.FC = () => {
             return { key, direction: 'desc' };
         });
     };
+    
+    const handleSetScreeningMode = (enabled: boolean) => {
+        setIsScreeningMode(enabled);
+        if (enabled) {
+            // Initialize screening status for all papers
+            setPapers(prev => prev.map(p => ({ ...p, screeningStatus: p.screeningStatus || 'none' })));
+            // Switch to sorting by screening fit score by default
+            setSortConfig({ key: 'screeningFitScore', direction: 'desc' });
+        }
+    };
+
+    const handleScreenPaper = (paperId: string, status: 'include' | 'exclude') => {
+        setPapers(prev => prev.map(p => p.id === paperId ? { ...p, screeningStatus: status } : p));
+    };
+
+    const handleAiRerank = async () => {
+        setIsReranking(true);
+        try {
+            const included = papers.filter(p => p.screeningStatus === 'include');
+            const excluded = papers.filter(p => p.screeningStatus === 'exclude');
+            const unscreened = papers.filter(p => p.screeningStatus === 'none');
+
+            const rerankedResults = await apiService.rerankForScreening(included, excluded, unscreened, model);
+
+            const rerankedMap = new Map(rerankedResults.map(r => [r.paperId, { score: r.score, rationale: r.rationale }]));
+
+            setPapers(prev => prev.map(p => {
+                const rerankedData = rerankedMap.get(p.id);
+                if (rerankedData) {
+                    return {
+                        ...p,
+                        screeningFitScore: rerankedData.score,
+                        screeningRationale: rerankedData.rationale,
+                    };
+                }
+                return p;
+            }));
+
+        } catch (err) {
+            setError(err instanceof Error ? err.message : "An error occurred during AI re-ranking.");
+        } finally {
+            setIsReranking(false);
+        }
+    };
+
 
     const sortedPapers = useMemo(() => {
         return [...papers].sort((a, b) => {
@@ -271,12 +346,19 @@ const App: React.FC = () => {
             paperIds: [],
             createdAt: Date.now(),
             color: PROJECT_COLORS[projects.length % PROJECT_COLORS.length],
+            paperStatuses: {},
         };
         setProjects(prev => [...prev, newProject]);
     };
 
     const handleDeleteProject = (projectId: string) => {
         setProjects(prev => prev.filter(p => p.id !== projectId));
+        // Also remove any chat history associated with the project
+        setProjectChats(prev => {
+            const newChats = {...prev};
+            delete newChats[projectId];
+            return newChats;
+        });
     };
 
     const handleMovePaperToProject = (paperId: string, projectId: string | null) => {
@@ -315,6 +397,68 @@ const App: React.FC = () => {
             setIsSynthesizing(false);
         }
     };
+
+     const handleIndexPaperForRag = (projectId: string, paperId: string) => {
+        setProjects(prev => prev.map(p => {
+            if (p.id === projectId) {
+                const newStatuses = { ...p.paperStatuses, [paperId]: 'indexing' as const };
+                return { ...p, paperStatuses: newStatuses };
+            }
+            return p;
+        }));
+
+        // Simulate indexing delay
+        setTimeout(() => {
+            setProjects(prev => prev.map(p => {
+                if (p.id === projectId) {
+                    const newStatuses = { ...p.paperStatuses, [paperId]: 'indexed' as const };
+                    return { ...p, paperStatuses: newStatuses };
+                }
+                return p;
+            }));
+        }, 2000 + Math.random() * 1000);
+    };
+
+    const handleProjectChat = async (projectId: string, message: string) => {
+        const project = projects.find(p => p.id === projectId);
+        if (!project) return;
+
+        const userMessage: ChatMessage = { role: 'user', parts: [{ text: message }] };
+
+        setProjectChats(prev => ({
+            ...prev,
+            [projectId]: {
+                history: [...(prev[projectId]?.history || []), userMessage],
+                isLoading: true,
+            }
+        }));
+
+        try {
+            const projectPapers = project.paperIds.map(id => workspacePapers.find(p => p.id === id)).filter((p): p is ResearchPaper => !!p);
+            const responseText = await ragService.chatWithProject(message, projectPapers, model);
+            const modelMessage: ChatMessage = { role: 'model', parts: [{ text: responseText }] };
+            
+            setProjectChats(prev => ({
+                ...prev,
+                [projectId]: {
+                    history: [...(prev[projectId]?.history || []), modelMessage],
+                    isLoading: false,
+                }
+            }));
+
+        } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : "An error occurred.";
+            const modelMessage: ChatMessage = { role: 'model', parts: [{ text: `Error: ${errorMessage}` }] };
+            setProjectChats(prev => ({
+                ...prev,
+                [projectId]: {
+                    history: [...(prev[projectId]?.history || []), modelMessage],
+                    isLoading: false,
+                }
+            }));
+        }
+    };
+
 
     // --- Dissertation Feature Handlers ---
 
@@ -399,7 +543,18 @@ const App: React.FC = () => {
                                         {isLoading && <LoadingSpinner message={progressMessage || "Searching..."} />}
                                         {error && <ErrorMessage message={error} />}
                                         {!isLoading && !error && hasSearched && (
-                                            <ResultsDisplay papers={sortedPapers} selectedPaperId={selectedPaper?.id || null} onSelectPaper={handleSelectPaper} sortConfig={sortConfig} onSortChange={handleSortChange} />
+                                            <ResultsDisplay 
+                                                papers={sortedPapers} 
+                                                selectedPaperId={selectedPaper?.id || null} 
+                                                onSelectPaper={handleSelectPaper} 
+                                                sortConfig={sortConfig} 
+                                                onSortChange={handleSortChange}
+                                                isScreeningMode={isScreeningMode}
+                                                onSetScreeningMode={handleSetScreeningMode}
+                                                onScreenPaper={handleScreenPaper}
+                                                onAiRerank={handleAiRerank}
+                                                isReranking={isReranking}
+                                            />
                                         )}
                                     </div>
                                 )}
@@ -407,7 +562,7 @@ const App: React.FC = () => {
 
                             {hasSearched && (
                                 <aside className="lg:col-span-2">
-                                <WorkspacePanel papers={papers} selectedPaper={selectedPaper} analysis={analysis} workspacePapers={workspacePapers} projects={projects} sources={[]} onToggleWorkspacePaper={handleToggleWorkspacePaper} onFindConnectedPapers={() => {}} isFindingConnected={false} onAnalyzePaper={handleAnalyzePaper} onCitePaper={handleOpenCitationModal} isAnalyzingPaper={isAnalyzingPaper} onConceptClick={handleConceptSearch} onFindDoi={() => {}} onGenerateSuggestions={() => {}} isGeneratingSuggestions={false} onVerifyPaper={handleOpenVerificationModal} logAnalyticsEvent={() => {}} refinedQueries={refinedQueries} isGeneratingRefined={false} onRefinedQuerySearch={() => {}} onAnalyzeGaps={handleAnalyzeGaps} onSynthesizeWorkspace={handleSynthesizeWorkspace} onCreateProject={handleCreateProject} onDeleteProject={handleDeleteProject} onMovePaperToProject={handleMovePaperToProject} onUpdateProjectColor={handleUpdateProjectColor} model={model} />
+                                <WorkspacePanel papers={papers} selectedPaper={selectedPaper} analysis={analysis} workspacePapers={workspacePapers} projects={projects} sources={[]} onToggleWorkspacePaper={handleToggleWorkspacePaper} onFindConnectedPapers={() => {}} isFindingConnected={false} onAnalyzePaper={handleAnalyzePaper} onCitePaper={handleOpenCitationModal} isAnalyzingPaper={isAnalyzingPaper} onConceptClick={handleConceptSearch} onFindDoi={() => {}} onGenerateSuggestions={() => {}} isGeneratingSuggestions={false} onVerifyPaper={handleOpenVerificationModal} logAnalyticsEvent={() => {}} refinedQueries={refinedQueries} isGeneratingRefined={false} onRefinedQuerySearch={() => {}} onAnalyzeGaps={handleAnalyzeGaps} onSynthesizeWorkspace={handleSynthesizeWorkspace} onCreateProject={handleCreateProject} onDeleteProject={handleDeleteProject} onMovePaperToProject={handleMovePaperToProject} onUpdateProjectColor={handleUpdateProjectColor} model={model} onIndexPaperForRag={handleIndexPaperForRag} projectChats={projectChats} onProjectChat={handleProjectChat} />
                                 </aside>
                             )}
                         </div>

@@ -1,5 +1,9 @@
 
 
+
+
+
+
 import { GoogleGenAI, Type } from "@google/genai";
 import type {
   ChatMessage,
@@ -55,6 +59,9 @@ const mockApiAdapter = async (prompt: string, modelId: string, schema: any): Pro
     }
     if (schema.properties?.recipeName) { // From a generic example, good for citation testing
         return { title: '[Mock] Chocolate Chip Cookies', author: [{ family: 'Mock', given: 'Chef' }], issued: { 'date-parts': [[2023]] }, type: 'article-journal' };
+    }
+    if (schema.properties?.answer) { // For RAG
+        return { answer: `[Mock RAG Response from ${modelId}] Based on the provided context, the answer appears to be related to the core themes of the mocked-up papers.` };
     }
 
     // Generic fallback mock
@@ -489,5 +496,96 @@ export const extractCitationMetadata = async (paper: ResearchPaper, model: Model
             author: [{ literal: paper.authors }],
             issued: { 'date-parts': [[paper.year]] },
         };
+    }
+};
+
+const studyDesignSchema = {
+    type: Type.OBJECT,
+    properties: {
+        study_design: { type: Type.STRING, description: "The classified study design." },
+    },
+    required: ["study_design"],
+};
+
+export const classifyStudyDesign = async (paper: ResearchPaper, model: ModelDefinition): Promise<string> => {
+    const prompt = `Classify the study design from the following abstract into one of: 'Randomized Controlled Trial', 'Systematic Review', 'Observational Study', 'Qualitative Study', 'Other'.
+    
+    Abstract: "${paper.abstract}"
+    
+    Return a single JSON object with a "study_design" key.`;
+
+    try {
+        const result = await generateJsonWithModel(prompt, model, studyDesignSchema);
+        return result?.study_design || 'Other';
+    } catch (error) {
+        console.error("Error classifying study design:", error);
+        return 'Other';
+    }
+};
+
+export const rerankByScreeningExample = async (
+    included: ResearchPaper[],
+    excluded: ResearchPaper[],
+    paperToRerank: ResearchPaper,
+    model: ModelDefinition
+): Promise<{ score: number; rationale: string; }> => {
+    const formatExamples = (papers: ResearchPaper[]) =>
+        papers.map(p => `Title: ${p.title}\nAbstract: ${p.abstract}`).join('\n\n---\n\n');
+
+    const prompt = `You are an AI assistant helping with a systematic review screening. A user has provided examples of papers they have INCLUDED and EXCLUDED. Based on these examples, evaluate the following 'Candidate Paper' and determine how well it fits the user's implicit criteria.
+    
+    == INCLUDED EXAMPLES ==
+    ${formatExamples(included)}
+
+    == EXCLUDED EXAMPLES ==
+    ${formatExamples(excluded)}
+
+    == CANDIDATE PAPER ==
+    Title: ${paperToRerank.title}
+    Abstract: ${paperToRerank.abstract}
+
+    Provide a relevance score from 0 (does not fit) to 100 (perfect fit) based on the examples, and a brief, one-sentence rationale for your score. Return as a JSON object with keys "score" and "rationale".`;
+
+    try {
+        const result = await generateJsonWithModel(prompt, model, screeningFitSchema);
+        return result || { score: 0, rationale: "AI re-ranking failed." };
+    } catch (error) {
+        console.error("Error in re-ranking by example:", error);
+        throw new Error("Failed to re-rank paper with AI.");
+    }
+};
+
+const ragAnswerSchema = {
+    type: Type.OBJECT,
+    properties: {
+        answer: { type: Type.STRING, description: "A comprehensive answer to the user's question, synthesized exclusively from the provided context." },
+    },
+    required: ["answer"],
+};
+
+export const generateRAGAnswer = async (query: string, context: string[], model: ModelDefinition): Promise<string> => {
+    const formattedContext = context.map((c, i) => `CONTEXT ${i+1}:\n${c}`).join('\n\n---\n\n');
+    
+    const prompt = `You are a research assistant. Your task is to answer a user's question based *only* on the provided context from research paper abstracts. Do not use any outside knowledge.
+
+    **User's Question:** "${query}"
+
+    **Provided Context:**
+    ${formattedContext}
+
+    **Instructions:**
+    1.  Read the user's question carefully.
+    2.  Synthesize an answer using only the information contained in the provided context above.
+    3.  If the context does not contain enough information to answer the question, state that clearly.
+    4.  Be concise and directly address the question.
+    
+    Return your response as a single JSON object with a single key "answer".`;
+    
+    try {
+        const result = await generateJsonWithModel(prompt, model, ragAnswerSchema);
+        return result?.answer || "I could not find an answer in the provided context.";
+    } catch (error) {
+        console.error("Error generating RAG answer:", error);
+        throw new Error("The AI failed to generate an answer based on the project papers.");
     }
 };

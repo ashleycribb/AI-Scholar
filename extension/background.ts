@@ -77,7 +77,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         // Immediately save the paper for a snappy UI response
         db.addPaper(newPaper).then(() => {
             console.log('Paper saved initially:', newPaper);
-            channel.postMessage({ type: 'paper_saved', paper: newPaper });
+            // Notify the web app that a paper has been saved
+            channel.postMessage({ type: 'paper_saved_to_workspace', paper: newPaper });
             sendResponse({ success: true, paperId: id });
 
             // Start enrichment in the background, don't wait for it

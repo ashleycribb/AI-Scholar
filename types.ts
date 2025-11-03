@@ -28,6 +28,7 @@ export interface AdvancedSearchOptions {
   excludeKeywords: string;
   inclusionCriteria: string;
   exclusionCriteria: string;
+  studyDesign: string;
 }
 
 export interface ValidationResult {
@@ -61,6 +62,8 @@ export interface ResearchPaper {
   semanticScore?: number;
   screeningFitScore?: number;
   screeningRationale?: string;
+  screeningStatus?: 'include' | 'exclude' | 'none';
+  detectedStudyDesign?: string;
   impactScore?: number;
   combinedScore?: number;
   keyConcepts?: string[];
@@ -155,6 +158,8 @@ export interface SuggestionsResult {
     suggestions: string[];
 }
 
+export type RagStatus = 'unindexed' | 'indexing' | 'indexed' | 'error';
+
 // A project is a user-defined collection of papers.
 export interface Project {
   id: string;
@@ -162,6 +167,7 @@ export interface Project {
   paperIds: string[];
   createdAt: number;
   color: string;
+  paperStatuses: { [paperId: string]: RagStatus };
 }
 
 // --- Crossref API Types ---

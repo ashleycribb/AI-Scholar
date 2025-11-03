@@ -1,11 +1,13 @@
 
 
+
+
 import type { AdvancedSearchOptions, AnalysisResult, PaperAnalysis, ResearchPaper, SummaryLength, SummaryStyle, SynthesisResult, ModelDefinition, AuthorFrequencyData } from '../types';
 import * as openAlexService from './openalexService';
 import * as arxivService from './arxivService';
 import * as validationService from './validationService';
 import * as embeddingService from './embeddingService';
-import { generateSummaryForPapers, generateHypotheticalAnswer, evaluateScreeningFit, analyzeResearchGaps, analyzeSinglePaper as geminiAnalyzeSinglePaper, extractKeyConcepts as geminiExtractKeyConcepts, synthesizePapers as geminiSynthesizePapers } from './geminiService';
+import { generateSummaryForPapers, generateHypotheticalAnswer, evaluateScreeningFit, analyzeResearchGaps, analyzeSinglePaper as geminiAnalyzeSinglePaper, extractKeyConcepts as geminiExtractKeyConcepts, synthesizePapers as geminiSynthesizePapers, classifyStudyDesign, rerankByScreeningExample } from './geminiService';
 import { analyzePapers } from './analysisService';
 import { createPaperId } from './extensionService';
 import * as unpaywallService from './unpaywallService';
@@ -60,14 +62,34 @@ export const search = async (
             filteredPapers = initialPapers.filter(p => !excludedTitles.has(p.title));
         }
     }
+    
+    let papersWithStudyDesign = filteredPapers;
+    if (options.studyDesign && options.studyDesign !== 'any') {
+        onProgress('Classifying study designs...');
+        const designClassificationPromises = filteredPapers.map(async (paper) => {
+            const design = await classifyStudyDesign(paper, model);
+            return { ...paper, detectedStudyDesign: design };
+        });
+        const classifiedPapers = await Promise.all(designClassificationPromises);
+        
+        const designMap: { [key: string]: string } = {
+            'randomized_controlled_trial': 'Randomized Controlled Trial',
+            'systematic_review': 'Systematic Review',
+            'observational_study': 'Observational Study',
+            'qualitative_study': 'Qualitative Study',
+        };
+        const targetDesign = designMap[options.studyDesign];
+        papersWithStudyDesign = classifiedPapers.filter(p => p.detectedStudyDesign === targetDesign);
+    }
 
-    if (filteredPapers.length === 0) {
+
+    if (papersWithStudyDesign.length === 0) {
         return { papers: [], summary: 'No results found for your query. Please try different keywords or broaden your search criteria.', analysis: null };
     }
 
     onProgress('Enriching paper data...');
     const enrichedPapers = await Promise.all(
-        filteredPapers.map(async (paper) => {
+        papersWithStudyDesign.map(async (paper) => {
             const enrichedData = await arxivService.enrichFromArxiv(paper);
             return enrichedData ? { ...paper, ...enrichedData } : paper;
         })
@@ -215,4 +237,34 @@ export const findOpenAccessPdf = async (doi: string): Promise<string | null> => 
 
 export const fetchMetadataByDOI = async (doi: string): Promise<ResearchPaper | null> => {
     return await openAlexService.searchOpenAlexByDoi(doi);
+};
+
+export const rerankForScreening = async (
+    included: ResearchPaper[],
+    excluded: ResearchPaper[],
+    unscreened: ResearchPaper[],
+    model: ModelDefinition
+): Promise<{ paperId: string, score: number, rationale: string }[]> => {
+    if (unscreened.length === 0) return [];
+
+    const rerankPromises = unscreened.map(async (paper) => {
+        try {
+            const result = await rerankByScreeningExample(included, excluded, paper, model);
+            return {
+                paperId: paper.id,
+                score: result.score,
+                rationale: result.rationale,
+            };
+        } catch (error) {
+            console.error(`Failed to re-rank paper ${paper.id}:`, error);
+            // Return a failed state for this specific paper
+            return {
+                paperId: paper.id,
+                score: 0,
+                rationale: "AI re-ranking failed for this paper.",
+            };
+        }
+    });
+
+    return await Promise.all(rerankPromises);
 };

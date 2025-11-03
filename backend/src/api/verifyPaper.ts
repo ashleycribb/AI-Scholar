@@ -1,5 +1,5 @@
-import express from 'express';
-import bodyParser from 'body-parser';
+
+import express, { Request, Response } from 'express';
 import cors from 'cors';
 import { fetchMetadataByDOI } from '../services/metadataService';
 import { findSupportingPassages } from '../services/retrievalService';
@@ -12,9 +12,11 @@ import { VerificationResult } from '../types';
 
 const app = express();
 app.use(cors()); 
-app.use(bodyParser.json());
+// FIX: Replace deprecated body-parser with express.json()
+app.use(express.json());
 
-app.post('/api/verifyPaper', async (req, res) => {
+// FIX: Add explicit Request and Response types from the express namespace to avoid global type conflicts.
+app.post('/api/verifyPaper', async (req: Request, res: Response) => {
   const { doi, claimText } = req.body;
   if (!doi) return res.status(400).json({ error: 'doi is required' });
 

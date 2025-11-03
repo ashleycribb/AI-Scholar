@@ -1,7 +1,7 @@
 import { GoogleGenAI } from "@google/genai";
 import type { ResearchPaper } from '../types';
 import { cosineSimilarity } from '../utils/math';
-import { embedText } from '../utils/embeddings';
+import { embedText, batchEmbedText } from '../utils/embeddings';
 
 const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 const model = "gemini-2.5-flash-preview-embedder";
@@ -16,39 +16,29 @@ export const calculateSemanticScores = async (queryOrHypotheticalAnswer: string,
         const queryEmbedding = await embedText(queryOrHypotheticalAnswer);
         
         // Defensively filter papers to ensure they have a valid, non-empty abstract for embedding.
-        // The Gemini API can fail on batch requests if any item has empty content.
         const papersToEmbed = papers.filter(p => 
             p.abstract && 
             typeof p.abstract === 'string' && 
             p.abstract.trim() !== ''
         );
 
-        // If no papers have valid abstracts, return the original list with a score of 0.
         if (papersToEmbed.length === 0) {
             return papers.map(p => ({ ...p, semanticScore: 0 }));
         }
 
-        // Prepare the content for the batch embedding request.
-        const paperContents = papersToEmbed.map(p => ({ parts: [{ text: p.abstract }] }));
+        const abstractsToEmbed = papersToEmbed.map(p => p.abstract);
         
-        // Get embeddings for all valid papers in a single batch call.
-        const response = await ai.models.embedContents({
-            model,
-            contents: paperContents,
-        });
-        const paperEmbeddings = response.embeddings.map(e => e.values);
+        // FIX: The method `batchEmbedContents` does not exist. Use the corrected `batchEmbedText` helper.
+        const paperEmbeddings = await batchEmbedText(abstractsToEmbed);
         
-        // Create a map of paper ID to its embedding for efficient lookup.
         const embeddingMap = new Map<string, number[]>();
         papersToEmbed.forEach((paper, index) => {
             embeddingMap.set(paper.id, paperEmbeddings[index]);
         });
         
-        // Map the calculated scores back to the original list of papers.
-        // Papers that were filtered out will not be in the map and will receive a score of 0.
         return papers.map((paper) => {
             const paperEmbedding = embeddingMap.get(paper.id);
-            if (!paperEmbedding) {
+            if (!paperEmbedding || paperEmbedding.length === 0) {
                 return { ...paper, semanticScore: 0 };
             }
             

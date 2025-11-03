@@ -11,13 +11,13 @@ const getChannel = (): BroadcastChannel => {
 };
 
 export const listenForExtensionMessages = (
-    onPaperSaved: (paper: ResearchPaper) => void,
+    onPaperReceived: (paper: ResearchPaper) => void,
     onPaperRemoved: (paperId: string) => void
 ) => {
     const bc = getChannel();
     bc.onmessage = (event) => {
-        if (event.data.type === 'paper_saved') {
-            onPaperSaved(event.data.paper);
+        if (event.data.type === 'paper_saved_to_workspace') {
+            onPaperReceived(event.data.paper);
         }
         if (event.data.type === 'paper_removed') {
             onPaperRemoved(event.data.paperId);

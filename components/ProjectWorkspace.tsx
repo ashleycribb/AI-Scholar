@@ -1,6 +1,8 @@
 
+
+
 import React, { useState, useMemo, useRef, useEffect } from 'react';
-import type { Project, ResearchPaper, ModelDefinition } from '../types';
+import type { Project, ResearchPaper, ModelDefinition, RagStatus, ChatMessage } from '../types';
 import { FolderIcon } from './icons/FolderIcon';
 import { AddIcon } from './icons/AddIcon';
 import { RemoveIcon } from './icons/RemoveIcon';
@@ -9,6 +11,9 @@ import { ReportIcon } from './icons/ReportIcon';
 import { SynthesisIcon } from './icons/SynthesisIcon';
 import { InboxIcon } from './icons/InboxIcon';
 import { ChevronDownIcon } from './icons/ChevronDownIcon';
+import { ChatPanel } from './ChatPanel';
+import { SparklesIcon } from './icons/SparklesIcon';
+import { CheckIcon } from './icons/CheckIcon';
 
 // A map of color names to Tailwind CSS classes. This ensures the full class names are present in the source
 // and are not purged by Tailwind's build process.
@@ -36,6 +41,9 @@ interface ProjectWorkspaceProps {
     onRemovePaperFromWorkspace: (paper: ResearchPaper) => void;
     onUpdateProjectColor: (projectId: string, color: string) => void;
     model: ModelDefinition;
+    onIndexPaperForRag: (projectId: string, paperId: string) => void;
+    projectChats: { [projectId: string]: { history: ChatMessage[], isLoading: boolean } };
+    onProjectChat: (projectId: string, message: string) => void;
 }
 
 const useOutsideClick = (ref: React.RefObject<HTMLDivElement>, callback: () => void) => {
@@ -52,13 +60,38 @@ const useOutsideClick = (ref: React.RefObject<HTMLDivElement>, callback: () => v
     }, [ref, callback]);
 };
 
+const RagStatusIndicator: React.FC<{ status: RagStatus }> = ({ status }) => {
+    const statusMap = {
+        unindexed: { text: 'Index for RAG', icon: <SparklesIcon className="w-3 h-3" />, color: 'text-primary', hover: 'hover:bg-primary/20' },
+        indexing: { text: 'Indexing...', icon: <svg className="animate-spin h-3 w-3" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>, color: 'text-muted-foreground', hover: '' },
+        indexed: { text: 'Indexed', icon: <CheckIcon className="w-3 h-3" />, color: 'text-green-600', hover: '' },
+        error: { text: 'Error', icon: null, color: 'text-destructive', hover: '' },
+    };
+    const current = statusMap[status];
+    return {
+        button: (onClick: () => void) => (
+            <button
+                onClick={onClick}
+                disabled={status !== 'unindexed'}
+                className={`flex items-center gap-1.5 px-2 py-1 text-xs font-semibold rounded-md bg-primary/10 ${current.color} ${current.hover} disabled:opacity-70 disabled:cursor-not-allowed transition-colors`}
+            >
+                {current.icon}
+                {current.text}
+            </button>
+        )
+    };
+};
+
+
 const PaperListItem: React.FC<{
     paper: ResearchPaper;
     allProjects: Project[];
     currentProjectId: string | null;
     onMove: (paperId: string, targetProjectId: string | null) => void;
     onRemove: (paper: ResearchPaper) => void;
-}> = ({ paper, allProjects, currentProjectId, onMove, onRemove }) => {
+    ragStatus: RagStatus;
+    onIndex: () => void;
+}> = ({ paper, allProjects, currentProjectId, onMove, onRemove, ragStatus, onIndex }) => {
     const [isMenuOpen, setIsMenuOpen] = useState(false);
     const menuRef = useRef<HTMLDivElement>(null);
     useOutsideClick(menuRef, () => setIsMenuOpen(false));
@@ -77,7 +110,8 @@ const PaperListItem: React.FC<{
                 <span className={`w-2 h-2 rounded-full flex-shrink-0 ${dotColorClass}`}></span>
                 <p className="text-sm text-muted-foreground group-hover:text-foreground transition-colors duration-150 truncate" title={paper.title}>{paper.title}</p>
             </div>
-            <div className="flex items-center gap-1">
+            <div className="flex items-center gap-2">
+                 {currentProjectId && RagStatusIndicator({ status: ragStatus }).button(onIndex)}
                 <div className="relative" ref={menuRef}>
                     <button
                         onClick={() => setIsMenuOpen(prev => !prev)}
@@ -158,9 +192,15 @@ const CollapsibleSection: React.FC<{
     actions?: React.ReactNode;
     defaultExpanded?: boolean;
     color?: string;
-}> = ({ title, icon, count, children, actions, defaultExpanded = true, color }) => {
+    project?: Project;
+    chatHistory?: ChatMessage[];
+    isChatLoading?: boolean;
+    onChat?: (message: string) => void;
+}> = ({ title, icon, count, children, actions, defaultExpanded = true, color, project, chatHistory, isChatLoading, onChat }) => {
     const [isExpanded, setIsExpanded] = useState(defaultExpanded);
     const borderColorClass = color ? (colorClassMap[color]?.border || 'border-border') : 'border-border';
+
+    const indexedCount = project?.paperIds.filter(id => project.paperStatuses?.[id] === 'indexed').length || 0;
 
     return (
         <div className={`bg-muted/50 border rounded-lg border-l-4 ${borderColorClass}`}>
@@ -179,16 +219,30 @@ const CollapsibleSection: React.FC<{
                 </div>
             </header>
             {isExpanded && (
-                <div className="border-t border-border p-2 space-y-1">
-                    {children}
-                </div>
+                <>
+                    <div className="border-t border-border p-2 space-y-1">
+                        {children}
+                    </div>
+                    {project && onChat && (
+                        <div className="border-t border-border p-3">
+                            <h4 className="text-sm font-semibold text-foreground mb-2">Chat with this Project</h4>
+                            {indexedCount < 1 ? (
+                                <p className="text-xs text-muted-foreground text-center p-4 bg-background rounded-md">Index at least one paper to start chatting with this project.</p>
+                            ) : (
+                                <div className="h-96">
+                                    <ChatPanel history={chatHistory || []} isLoading={isChatLoading || false} error={null} onSendMessage={onChat} />
+                                </div>
+                            )}
+                        </div>
+                    )}
+                </>
             )}
         </div>
     );
 };
 
 export const ProjectWorkspace: React.FC<ProjectWorkspaceProps> = (props) => {
-    const { workspacePapers, projects, onCreateProject, onSynthesizeWorkspace, onAnalyzeGaps, onRemovePaperFromWorkspace, onUpdateProjectColor, model } = props;
+    const { workspacePapers, projects, onCreateProject, onSynthesizeWorkspace, onAnalyzeGaps, onRemovePaperFromWorkspace, onUpdateProjectColor, model, onIndexPaperForRag, projectChats, onProjectChat } = props;
     const [newProjectName, setNewProjectName] = useState('');
     const [projectToDelete, setProjectToDelete] = useState<Project | null>(null);
 
@@ -260,6 +314,10 @@ export const ProjectWorkspace: React.FC<ProjectWorkspaceProps> = (props) => {
                         icon={<FolderIcon className={`w-5 h-5 ${colorClassMap[project.color]?.text || 'text-primary'}`} />}
                         count={project.paperIds.length}
                         color={project.color}
+                        project={project}
+                        chatHistory={projectChats[project.id]?.history}
+                        isChatLoading={projectChats[project.id]?.isLoading}
+                        onChat={(message) => onProjectChat(project.id, message)}
                         actions={
                             <div className="flex items-center gap-2">
                                 <ColorPickerTrigger project={project} onUpdateColor={onUpdateProjectColor} />
@@ -281,6 +339,8 @@ export const ProjectWorkspace: React.FC<ProjectWorkspaceProps> = (props) => {
                                 currentProjectId={project.id}
                                 onMove={props.onMovePaperToProject}
                                 onRemove={onRemovePaperFromWorkspace}
+                                ragStatus={project.paperStatuses?.[paper.id] || 'unindexed'}
+                                onIndex={() => onIndexPaperForRag(project.id, paper.id)}
                            />
                         )) : <p className="text-sm text-muted-foreground italic text-center p-4">This project is empty.</p>}
                     </CollapsibleSection>
@@ -300,6 +360,8 @@ export const ProjectWorkspace: React.FC<ProjectWorkspaceProps> = (props) => {
                            currentProjectId={null}
                            onMove={props.onMovePaperToProject}
                            onRemove={onRemovePaperFromWorkspace}
+                           ragStatus="unindexed"
+                           onIndex={() => {}} // No indexing in unsorted
                         />
                     )) : <p className="text-sm text-muted-foreground italic text-center p-4">Add papers to your workspace to see them here.</p>}
                 </CollapsibleSection>

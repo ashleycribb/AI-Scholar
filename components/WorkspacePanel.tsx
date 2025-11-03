@@ -1,7 +1,10 @@
 
 
+
+
+
 import React, { useState, useEffect } from 'react';
-import type { ResearchPaper, AnalysisResult, Project, SearchSourceInfo, ModelDefinition } from '../types';
+import type { ResearchPaper, AnalysisResult, Project, SearchSourceInfo, ModelDefinition, RagStatus, ChatMessage } from '../types';
 import { PaperDetails } from './PaperDetails';
 import { AnalysisDashboard } from './AnalysisDashboard';
 import { NetworkIcon } from './icons/NetworkIcon';
@@ -81,6 +84,9 @@ interface WorkspacePanelProps {
     onMovePaperToProject: (paperId: string, projectId: string | null) => void;
     onUpdateProjectColor: (projectId: string, color: string) => void;
     model: ModelDefinition;
+    onIndexPaperForRag: (projectId: string, paperId: string) => void;
+    projectChats: { [projectId: string]: { history: ChatMessage[], isLoading: boolean } };
+    onProjectChat: (projectId: string, message: string) => void;
 }
 
 const TabButton: React.FC<{
@@ -247,6 +253,9 @@ export const WorkspacePanel: React.FC<WorkspacePanelProps> = (props) => {
                         onRemovePaperFromWorkspace={props.onToggleWorkspacePaper}
                         onUpdateProjectColor={props.onUpdateProjectColor}
                         model={model}
+                        onIndexPaperForRag={props.onIndexPaperForRag}
+                        projectChats={props.projectChats}
+                        onProjectChat={props.onProjectChat}
                     />
                  )
             default:
