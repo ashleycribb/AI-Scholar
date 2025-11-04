@@ -1,3 +1,4 @@
+
 import type { ResearchPaper } from '../types';
 
 // A simple regex to extract arXiv IDs from various URL formats (e.g., /abs/..., /pdf/...).
@@ -70,5 +71,55 @@ export const enrichFromArxiv = async (paper: ResearchPaper): Promise<Partial<Res
     } catch (error) {
         console.error(`Failed to fetch or parse arXiv data for ID ${arxivId}:`, error);
         return null; // Fail gracefully, allowing the app to use the original data.
+    }
+};
+
+/**
+ * Searches the arXiv API for papers matching a query.
+ * @param query The search query string.
+ * @returns A promise that resolves to an array of ResearchPaper objects.
+ */
+export const searchArxiv = async (query: string): Promise<ResearchPaper[]> => {
+    const apiUrl = `https://export.arxiv.org/api/query?search_query=all:${encodeURIComponent(query)}&max_results=20`;
+    
+    try {
+        const response = await fetch(apiUrl);
+        if (!response.ok) {
+            throw new Error(`arXiv API error: ${response.status}`);
+        }
+        const xmlText = await response.text();
+        const parser = new DOMParser();
+        const xmlDoc = parser.parseFromString(xmlText, "application/xml");
+
+        const entries = Array.from(xmlDoc.querySelectorAll("entry"));
+        const papers: ResearchPaper[] = entries.map(entry => {
+            const title = entry.querySelector("title")?.textContent?.trim().replace(/\s+/g, ' ') || 'Untitled';
+            const abstract = entry.querySelector("summary")?.textContent?.trim().replace(/\s+/g, ' ') || 'No abstract available.';
+            const publishedDate = entry.querySelector("published")?.textContent;
+            const year = publishedDate ? new Date(publishedDate).getFullYear() : new Date().getFullYear();
+            const authors = Array.from(entry.querySelectorAll("author > name")).map(node => node.textContent?.trim()).filter(Boolean).join(', ');
+            const pdfLinkNode = Array.from(entry.querySelectorAll("link")).find(link => link.getAttribute('title') === 'pdf');
+            const sourceURL = entry.querySelector("id")?.textContent?.trim();
+            
+            const paperData: Omit<ResearchPaper, 'id'> = {
+                title,
+                authors,
+                year,
+                abstract,
+                sourceURL: sourceURL,
+                pdfURL: pdfLinkNode?.getAttribute('href') || undefined,
+                citations: undefined, // arXiv API doesn't provide this directly
+                enrichmentSource: 'arXiv',
+            };
+            // ID will be created later in apiService after de-duplication
+            return { ...paperData, id: '' };
+        });
+
+        return papers;
+
+    } catch (error) {
+        console.error("Error searching arXiv:", error);
+        // Return empty array on error to not break the entire search process
+        return [];
     }
 };

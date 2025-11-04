@@ -1,5 +1,4 @@
-
-import React from 'react';
+import React, { useState } from 'react';
 import type { ResearchPaper, PaperAnalysis } from '../types';
 import { AddIcon } from './icons/AddIcon';
 import { PdfIcon } from './icons/PdfIcon';
@@ -13,6 +12,41 @@ import { CheckIcon } from './icons/CheckIcon';
 import { ValidationScoreDisplay } from './ValidationScoreDisplay';
 import { AnalyzeIcon } from './icons/AnalyzeIcon';
 import { ShieldCheckIcon } from './icons/ShieldCheckIcon';
+import { NetworkIcon } from './icons/NetworkIcon';
+import { LightbulbIcon } from './icons/LightbulbIcon';
+import { CitationIcon } from './icons/CitationIcon';
+
+const ToolCard: React.FC<{
+    icon: React.ReactNode;
+    title: string;
+    description: string;
+    actionText: string;
+    onAction: () => void;
+    isLoading?: boolean;
+    disabled?: boolean;
+}> = ({ icon, title, description, actionText, onAction, isLoading = false, disabled = false }) => {
+    return (
+        <div className="bg-muted/50 border border-border rounded-lg p-4 flex items-center justify-between gap-4">
+            <div className="flex items-center gap-4">
+                <div className="flex-shrink-0 w-10 h-10 bg-primary/10 text-primary rounded-lg flex items-center justify-center">
+                    {icon}
+                </div>
+                <div>
+                    <h4 className="font-semibold text-foreground">{title}</h4>
+                    <p className="text-sm text-muted-foreground">{description}</p>
+                </div>
+            </div>
+            <button
+                onClick={onAction}
+                disabled={isLoading || disabled}
+                className="h-9 px-4 py-2 bg-primary text-primary-foreground text-sm font-semibold rounded-md hover:bg-primary/90 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-ring disabled:opacity-50 flex-shrink-0"
+            >
+                {isLoading ? 'Loading...' : actionText}
+            </button>
+        </div>
+    );
+};
+
 
 interface PaperDetailsProps {
     paper: ResearchPaper;
@@ -20,8 +54,15 @@ interface PaperDetailsProps {
     onToggleWorkspacePaper: (paper: ResearchPaper) => void;
     onConceptClick: (concept: string) => void;
     onFindDoi: (paper: ResearchPaper) => void;
-    onVerifyPaper: (paper: ResearchPaper) => void;
     logAnalyticsEvent: (eventName: string, payload: object) => void;
+    onFindConnectedPapers: (paper: ResearchPaper) => void;
+    isFindingConnected: boolean;
+    onAnalyzePaper: (paper: ResearchPaper) => void;
+    isAnalyzingPaper: boolean;
+    onVerifyPaper: (paper: ResearchPaper) => void;
+    onGenerateSuggestions: (paper: ResearchPaper) => void;
+    isGeneratingSuggestions: boolean;
+    onCitePaper: (paper: ResearchPaper) => void;
 }
 
 const ShareIcon: React.FC<React.SVGProps<SVGSVGElement>> = (props) => (
@@ -103,10 +144,31 @@ const SavedAnalysis: React.FC<{ analysis: PaperAnalysis }> = ({ analysis }) => (
     </div>
 );
 
+const TabButton: React.FC<{
+    isActive: boolean;
+    onClick: () => void;
+    children: React.ReactNode;
+}> = ({ isActive, onClick, children }) => {
+    return (
+        <button
+            onClick={onClick}
+            className={`whitespace-nowrap py-3 px-1 border-b-2 font-medium text-sm transition-colors ${
+                isActive
+                    ? 'border-primary text-primary'
+                    : 'border-transparent text-muted-foreground hover:text-foreground hover:border-border'
+            }`}
+        >
+            {children}
+        </button>
+    );
+};
 
-export const PaperDetails: React.FC<PaperDetailsProps> = ({ 
-    paper, isInWorkspace, onToggleWorkspacePaper, onConceptClick, onFindDoi, onVerifyPaper, logAnalyticsEvent
-}) => {
+
+export const PaperDetails: React.FC<PaperDetailsProps> = (props) => {
+    const { paper, isInWorkspace, onToggleWorkspacePaper, onConceptClick, onFindDoi, logAnalyticsEvent } = props;
+    const { onFindConnectedPapers, isFindingConnected, onAnalyzePaper, isAnalyzingPaper, onVerifyPaper, onGenerateSuggestions, isGeneratingSuggestions, onCitePaper } = props;
+    const [activeTab, setActiveTab] = useState<'overview' | 'analysis' | 'metadata'>('overview');
+
     const googleScholarSearchUrl = `https://scholar.google.com/scholar?hl=en&as_sdt=0,34&q=${encodeURIComponent(`"${paper.title}"`)}`;
     
     const handleShare = async () => {
@@ -177,53 +239,131 @@ export const PaperDetails: React.FC<PaperDetailsProps> = ({
                         <span>{isInWorkspace ? 'In Workspace' : 'Add to Workspace'}</span>
                     </button>
                 </div>
-                <div className="flex items-center justify-between mt-1">
-                    <p className="text-sm text-muted-foreground">{paper.authors} ({paper.year})</p>
-                    {paper.citations !== undefined && (
-                        <p className="text-sm font-semibold text-primary">
-                            {paper.citations.toLocaleString()} Citations
-                        </p>
-                    )}
-                </div>
-            </div>
-
-            <div className="pt-3 border-t border-border flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
-                <div className="flex items-center gap-4">
-                    <a href={googleScholarSearchUrl} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1.5 text-sm font-medium text-primary hover:underline">
-                        <ScholarIcon className="w-4 h-4" /> Google Scholar
-                    </a>
-                    {paper.pdfURL && <a href={paper.pdfURL} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1.5 text-sm font-medium text-primary hover:underline"><PdfIcon className="w-4 h-4" /> PDF</a>}
-                    <DoiDisplay paper={paper} onFindDoi={() => onFindDoi(paper)} />
-                    {navigator.share && (
-                        <button onClick={handleShare} className="flex items-center gap-1.5 text-sm font-medium text-primary hover:underline">
-                            <ShareIcon className="w-4 h-4" />
-                            <span>Share</span>
-                        </button>
-                    )}
-                </div>
-                 {paper.enrichmentSource === 'arXiv' && (
-                    <div className="flex items-center gap-1.5 text-xs font-medium bg-gray-100 text-gray-800 px-2 py-1 rounded-full" title="Metadata was fetched directly from arXiv for higher accuracy.">
-                        <ArxivIcon className="w-4 h-4" />
-                        <span>Enriched from arXiv</span>
-                    </div>
-                )}
             </div>
             
-            {paper.validation && <ValidationScoreDisplay validation={paper.validation} />}
-
-            <div>
-                <h4 className="font-semibold text-foreground">Abstract</h4>
-                <p className="mt-1 text-sm text-muted-foreground leading-relaxed">{paper.abstract}</p>
+            <div className="border-b border-border">
+                <nav className="-mb-px flex space-x-6" aria-label="Tabs">
+                    <TabButton isActive={activeTab === 'overview'} onClick={() => setActiveTab('overview')}>Overview</TabButton>
+                    <TabButton isActive={activeTab === 'analysis'} onClick={() => setActiveTab('analysis')}>Analysis & Tools</TabButton>
+                    <TabButton isActive={activeTab === 'metadata'} onClick={() => setActiveTab('metadata')}>Metadata & Validation</TabButton>
+                </nav>
             </div>
 
-            {paper.savedAnalysis && <SavedAnalysis analysis={paper.savedAnalysis} />}
+            <div className="pt-2">
+                {activeTab === 'overview' && (
+                    <div className="space-y-4 animate-fade-in">
+                        <div>
+                            <h4 className="font-semibold text-foreground">Abstract</h4>
+                            <p className="mt-1 text-sm text-muted-foreground leading-relaxed">{paper.abstract}</p>
+                        </div>
+                         <div>
+                            <h4 className="font-semibold text-foreground mb-2 flex items-center gap-2">
+                                <TagIcon className="w-4 h-4 text-muted-foreground" />
+                                Key Concepts
+                            </h4>
+                            {renderKeyConcepts()}
+                        </div>
+                    </div>
+                )}
 
-            <div>
-                <h4 className="font-semibold text-foreground mb-2 flex items-center gap-2">
-                    <TagIcon className="w-4 h-4 text-muted-foreground" />
-                    Key Concepts
-                </h4>
-                {renderKeyConcepts()}
+                {activeTab === 'analysis' && (
+                     <div className="space-y-6 animate-fade-in">
+                        {paper.savedAnalysis && <SavedAnalysis analysis={paper.savedAnalysis} />}
+                        <div className="space-y-3">
+                             <h3 className="text-base font-bold text-foreground pt-2">Refinement Tools</h3>
+                             <ToolCard
+                                 icon={<NetworkIcon className="w-5 h-5" />}
+                                 title="Find Connected Papers"
+                                 description="Discover prior work, derivative research, and contrasting studies."
+                                 actionText="Find Connections"
+                                 onAction={() => onFindConnectedPapers(paper)}
+                                 isLoading={isFindingConnected}
+                             />
+                             <ToolCard
+                                 icon={<AnalyzeIcon className="w-5 h-5" />}
+                                 title="Structured Analysis"
+                                 description="Use AI to extract the research question, methodology, and findings."
+                                 actionText="Analyze Paper"
+                                 onAction={() => onAnalyzePaper(paper)}
+                                 isLoading={isAnalyzingPaper}
+                             />
+                              <ToolCard
+                                 icon={<ShieldCheckIcon className="w-5 h-5" />}
+                                 title="Advanced Verification (VACS)"
+                                 description="Verify a claim using the paper's text, citations, and metadata."
+                                 actionText="Verify Claim"
+                                 onAction={() => onVerifyPaper(paper)}
+                                 disabled={!paper.doi}
+                             />
+                             <ToolCard
+                                 icon={<LightbulbIcon className="w-5 h-5" />}
+                                 title="Generate Search Ideas"
+                                 description="Get AI-powered suggestions for new search queries based on this paper."
+                                 actionText="Generate Ideas"
+                                 onAction={() => onGenerateSuggestions(paper)}
+                                 isLoading={isGeneratingSuggestions}
+                             />
+                             <ToolCard
+                                icon={<CitationIcon className="w-5 h-5" />}
+                                title="Generate Citation"
+                                description="Create a formatted citation in various styles (APA, MLA, etc.)."
+                                actionText="Cite Paper"
+                                onAction={() => onCitePaper(paper)}
+                            />
+                        </div>
+                    </div>
+                )}
+                
+                {activeTab === 'metadata' && (
+                     <div className="space-y-6 animate-fade-in">
+                        {paper.validation && <ValidationScoreDisplay validation={paper.validation} />}
+
+                        <div className="space-y-3">
+                             <div className="flex justify-between items-start">
+                                <div>
+                                    <h4 className="font-semibold text-foreground text-sm">Authors</h4>
+                                    <p className="text-sm text-muted-foreground">{paper.authors}</p>
+                                </div>
+                                <div className="text-right">
+                                    <h4 className="font-semibold text-foreground text-sm">Year</h4>
+                                    <p className="text-sm text-muted-foreground">{paper.year}</p>
+                                </div>
+                            </div>
+                             <div>
+                                <h4 className="font-semibold text-foreground text-sm">Journal</h4>
+                                <p className="text-sm text-muted-foreground">{paper.journal || 'N/A'}</p>
+                            </div>
+                            {paper.citations !== undefined && (
+                                <div>
+                                    <h4 className="font-semibold text-foreground text-sm">Citations</h4>
+                                    <p className="text-sm text-muted-foreground">{paper.citations.toLocaleString()}</p>
+                                </div>
+                            )}
+                        </div>
+
+                        <div className="pt-3 border-t border-border flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
+                            <div className="flex items-center gap-4">
+                                <a href={googleScholarSearchUrl} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1.5 text-sm font-medium text-primary hover:underline">
+                                    <ScholarIcon className="w-4 h-4" /> Google Scholar
+                                </a>
+                                {paper.pdfURL && <a href={paper.pdfURL} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1.5 text-sm font-medium text-primary hover:underline"><PdfIcon className="w-4 h-4" /> PDF</a>}
+                                <DoiDisplay paper={paper} onFindDoi={() => onFindDoi(paper)} />
+                                {navigator.share && (
+                                    <button onClick={handleShare} className="flex items-center gap-1.5 text-sm font-medium text-primary hover:underline">
+                                        <ShareIcon className="w-4 h-4" />
+                                        <span>Share</span>
+                                    </button>
+                                )}
+                            </div>
+                            {paper.enrichmentSource === 'arXiv' && (
+                                <div className="flex items-center gap-1.5 text-xs font-medium bg-gray-100 text-gray-800 px-2 py-1 rounded-full" title="Metadata was fetched directly from arXiv for higher accuracy.">
+                                    <ArxivIcon className="w-4 h-4" />
+                                    <span>Enriched from arXiv</span>
+                                </div>
+                            )}
+                        </div>
+                     </div>
+                )}
             </div>
         </div>
     );

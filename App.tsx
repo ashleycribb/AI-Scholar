@@ -5,7 +5,7 @@
 
 
 import React, { useState, useEffect, useMemo } from 'react';
-import type { ResearchPaper, SummaryLength, SummaryStyle, AdvancedSearchOptions, AnalysisResult, Project, VerificationResult, PaperAnalysis, SortConfig, SortKey, SynthesisResult, AppMode, GoldStandardPaper, UserStudyData, TestHarnessResult, ModelDefinition, ChatMessage } from './types';
+import type { ResearchPaper, SummaryLength, SummaryStyle, AdvancedSearchOptions, AnalysisResult, Project, VerificationResult, PaperAnalysis, SortConfig, SortKey, SynthesisResult, AppMode, GoldStandardPaper, UserStudyData, TestHarnessResult, ModelDefinition, ChatMessage, SearchSourceInfo, SuggestionsResult } from './types';
 import * as apiService from './services/apiService';
 import * as ragService from './services/ragService';
 import { ResultsDisplay } from './components/ResultsDisplay';
@@ -32,6 +32,7 @@ import { AboutButton } from './components/AboutButton';
 import { analyticsService } from './services/analyticsService';
 import { CitationModal } from './components/CitationModal';
 import * as extensionService from './services/extensionService';
+import { DatabaseFinderModal } from './components/DatabaseFinderModal';
 
 
 const PROJECT_COLORS = ['sky', 'green', 'yellow', 'red', 'purple', 'pink', 'indigo', 'teal'];
@@ -67,6 +68,7 @@ const App: React.FC = () => {
     const [isScreeningMode, setIsScreeningMode] = useState(false);
     const [isReranking, setIsReranking] = useState(false);
     const [projectChats, setProjectChats] = useState<{ [projectId: string]: { history: ChatMessage[], isLoading: boolean } }>({});
+    const [searchSources, setSearchSources] = useState<SearchSourceInfo[]>([{ id: 'openalex', name: 'OpenAlex', description: 'A comprehensive open index of scholarly works.' }]);
     
     // Modals State
     const [isVerificationModalOpen, setIsVerificationModalOpen] = useState(false);
@@ -87,6 +89,12 @@ const App: React.FC = () => {
     const [synthesisError, setSynthesisError] = useState<string | null>(null);
     const [isCitationModalOpen, setIsCitationModalOpen] = useState(false);
     const [paperForCitation, setPaperForCitation] = useState<ResearchPaper | null>(null);
+    const [isDbFinderOpen, setIsDbFinderOpen] = useState(false);
+    const [isSuggestionsModalOpen, setIsSuggestionsModalOpen] = useState(false);
+    const [suggestionsResult, setSuggestionsResult] = useState<SuggestionsResult | null>(null);
+    const [isGeneratingSuggestions, setIsGeneratingSuggestions] = useState(false);
+    const [suggestionsError, setSuggestionsError] = useState<string | null>(null);
+
 
     // Dissertation Study State
     const [goldStandardDataset, setGoldStandardDataset] = useState<GoldStandardPaper[]>([]);
@@ -126,7 +134,7 @@ const App: React.FC = () => {
         setSortConfig({ key: 'relevance', direction: 'desc' });
 
         try {
-            const result = await apiService.search(searchQuery, options, summaryLength, summaryStyle, model, setProgressMessage);
+            const result = await apiService.search(searchQuery, options, summaryLength, summaryStyle, model, setProgressMessage, searchSources);
             setPapers(result.papers);
             setAnalysis(result.analysis);
         } catch (err) {
@@ -313,6 +321,29 @@ const App: React.FC = () => {
         }
     };
 
+    const handleGenerateSuggestions = async (paper: ResearchPaper) => {
+        setIsGeneratingSuggestions(true);
+        setSuggestionsError(null);
+        setIsSuggestionsModalOpen(true);
+        setSuggestionsResult({ seedPaper: paper, suggestions: [] });
+
+        try {
+            const suggestions = await apiService.generateSuggestions(paper, model);
+            setSuggestionsResult({ seedPaper: paper, suggestions });
+        } catch (err) {
+            const message = err instanceof Error ? err.message : "An unknown error occurred.";
+            setSuggestionsError(message);
+        } finally {
+            setIsGeneratingSuggestions(false);
+        }
+    };
+
+    const handleSuggestionSearch = (newQuery: string) => {
+        setIsSuggestionsModalOpen(false);
+        setQuery(newQuery);
+        handleSearch(newQuery, { startYear: '', endYear: '', authors: '', excludeKeywords: '', inclusionCriteria: '', exclusionCriteria: '', studyDesign: 'any' });
+    };
+
 
     const sortedPapers = useMemo(() => {
         return [...papers].sort((a, b) => {
@@ -459,6 +490,15 @@ const App: React.FC = () => {
         }
     };
 
+    const handleAddSource = (source: SearchSourceInfo) => {
+        setSearchSources(prev => {
+            if (!prev.some(s => s.id === source.id)) {
+                return [...prev, source];
+            }
+            return prev;
+        });
+    };
+
 
     // --- Dissertation Feature Handlers ---
 
@@ -534,7 +574,7 @@ const App: React.FC = () => {
                         <div className="grid grid-cols-1 lg:grid-cols-5 gap-8">
                             <main className={hasSearched ? "lg:col-span-3" : "lg:col-span-5"}>
                                 {!hasSearched ? (
-                                    <InitialSearchScreen query={query} onQueryChange={setQuery} onSearch={handleSearch} isLoading={isLoading} summaryLength={summaryLength} onLengthChange={setSummaryLength} summaryStyle={summaryStyle} onStyleChange={setSummaryStyle} model={model} onModelChange={setModel} availableModels={AVAILABLE_MODELS} logAnalyticsEvent={() => {}} >
+                                    <InitialSearchScreen query={query} onQueryChange={setQuery} onSearch={handleSearch} isLoading={isLoading} summaryLength={summaryLength} onLengthChange={setSummaryLength} summaryStyle={summaryStyle} onStyleChange={setSummaryStyle} model={model} onModelChange={setModel} availableModels={AVAILABLE_MODELS} logAnalyticsEvent={() => {}} onOpenDbFinder={() => setIsDbFinderOpen(true)} searchSources={searchSources}>
                                         <ExtensionPromo />
                                     </InitialSearchScreen>
                                 ) : (
@@ -562,7 +602,7 @@ const App: React.FC = () => {
 
                             {hasSearched && (
                                 <aside className="lg:col-span-2">
-                                <WorkspacePanel papers={papers} selectedPaper={selectedPaper} analysis={analysis} workspacePapers={workspacePapers} projects={projects} sources={[]} onToggleWorkspacePaper={handleToggleWorkspacePaper} onFindConnectedPapers={() => {}} isFindingConnected={false} onAnalyzePaper={handleAnalyzePaper} onCitePaper={handleOpenCitationModal} isAnalyzingPaper={isAnalyzingPaper} onConceptClick={handleConceptSearch} onFindDoi={() => {}} onGenerateSuggestions={() => {}} isGeneratingSuggestions={false} onVerifyPaper={handleOpenVerificationModal} logAnalyticsEvent={() => {}} refinedQueries={refinedQueries} isGeneratingRefined={false} onRefinedQuerySearch={() => {}} onAnalyzeGaps={handleAnalyzeGaps} onSynthesizeWorkspace={handleSynthesizeWorkspace} onCreateProject={handleCreateProject} onDeleteProject={handleDeleteProject} onMovePaperToProject={handleMovePaperToProject} onUpdateProjectColor={handleUpdateProjectColor} model={model} onIndexPaperForRag={handleIndexPaperForRag} projectChats={projectChats} onProjectChat={handleProjectChat} />
+                                <WorkspacePanel papers={papers} selectedPaper={selectedPaper} analysis={analysis} workspacePapers={workspacePapers} projects={projects} sources={[]} onToggleWorkspacePaper={handleToggleWorkspacePaper} onFindConnectedPapers={() => {}} isFindingConnected={false} onAnalyzePaper={handleAnalyzePaper} onCitePaper={handleOpenCitationModal} isAnalyzingPaper={isAnalyzingPaper} onConceptClick={handleConceptSearch} onFindDoi={() => {}} onGenerateSuggestions={handleGenerateSuggestions} isGeneratingSuggestions={isGeneratingSuggestions} onVerifyPaper={handleOpenVerificationModal} logAnalyticsEvent={() => {}} refinedQueries={refinedQueries} isGeneratingRefined={false} onRefinedQuerySearch={() => {}} onAnalyzeGaps={handleAnalyzeGaps} onSynthesizeWorkspace={handleSynthesizeWorkspace} onCreateProject={handleCreateProject} onDeleteProject={handleDeleteProject} onMovePaperToProject={handleMovePaperToProject} onUpdateProjectColor={handleUpdateProjectColor} model={model} onIndexPaperForRag={handleIndexPaperForRag} projectChats={projectChats} onProjectChat={handleProjectChat} />
                                 </aside>
                             )}
                         </div>
@@ -588,6 +628,8 @@ const App: React.FC = () => {
             <PaperAnalysisModal isOpen={isAnalysisModalOpen} onClose={() => setIsAnalysisModalOpen(false)} isLoading={isAnalyzingPaper} error={analysisError} result={analysisResult} onSaveAnalysis={handleSaveAnalysis} isAnalysisSaved={!!analysisResult?.paper.savedAnalysis} />
             <SynthesisModal isOpen={isSynthesisModalOpen} onClose={() => setIsSynthesisModalOpen(false)} isLoading={isSynthesizing} result={synthesisResult} error={synthesisError} />
             <CitationModal isOpen={isCitationModalOpen} onClose={() => setIsCitationModalOpen(false)} paper={paperForCitation} model={model} />
+            <DatabaseFinderModal isOpen={isDbFinderOpen} onClose={() => setIsDbFinderOpen(false)} onAddSource={handleAddSource} existingSources={searchSources} />
+            <SuggestionsModal isOpen={isSuggestionsModalOpen} onClose={() => setIsSuggestionsModalOpen(false)} result={suggestionsResult} isLoading={isGeneratingSuggestions} error={suggestionsError} onSuggestionClick={handleSuggestionSearch} />
         </div>
     );
 };

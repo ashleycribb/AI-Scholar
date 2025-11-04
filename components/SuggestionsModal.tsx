@@ -1,25 +1,23 @@
 
 
 import React from 'react';
-import type { ResearchPaper } from '../types';
+import type { SuggestionsResult } from '../types';
 import { LightbulbIcon } from './icons/LightbulbIcon';
 import { ErrorMessage } from './ErrorMessage';
 import { LoadingSpinner } from './LoadingSpinner';
 import { SearchIcon } from './icons/SearchIcon';
 
 interface SuggestionsModalProps {
-  result: {
-    seedPaper: ResearchPaper;
-    suggestions: string[];
-  } | null;
+  isOpen: boolean;
+  result: SuggestionsResult | null;
   onClose: () => void;
   error: string | null;
   isLoading: boolean;
   onSuggestionClick: (query: string) => void;
 }
 
-export const SuggestionsModal: React.FC<SuggestionsModalProps> = ({ result, onClose, error, isLoading, onSuggestionClick }) => {
-  if (!result && !isLoading) {
+export const SuggestionsModal: React.FC<SuggestionsModalProps> = ({ isOpen, result, onClose, error, isLoading, onSuggestionClick }) => {
+  if (!isOpen) {
     return null;
   }
 

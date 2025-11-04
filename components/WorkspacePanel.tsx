@@ -1,20 +1,11 @@
-
-
-
-
-
 import React, { useState, useEffect } from 'react';
 import type { ResearchPaper, AnalysisResult, Project, SearchSourceInfo, ModelDefinition, RagStatus, ChatMessage } from '../types';
 import { PaperDetails } from './PaperDetails';
 import { AnalysisDashboard } from './AnalysisDashboard';
-import { NetworkIcon } from './icons/NetworkIcon';
-import { AnalyzeIcon } from './icons/AnalyzeIcon';
 import { LightbulbIcon } from './icons/LightbulbIcon';
 import { SearchIcon } from './icons/SearchIcon';
 import { BibliographyGenerator } from './BibliographyGenerator';
 import { ProjectWorkspace } from './ProjectWorkspace';
-import { ShieldCheckIcon } from './icons/ShieldCheckIcon';
-import { CitationIcon } from './icons/CitationIcon';
 
 
 interface RefinedQueriesProps {
@@ -111,37 +102,6 @@ const TabButton: React.FC<{
     );
 };
 
-const ToolCard: React.FC<{
-    icon: React.ReactNode;
-    title: string;
-    description: string;
-    actionText: string;
-    onAction: () => void;
-    isLoading?: boolean;
-    disabled?: boolean;
-}> = ({ icon, title, description, actionText, onAction, isLoading = false, disabled = false }) => {
-    return (
-        <div className="bg-muted/50 border border-border rounded-lg p-4 flex items-center justify-between gap-4">
-            <div className="flex items-center gap-4">
-                <div className="flex-shrink-0 w-10 h-10 bg-primary/10 text-primary rounded-lg flex items-center justify-center">
-                    {icon}
-                </div>
-                <div>
-                    <h4 className="font-semibold text-foreground">{title}</h4>
-                    <p className="text-sm text-muted-foreground">{description}</p>
-                </div>
-            </div>
-            <button
-                onClick={onAction}
-                disabled={isLoading || disabled}
-                className="h-9 px-4 py-2 bg-primary text-primary-foreground text-sm font-semibold rounded-md hover:bg-primary/90 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-ring disabled:opacity-50 flex-shrink-0"
-            >
-                {isLoading ? 'Loading...' : actionText}
-            </button>
-        </div>
-    );
-};
-
 export const WorkspacePanel: React.FC<WorkspacePanelProps> = (props) => {
     const { 
         papers, selectedPaper, analysis, workspacePapers, projects,
@@ -163,59 +123,22 @@ export const WorkspacePanel: React.FC<WorkspacePanelProps> = (props) => {
         switch (activeTab) {
             case 'details':
                 return selectedPaper ? (
-                    <div className="space-y-6">
-                        <PaperDetails
-                            paper={selectedPaper}
-                            isInWorkspace={workspacePapers.some(p => p.id === selectedPaper.id)}
-                            onToggleWorkspacePaper={props.onToggleWorkspacePaper}
-                            onConceptClick={props.onConceptClick}
-                            onFindDoi={props.onFindDoi}
-                            onVerifyPaper={props.onVerifyPaper}
-                            logAnalyticsEvent={props.logAnalyticsEvent}
-                        />
-                        <div className="border-t border-border pt-6 mt-6 space-y-4">
-                             <h3 className="text-lg font-bold text-foreground">Refinement Tools</h3>
-                             <ToolCard
-                                 icon={<NetworkIcon className="w-5 h-5" />}
-                                 title="Find Connected Papers"
-                                 description="Discover prior work, derivative research, and contrasting studies."
-                                 actionText="Find Connections"
-                                 onAction={() => props.onFindConnectedPapers(selectedPaper)}
-                                 isLoading={props.isFindingConnected}
-                             />
-                             <ToolCard
-                                 icon={<AnalyzeIcon className="w-5 h-5" />}
-                                 title="Structured Analysis"
-                                 description="Use AI to extract the research question, methodology, and findings."
-                                 actionText="Analyze Paper"
-                                 onAction={() => props.onAnalyzePaper(selectedPaper)}
-                                 isLoading={props.isAnalyzingPaper}
-                             />
-                              <ToolCard
-                                 icon={<ShieldCheckIcon className="w-5 h-5" />}
-                                 title="Advanced Verification (VACS)"
-                                 description="Verify a claim using the paper's text, citations, and metadata."
-                                 actionText="Verify Claim"
-                                 onAction={() => props.onVerifyPaper(selectedPaper)}
-                                 disabled={!selectedPaper.doi}
-                             />
-                             <ToolCard
-                                 icon={<LightbulbIcon className="w-5 h-5" />}
-                                 title="Generate Search Ideas"
-                                 description="Get AI-powered suggestions for new search queries based on this paper."
-                                 actionText="Generate Ideas"
-                                 onAction={() => props.onGenerateSuggestions(selectedPaper)}
-                                 isLoading={props.isGeneratingSuggestions}
-                             />
-                             <ToolCard
-                                icon={<CitationIcon className="w-5 h-5" />}
-                                title="Generate Citation"
-                                description="Create a formatted citation in various styles (APA, MLA, etc.)."
-                                actionText="Cite Paper"
-                                onAction={() => props.onCitePaper(selectedPaper)}
-                            />
-                        </div>
-                    </div>
+                    <PaperDetails
+                        paper={selectedPaper}
+                        isInWorkspace={workspacePapers.some(p => p.id === selectedPaper.id)}
+                        onToggleWorkspacePaper={props.onToggleWorkspacePaper}
+                        onConceptClick={props.onConceptClick}
+                        onFindDoi={props.onFindDoi}
+                        logAnalyticsEvent={props.logAnalyticsEvent}
+                        onFindConnectedPapers={props.onFindConnectedPapers}
+                        isFindingConnected={props.isFindingConnected}
+                        onAnalyzePaper={props.onAnalyzePaper}
+                        isAnalyzingPaper={props.isAnalyzingPaper}
+                        onVerifyPaper={props.onVerifyPaper}
+                        onGenerateSuggestions={props.onGenerateSuggestions}
+                        isGeneratingSuggestions={props.isGeneratingSuggestions}
+                        onCitePaper={props.onCitePaper}
+                    />
                 ) : (
                     <div className="text-center text-muted-foreground py-16">
                         <h2 className="text-lg font-semibold">Select a Paper</h2>

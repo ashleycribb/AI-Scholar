@@ -1,13 +1,9 @@
-
-
-
-
-import type { AdvancedSearchOptions, AnalysisResult, PaperAnalysis, ResearchPaper, SummaryLength, SummaryStyle, SynthesisResult, ModelDefinition, AuthorFrequencyData } from '../types';
+import type { AdvancedSearchOptions, AnalysisResult, PaperAnalysis, ResearchPaper, SummaryLength, SummaryStyle, SynthesisResult, ModelDefinition, AuthorFrequencyData, SearchSourceInfo } from '../types';
 import * as openAlexService from './openalexService';
 import * as arxivService from './arxivService';
 import * as validationService from './validationService';
 import * as embeddingService from './embeddingService';
-import { generateSummaryForPapers, generateHypotheticalAnswer, evaluateScreeningFit, analyzeResearchGaps, analyzeSinglePaper as geminiAnalyzeSinglePaper, extractKeyConcepts as geminiExtractKeyConcepts, synthesizePapers as geminiSynthesizePapers, classifyStudyDesign, rerankByScreeningExample } from './geminiService';
+import { generateSummaryForPapers, generateHypotheticalAnswer, evaluateScreeningFit, analyzeResearchGaps, analyzeSinglePaper as geminiAnalyzeSinglePaper, extractKeyConcepts as geminiExtractKeyConcepts, synthesizePapers as geminiSynthesizePapers, classifyStudyDesign, rerankByScreeningExample, generatePaperBasedSuggestions } from './geminiService';
 import { analyzePapers } from './analysisService';
 import { createPaperId } from './extensionService';
 import * as unpaywallService from './unpaywallService';
@@ -46,13 +42,35 @@ export const search = async (
     summaryLength: SummaryLength,
     summaryStyle: SummaryStyle,
     model: ModelDefinition,
-    onProgress: (message: string) => void
+    onProgress: (message: string) => void,
+    sources: SearchSourceInfo[]
 ): Promise<{ papers: ResearchPaper[], summary: string, analysis: AnalysisResult | null }> => {
     onProgress('Understanding your question...');
     const hypotheticalAnswer = await generateHypotheticalAnswer(query, model);
 
-    onProgress('Fetching candidate papers...');
-    const initialPapers = await openAlexService.searchOpenAlex(query, options);
+    const searchPromises: Promise<ResearchPaper[]>[] = [];
+    if (sources.some(s => s.id === 'openalex')) {
+        onProgress('Searching OpenAlex...');
+        searchPromises.push(openAlexService.searchOpenAlex(query, options));
+    }
+    if (sources.some(s => s.id === 'arxiv')) {
+        onProgress('Searching arXiv...');
+        searchPromises.push(arxivService.searchArxiv(query));
+    }
+
+    const results = await Promise.all(searchPromises);
+    const allPapers = results.flat();
+    
+    onProgress('Merging and de-duplicating results...');
+    const uniquePapersMap = new Map<string, ResearchPaper>();
+    allPapers.forEach(paper => {
+        const normalizedTitle = paper.title.toLowerCase().replace(/[^a-z0-9]/g, '');
+        if (!uniquePapersMap.has(normalizedTitle)) {
+            uniquePapersMap.set(normalizedTitle, paper);
+        }
+    });
+    const initialPapers = Array.from(uniquePapersMap.values());
+
 
     let filteredPapers = initialPapers;
     if (options.excludeKeywords && options.excludeKeywords.trim()) {
@@ -90,8 +108,12 @@ export const search = async (
     onProgress('Enriching paper data...');
     const enrichedPapers = await Promise.all(
         papersWithStudyDesign.map(async (paper) => {
-            const enrichedData = await arxivService.enrichFromArxiv(paper);
-            return enrichedData ? { ...paper, ...enrichedData } : paper;
+            // Only enrich if it didn't already come from arXiv
+            if (paper.enrichmentSource !== 'arXiv') {
+                 const enrichedData = await arxivService.enrichFromArxiv(paper);
+                 return enrichedData ? { ...paper, ...enrichedData } : paper;
+            }
+            return paper;
         })
     );
     
@@ -267,4 +289,8 @@ export const rerankForScreening = async (
     });
 
     return await Promise.all(rerankPromises);
+};
+
+export const generateSuggestions = async (paper: ResearchPaper, model: ModelDefinition): Promise<string[]> => {
+    return await generatePaperBasedSuggestions(paper, model);
 };

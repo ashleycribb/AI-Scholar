@@ -57,6 +57,9 @@ const mockApiAdapter = async (prompt: string, modelId: string, schema: any): Pro
     if (schema.properties?.concepts) {
         return { concepts: ['Mock Concept 1', 'Mock Concept 2', 'Adapter Pattern'] };
     }
+     if (schema.properties?.suggestions) {
+        return { suggestions: [`Mock suggestion from ${modelId}`, 'Another great idea'] };
+    }
     if (schema.properties?.recipeName) { // From a generic example, good for citation testing
         return { title: '[Mock] Chocolate Chip Cookies', author: [{ family: 'Mock', given: 'Chef' }], issued: { 'date-parts': [[2023]] }, type: 'article-journal' };
     }
@@ -587,5 +590,35 @@ export const generateRAGAnswer = async (query: string, context: string[], model:
     } catch (error) {
         console.error("Error generating RAG answer:", error);
         throw new Error("The AI failed to generate an answer based on the project papers.");
+    }
+};
+
+const paperBasedSuggestionsSchema = {
+    type: Type.OBJECT,
+    properties: {
+        suggestions: {
+            type: Type.ARRAY,
+            items: { type: Type.STRING },
+            description: "An array of 5 distinct and insightful search queries."
+        },
+    },
+    required: ["suggestions"],
+};
+
+export const generatePaperBasedSuggestions = async (paper: ResearchPaper, model: ModelDefinition): Promise<string[]> => {
+    const prompt = `You are a research expert. Based on the title and abstract of the following academic paper, generate 5 distinct and insightful search queries that would help a user find related or follow-up research.
+
+    Seed Paper:
+    Title: "${paper.title}"
+    Abstract: "${paper.abstract}"
+
+    Return your response as a single JSON object with a single key "suggestions", which is an array of strings.`;
+
+    try {
+        const result = await generateJsonWithModel(prompt, model, paperBasedSuggestionsSchema);
+        return result?.suggestions || [];
+    } catch (error) {
+        console.error("Error generating paper-based suggestions:", error);
+        throw new Error("Failed to generate search suggestions for the selected paper.");
     }
 };

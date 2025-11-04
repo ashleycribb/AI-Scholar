@@ -1,6 +1,8 @@
 
 
 
+
+
 import React from 'react';
 import type { ResearchPaper } from '../types';
 import { ScreeningFitIndicator } from './ScreeningFitIndicator';
@@ -9,6 +11,7 @@ import { SemanticScoreIndicator } from './SemanticScoreIndicator';
 import { CheckIcon } from './icons/CheckIcon';
 import { CrossIcon } from './icons/CrossIcon';
 import { TagIcon } from './icons/TagIcon';
+import { ArxivIcon } from './icons/ArxivIcon';
 
 interface PaperCardProps {
     paper: ResearchPaper;
@@ -62,12 +65,19 @@ export const PaperCard: React.FC<PaperCardProps> = ({ paper, isSelected, onSelec
                     </h3>
                      <div className="flex justify-between items-center mt-1 flex-wrap gap-x-4 gap-y-1">
                         <p className="text-sm text-muted-foreground break-words flex-grow pr-2">{paper.authors} ({paper.year})</p>
-                        {paper.detectedStudyDesign && (
-                            <div className="flex items-center gap-1.5 text-xs font-medium bg-muted text-muted-foreground px-2 py-0.5 rounded-full" title="AI-Detected Study Design">
-                                <TagIcon className="w-3.5 h-3.5" />
-                                <span>{paper.detectedStudyDesign}</span>
-                            </div>
-                        )}
+                        <div className="flex items-center gap-2">
+                             {paper.enrichmentSource === 'arXiv' && (
+                                <div className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground" title="Source: arXiv">
+                                    <ArxivIcon className="w-4 h-4" />
+                                </div>
+                            )}
+                            {paper.detectedStudyDesign && (
+                                <div className="flex items-center gap-1.5 text-xs font-medium bg-muted text-muted-foreground px-2 py-0.5 rounded-full" title="AI-Detected Study Design">
+                                    <TagIcon className="w-3.5 h-3.5" />
+                                    <span>{paper.detectedStudyDesign}</span>
+                                </div>
+                            )}
+                        </div>
                     </div>
                 </div>
                 {isScreeningMode && paper.screeningStatus === 'none' && (

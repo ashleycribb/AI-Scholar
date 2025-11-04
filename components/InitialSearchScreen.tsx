@@ -3,10 +3,12 @@
 
 
 
+
 import React from 'react';
 import { SearchForm } from './SearchForm';
 import { AboutIcon } from './icons/AboutIcon';
-import type { SummaryLength, AdvancedSearchOptions, SummaryStyle, ModelDefinition } from '../types';
+import type { SummaryLength, AdvancedSearchOptions, SummaryStyle, ModelDefinition, SearchSourceInfo } from '../types';
+import { DatabaseIcon } from './icons/DatabaseIcon';
 
 interface InitialSearchScreenProps {
   query: string;
@@ -22,10 +24,12 @@ interface InitialSearchScreenProps {
   availableModels: ModelDefinition[];
   logAnalyticsEvent: (eventName: string, payload: object) => void;
   children?: React.ReactNode;
+  onOpenDbFinder: () => void;
+  searchSources: SearchSourceInfo[];
 }
 
 export const InitialSearchScreen: React.FC<InitialSearchScreenProps> = (props) => {
-  const { onSearch, ...searchFormProps } = props;
+  const { onSearch, onOpenDbFinder, searchSources, ...searchFormProps } = props;
 
   const handleSearch = (query: string, options: AdvancedSearchOptions) => {
       props.onSearch(query, options);
@@ -42,6 +46,25 @@ export const InitialSearchScreen: React.FC<InitialSearchScreenProps> = (props) =
         </div>
         <div className="w-full max-w-3xl">
             <SearchForm {...searchFormProps} onSearch={handleSearch} />
+            <div className="mt-4 flex flex-col sm:flex-row items-center justify-center gap-4 text-sm">
+                <div className="flex items-center gap-2 text-muted-foreground">
+                    <span className="font-medium">Searching in:</span>
+                    <div className="flex items-center gap-2">
+                        {searchSources.map(source => (
+                            <span key={source.id} className="px-2.5 py-1 bg-secondary text-secondary-foreground font-semibold rounded-full text-xs">
+                                {source.name}
+                            </span>
+                        ))}
+                    </div>
+                </div>
+                <button
+                    onClick={onOpenDbFinder}
+                    className="flex items-center gap-1.5 font-semibold text-primary hover:underline"
+                >
+                    <DatabaseIcon className="w-4 h-4" />
+                    Find Databases
+                </button>
+            </div>
         </div>
         {props.children}
     </div>

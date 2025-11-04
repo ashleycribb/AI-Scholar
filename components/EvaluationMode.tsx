@@ -1,4 +1,5 @@
 
+
 import React, { useState, useEffect, useMemo } from 'react';
 import type { GoldStandardPaper, UserStudyData, ResearchPaper, VerificationResult } from '../types';
 import * as verificationService from '../services/verificationService';
@@ -9,6 +10,36 @@ interface EvaluationModeProps {
     dataset: GoldStandardPaper[];
     onComplete: (data: UserStudyData) => void;
 }
+
+// Helper to map the flat GoldStandardPaper to the ResearchPaper type needed for some UI components
+const goldStandardToResearchPaper = (gsPaper: GoldStandardPaper): ResearchPaper => {
+    const paperData = {
+        title: gsPaper.title,
+        authors: gsPaper.authors,
+        year: gsPaper.year,
+        abstract: gsPaper.abstract,
+        sourceURL: `https://doi.org/${gsPaper.paper_id}`,
+        pdfURL: gsPaper.open_access ? `https://doi.org/${gsPaper.paper_id}` : undefined,
+        citations: undefined,
+        doi: gsPaper.paper_id,
+        journal: gsPaper.source,
+    };
+    // Re-use createPaperId logic for consistency
+    const createPaperId = (paper: Partial<ResearchPaper>): string => {
+        if (paper.doi) return `doi:${paper.doi}`;
+        if (paper.sourceURL) {
+            const arxivIdMatch = paper.sourceURL.match(/arxiv\.org\/(?:abs|pdf)\/([^/]+)/);
+            if (arxivIdMatch) return `arxiv:${arxivIdMatch[1].replace(/v\d+$/, '')}`;
+            return `url:${paper.sourceURL}`;
+        }
+        return `title:${paper.title?.toLowerCase().replace(/\s+/g, '-') || Math.random().toString()}`;
+    };
+    return {
+        ...paperData,
+        id: createPaperId(paperData),
+    };
+};
+
 
 export const EvaluationMode: React.FC<EvaluationModeProps> = ({ dataset, onComplete }) => {
     const [currentTask, setCurrentTask] = useState<{ paper: ResearchPaper; claim: string; } | null>(null);
@@ -24,13 +55,14 @@ export const EvaluationMode: React.FC<EvaluationModeProps> = ({ dataset, onCompl
 
     useEffect(() => {
         if (dataset.length > 0) {
-            // Select a random paper and claim for the task
+            // Select a random paper for the task
             const randomPaper = dataset[Math.floor(Math.random() * dataset.length)];
-            const randomClaim = randomPaper.claims[Math.floor(Math.random() * randomPaper.claims.length)];
             
+            // FIX: The component was trying to access 'claims' and 'metadata' which do not exist on the GoldStandardPaper type.
+            // Updated to use the paper's title as the claim and correctly map the paper object.
             const task = {
-                paper: randomPaper.metadata,
-                claim: randomClaim.text,
+                paper: goldStandardToResearchPaper(randomPaper),
+                claim: randomPaper.title, // Use the paper's title as the claim to verify
             };
             setCurrentTask(task);
             
@@ -38,9 +70,9 @@ export const EvaluationMode: React.FC<EvaluationModeProps> = ({ dataset, onCompl
             const assignedGroup = Math.random() < 0.5 ? 'A' : 'B';
             setGroup(assignedGroup);
             
-            if (assignedGroup === 'B') {
+            if (assignedGroup === 'B' && task.paper.doi) {
                 // Fetch VACS result for the treatment group
-                verificationService.verifyPaper(task.paper.doi!, task.claim)
+                verificationService.verifyPaper(task.paper.doi, task.claim)
                     .then(setVacsResult)
                     .finally(() => setIsLoading(false));
             } else {
@@ -63,7 +95,7 @@ export const EvaluationMode: React.FC<EvaluationModeProps> = ({ dataset, onCompl
             participantId: `participant_${Date.now()}`,
             task: currentTask,
             group,
-            vacsResult: group === 'B' ? vacsResult : undefined,
+            vacsResult: group === 'B' ? vacsResult || undefined : undefined,
             userVerdict,
             isAdequate,
             usefulness,
