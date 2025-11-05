@@ -1,12 +1,13 @@
+// agent-backend/src/services/retrievalService.ts (Copy of backend/src/services/retrievalService.ts)
 import { embedText } from "../utils/embeddings";
 import { cosineSimilarity } from "../utils/math";
 import { EvidenceSpan } from "../types";
+import { deinvertAbstract } from "./utils";
 
 async function fetchFullText(url: string): Promise<string | null> {
   try {
     const resp = await fetch(url, { signal: AbortSignal.timeout(10000) });
     if (!resp.ok) return null;
-    // This is a simplified text extraction. A real system would use a PDF parsing library.
     return await resp.text();
   } catch (e) {
     return null;
@@ -14,7 +15,6 @@ async function fetchFullText(url: string): Promise<string | null> {
 }
 
 function splitIntoPassages(fullText: string): string[] {
-  // A simple strategy: split by double newlines to get paragraphs.
   return fullText.split(/\n{2,}/).map(s => s.trim()).filter(Boolean);
 }
 
@@ -41,7 +41,6 @@ export async function findSupportingPassages(doi: string, claim: string): Promis
                     return { p, s: sim };
                 }));
                 
-                // Return the top 5 most similar passages
                 const top = scoredPassages.filter(p => p.s > 0.6).sort((a,b)=>b.s-a.s).slice(0,5);
                 if (top.length) {
                     return top.map(t => ({ source: pdfUrl, passage: t.p, score: t.s }));
@@ -53,22 +52,12 @@ export async function findSupportingPassages(doi: string, claim: string): Promis
       console.warn("Unpaywall retrieval failed, falling back to abstract.", e);
   }
 
-  // Fallback: use the paper's abstract from OpenAlex
   try {
     const oxResp = await fetch(`https://api.openalex.org/works/https://doi.org/${encodeURIComponent(doi)}`);
     if (oxResp.ok) {
         const oxData = await oxResp.json();
-        const deinvertAbstract = (inverted: { [key: string]: number[] }): string => {
-            if (!inverted) return '';
-            const abstractArray: string[] = [];
-            Object.entries(inverted).forEach(([word, positions]) => {
-                positions.forEach(pos => { abstractArray[pos] = word; });
-            });
-            return abstractArray.join(' ').trim();
-        };
         const abstract = deinvertAbstract(oxData?.abstract_inverted_index);
         if (abstract) {
-            // If we only have the abstract, we treat it as a single, highly relevant passage.
             return [{ source: `https://doi.org/${doi}`, passage: abstract, score: 0.9 }];
         }
     }

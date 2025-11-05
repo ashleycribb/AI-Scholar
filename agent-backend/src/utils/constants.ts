@@ -1,3 +1,5 @@
+// agent-backend/src/utils/constants.ts (Copy of frontend utils/constants.ts)
+
 export const WEIGHTS = {
   credibility: 0.25,
   evidence: 0.30,

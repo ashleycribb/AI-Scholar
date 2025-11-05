@@ -1,3 +1,4 @@
+// agent-backend/src/services/metadataService.ts (Copy of backend/src/services/metadataService.ts)
 import { Metadata } from "../types";
 
 // Very simple temporal scoring: decays linearly over 20 years
@@ -13,11 +14,9 @@ function calculateTemporalScore(year?: number): number {
 // Simple credibility score based on citations (log scale)
 function calculateCredibilityScore(citations?: number): number {
     if (!citations || citations === 0) return 0.2;
-    // scale from 0 to 1, with 1000 citations being ~0.8
     const score = Math.log10(citations + 1) / Math.log10(1001);
     return Math.min(Math.max(score + 0.2, 0.2), 1.0);
 }
-
 
 export async function fetchMetadataByDOI(doi: string): Promise<Metadata> {
   try {
@@ -35,11 +34,10 @@ export async function fetchMetadataByDOI(doi: string): Promise<Metadata> {
         citations: data.cited_by_count,
         isRetracted: data.is_retracted,
         isOpenAccess: data.open_access?.is_oa,
-        hasData: undefined, // Not easily available from OpenAlex
-        hasCode: undefined, // Not easily available from OpenAlex
+        hasData: undefined,
+        hasCode: undefined,
         temporalScore: calculateTemporalScore(data.publication_year),
         credibilityScore: calculateCredibilityScore(data.cited_by_count),
-        // Placeholder as this is hard to determine automatically
         reproducibilityScore: 0.5, 
     };
     return meta;

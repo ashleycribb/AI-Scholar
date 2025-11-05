@@ -1,6 +1,4 @@
-// This file is largely deprecated as AI functions are now handled by the agent-backend.
-// Keeping it as a placeholder or for potential future client-side specific direct calls if needed.
-
+// agent-backend/src/services/geminiService.ts (Copy of frontend services/geminiService.ts)
 import { GoogleGenAI, Type } from "@google/genai";
 import type {
   ChatMessage,
@@ -15,11 +13,10 @@ import type {
   ModelDefinition
 } from "../types";
 
-// Always use `const ai = new GoogleGenAI({apiKey: process.env.API_KEY});`.
 const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
 // Utility to safely parse JSON from a string
-const safeJsonParse = (jsonString: string) => {
+export const safeJsonParse = (jsonString: string) => {
   try {
     const cleanedString = jsonString.replace(/```json/g, '').replace(/```/g, '').trim();
     return JSON.parse(cleanedString);
@@ -30,50 +27,21 @@ const safeJsonParse = (jsonString: string) => {
   }
 };
 
-// --- ADAPTER IMPLEMENTATIONS ---
-
-/**
- * [MOCK] Adapter for OpenAI or other non-Gemini models for demonstration.
- * In a real implementation, this would use the OpenAI SDK.
- */
+// --- MOCK ADAPTER (for non-Gemini models, keep as is for demonstration) ---
 const mockApiAdapter = async (prompt: string, modelId: string, schema: any): Promise<any> => {
     console.warn(`[MOCK] Adapter called for model ${modelId}. Returning mock data.`);
-
-    // Based on the schema, return a mock response.
-    if (schema.properties?.hypothetical_abstract) {
-        return {
-            hypothetical_abstract: `[Mock Response from ${modelId}] This is a mock abstract demonstrating how a different model could respond. It highlights the architectural pattern of using adapters for different AI providers.`
-        };
-    }
-    if (schema.properties?.score && schema.properties?.rationale) {
-        return { score: 75, rationale: `[Mock Response] This paper seems like a reasonably good fit based on the mock analysis.` };
-    }
-    if (schema.properties?.summary) {
-        return { summary: `[Mock Summary from ${modelId}] This mock summary demonstrates the multi-model architecture.` };
-    }
-    if (schema.properties?.concepts) {
-        return { concepts: ['Mock Concept 1', 'Mock Concept 2', 'Adapter Pattern'] };
-    }
-     if (schema.properties?.suggestions) {
-        return { suggestions: [`Mock suggestion from ${modelId}`, 'Another great idea'] };
-    }
-    if (schema.properties?.recipeName) { // From a generic example, good for citation testing
-        return { title: '[Mock] Chocolate Chip Cookies', author: [{ family: 'Mock', given: 'Chef' }], issued: { 'date-parts': [[2023]] }, type: 'article-journal' };
-    }
-    if (schema.properties?.answer) { // For RAG
-        return { answer: `[Mock RAG Response from ${modelId}] Based on the provided context, the answer appears to be related to the core themes of the mocked-up papers.` };
-    }
-    if (schema.properties?.study_design) { // For classifyStudyDesign
-        return { study_design: 'Observational Study' };
-    }
-
-    // Generic fallback mock
-    return { mock_response: "This is a generic mock response from a mock adapter." };
+    if (schema.properties?.hypothetical_abstract) { return { hypothetical_abstract: `[Mock Response from ${modelId}] This is a mock abstract.` }; }
+    if (schema.properties?.score && schema.properties?.rationale) { return { score: 75, rationale: `[Mock Response] This paper seems like a reasonably good fit.` }; }
+    if (schema.properties?.summary) { return { summary: `[Mock Summary from ${modelId}] This mock summary.` }; }
+    if (schema.properties?.concepts) { return { concepts: ['Mock Concept 1', 'Mock Concept 2'] }; }
+    if (schema.properties?.suggestions) { return { suggestions: [`Mock suggestion from ${modelId}`, 'Another idea'] }; }
+    if (schema.properties?.recipeName) { return { title: '[Mock] Chocolate Chip Cookies', author: [{ family: 'Mock', given: 'Chef' }], issued: { 'date-parts': [[2023]] }, type: 'article-journal' }; }
+    if (schema.properties?.answer) { return { answer: `[Mock RAG Response from ${modelId}] The answer is mocked.` }; }
+    if (schema.properties?.study_design) { return { study_design: 'Observational Study' }; } // Specific for classifyStudyDesign
+    return { mock_response: "This is a generic mock response." };
 };
 
-/**
- * [REAL] Adapter for Google Gemini models.
- */
+// --- GEMINI ADAPTER ---
 const geminiApiAdapter = async (prompt: string, modelId: string, schema: any): Promise<any> => {
     const response = await ai.models.generateContent({
         model: modelId,
@@ -91,8 +59,8 @@ const geminiApiAdapter = async (prompt: string, modelId: string, schema: any): P
 };
 
 
-// --- UNIFIED GENERATION FUNCTION (THE "FACTORY") ---
-const generateJsonWithModel = async (
+// --- UNIFIED GENERATION FUNCTION ---
+export const generateJsonWithModel = async (
     prompt: string,
     model: ModelDefinition,
     schema: any
@@ -103,60 +71,17 @@ const generateJsonWithModel = async (
                 return await geminiApiAdapter(prompt, model.id, schema);
             case 'openai':
             case 'anthropic':
-                // In a real implementation, these would call their respective SDKs.
-                // For now, they all use the same mock adapter for demonstration.
                 return await mockApiAdapter(prompt, model.id, schema);
             default:
                 throw new Error(`Unsupported model provider: ${model.provider}`);
         }
     } catch (error) {
         console.error(`Error during AI generation with ${model.name}:`, error);
-        throw error; // Re-throw to be handled by the caller
+        throw error;
     }
 };
 
-
-/**
- * Attempts to verify a URL points to an accessible PDF by making a HEAD request.
- * This is a best-effort client-side check and may be blocked by CORS policies.
- * @param url The URL of the PDF to check.
- * @returns An object with the determined link state and a reason.
- */
-export const checkPdfUrl = async (url: string): Promise<{ linkState: 'valid' | 'invalid' | 'paywalled' | 'unchecked', reason: string }> => {
-    if (!url) {
-        return { linkState: 'invalid', reason: 'No URL provided.' };
-    }
-
-    try {
-        // Use a timeout to prevent long waits on unresponsive servers
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 5000); // 5-second timeout
-
-        // A HEAD request is lighter than GET. It's still subject to CORS, but it's our best-effort client-side check.
-        const response = await fetch(url, { method: 'HEAD', signal: controller.signal });
-        clearTimeout(timeoutId);
-
-        if (!response.ok) {
-             return { linkState: 'invalid', reason: `Link is broken or inaccessible (Status: ${response.status}).` };
-        }
-
-        const contentType = response.headers.get('Content-Type');
-        if (contentType?.includes('application/pdf')) {
-            return { linkState: 'valid', reason: 'Direct PDF link confirmed.' };
-        }
-        if (contentType?.includes('text/html')) {
-            return { linkState: 'paywalled', reason: 'Link leads to a webpage, not a direct PDF. A paywall is likely.' };
-        }
-
-        return { linkState: 'unchecked', reason: 'Could not definitively determine content type from headers.' };
-
-    } catch (error) {
-        // This will be triggered by timeouts, network errors, and most CORS errors.
-        console.warn(`Could not verify PDF link (${url}):`, error);
-        return { linkState: 'invalid', reason: 'Could not access the link due to network issues, a timeout, or browser security (CORS) restrictions.' };
-    }
-};
-
+// --- SPECIFIC GEMINI-POWERED FUNCTIONS (to be wrapped as Tools) ---
 
 const hypotheticalAnswerSchema = {
     type: Type.OBJECT,
@@ -168,9 +93,8 @@ const hypotheticalAnswerSchema = {
     },
     required: ["hypothetical_abstract"],
 };
-
 export const generateHypotheticalAnswer = async (userQuery: string, model: ModelDefinition): Promise<string> => {
-    const prompt = `You are an expert academic researcher. A user has provided a research question. Your task is to generate a concise, hypothetical abstract for a non-existent paper that would be the *perfect* answer to their question. This abstract will be used to find real papers that are semantically similar to it.
+    const prompt = `You are an expert academic researcher. Generate a concise, hypothetical abstract for a non-existent paper that would be the *perfect* answer to their question. This abstract will be used to find real papers that are semantically similar to it.
 
     **CRITICAL INSTRUCTIONS:**
     1.  **Directly Answer:** The abstract must directly address and answer the user's question.
@@ -181,11 +105,8 @@ export const generateHypotheticalAnswer = async (userQuery: string, model: Model
     **User's Research Question:** "${userQuery}"
 
     Return your response as a single JSON object with a single key "hypothetical_abstract". Do not include any other text or markdown.`;
-
     try {
         const result = await generateJsonWithModel(prompt, model, hypotheticalAnswerSchema);
-        // If generation fails or returns an empty string, fall back to the original query.
-        // This ensures the search can still proceed, albeit with less accuracy.
         if (!result || !result.hypothetical_abstract) {
             console.warn("Hypothetical answer generation failed. Falling back to original query.");
             return userQuery;
@@ -193,7 +114,6 @@ export const generateHypotheticalAnswer = async (userQuery: string, model: Model
         return result.hypothetical_abstract;
     } catch (error) {
         console.error("Error generating hypothetical answer:", error);
-        // Fallback to the original query in case of an API error
         return userQuery;
     }
 };
@@ -201,29 +121,13 @@ export const generateHypotheticalAnswer = async (userQuery: string, model: Model
 const screeningFitSchema = {
     type: Type.OBJECT,
     properties: {
-        score: {
-            type: Type.NUMBER,
-            description: "A score from 0 (poor fit) to 100 (perfect fit) representing how well the abstract meets inclusion criteria and avoids exclusion criteria."
-        },
-        rationale: {
-            type: Type.STRING,
-            description: "A brief, one-sentence explanation for the assigned score."
-        },
+        score: { type: Type.NUMBER, description: "A score from 0 (poor fit) to 100 (perfect fit) representing how well the abstract meets inclusion criteria and avoids exclusion criteria." },
+        rationale: { type: Type.STRING, description: "A brief, one-sentence explanation for the assigned score." },
     },
     required: ["score", "rationale"],
 };
-
-
-export const evaluateScreeningFit = async (
-    paper: ResearchPaper,
-    inclusionCriteria: string,
-    exclusionCriteria: string,
-    model: ModelDefinition
-): Promise<{ score: number; rationale: string; }> => {
-    if (!inclusionCriteria && !exclusionCriteria) {
-        return { score: 100, rationale: "No screening criteria provided." };
-    }
-
+export const evaluateScreeningFit = async (paper: ResearchPaper, inclusionCriteria: string, exclusionCriteria: string, model: ModelDefinition): Promise<{ score: number; rationale: string; }> => {
+    if (!inclusionCriteria && !exclusionCriteria) { return { score: 100, rationale: "No screening criteria provided." }; }
     const prompt = `Evaluate how well the following research paper abstract fits the given screening criteria.
     
     **Abstract:** "${paper.abstract}"
@@ -232,12 +136,8 @@ export const evaluateScreeningFit = async (
     **Exclusion Criteria:** ${exclusionCriteria || "None"}
 
     Provide a score from 0 (poor fit) to 100 (perfect fit) and a brief, one-sentence rationale. Return as a JSON object with keys "score" and "rationale".`;
-
     try {
         const result = await generateJsonWithModel(prompt, model, screeningFitSchema);
-        if (!result) {
-            return { score: 0, rationale: "AI screening failed to produce a valid response." };
-        }
         return { score: result.score ?? 0, rationale: result.rationale ?? "No rationale provided." };
     } catch (error) {
         console.error("Error evaluating screening fit:", error);
@@ -245,37 +145,16 @@ export const evaluateScreeningFit = async (
     }
 };
 
-// Fix: Implement and export generateSummaryForPapers
-const summaryStyleMap = {
-    'paragraph': 'a concise summary paragraph.',
-    'bullets': 'a bulleted list of the key findings.',
-    'qa': 'a list of question/answer pairs about the research.',
-};
-
-const summaryLengthMap = {
-    'short': 'very brief (1-2 sentences).',
-    'medium': 'of medium length (3-5 sentences or bullet points).',
-    'detailed': 'detailed and comprehensive.'
-};
-
+const summaryStyleMap = { 'paragraph': 'a concise summary paragraph.', 'bullets': 'a bulleted list of the key findings.', 'qa': 'a list of question/answer pairs about the research.', };
+const summaryLengthMap = { 'short': 'very brief (1-2 sentences).', 'medium': 'of medium length (3-5 sentences or bullet points).', 'detailed': 'detailed and comprehensive.' };
 const overallSummarySchema = {
     type: Type.OBJECT,
-    properties: {
-        summary: { type: Type.STRING, description: "The overall summary of all provided abstracts." },
-    },
+    properties: { summary: { type: Type.STRING, description: "The overall summary of all provided abstracts." }, },
     required: ["summary"],
 };
-
-export const generateSummaryForPapers = async (
-    papers: ResearchPaper[],
-    summaryLength: SummaryLength,
-    summaryStyle: SummaryStyle,
-    model: ModelDefinition
-): Promise<string> => {
+export const generateSummaryForPapers = async (papers: ResearchPaper[], summaryLength: SummaryLength, summaryStyle: SummaryStyle, model: ModelDefinition): Promise<string> => {
     if (papers.length === 0) return "";
-    const topPapers = papers.slice(0, 5); // Use top 5 papers for the summary
-    const abstracts = topPapers.map(p => `Title: ${p.title}\nAbstract: ${p.abstract}`).join('\n\n---\n\n');
-
+    const abstracts = papers.slice(0, 5).map(p => `Title: ${p.title}\nAbstract: ${p.abstract}`).join('\n\n---\n\n');
     const prompt = `You are a research assistant. Based on the following abstracts from top search results, generate an overall summary.
     
     **Instructions:**
@@ -288,7 +167,6 @@ export const generateSummaryForPapers = async (
     ${abstracts}
 
     Return a single JSON object with a "summary" key.`;
-
     try {
         const result = await generateJsonWithModel(prompt, model, overallSummarySchema);
         return result?.summary || "Could not generate a summary for the search results.";
@@ -298,18 +176,13 @@ export const generateSummaryForPapers = async (
     }
 };
 
-// Fix: Implement and export analyzeResearchGaps
 const gapAnalysisSchema = {
     type: Type.OBJECT,
-    properties: {
-        report: { type: Type.STRING, description: "A markdown-formatted report outlining research gaps, future directions, and unanswered questions." },
-    },
+    properties: { report: { type: Type.STRING, description: "A markdown-formatted report outlining research gaps, future directions, and unanswered questions." }, },
     required: ["report"],
 };
-
 export const analyzeResearchGaps = async (papers: ResearchPaper[], model: ModelDefinition): Promise<string> => {
     const abstracts = papers.map(p => `Title: ${p.title}\nAbstract: ${p.abstract}`).join('\n\n---\n\n');
-
     const prompt = `As an expert researcher, analyze the following collection of paper abstracts to identify research gaps.
     
     **Instructions:**
@@ -322,9 +195,7 @@ export const analyzeResearchGaps = async (papers: ResearchPaper[], model: ModelD
     ${abstracts}
     
     Return a single JSON object with a "report" key.`;
-
     try {
-        // Use the provided model for the analysis
         const result = await generateJsonWithModel(prompt, model, gapAnalysisSchema);
         return result?.report || "Could not complete the research gap analysis.";
     } catch (error) {
@@ -343,7 +214,6 @@ const paperAnalysisSchema = {
     },
     required: ["researchQuestion", "methodology", "keyFindings", "limitations"],
 };
-
 export const analyzeSinglePaper = async (paper: ResearchPaper, model: ModelDefinition): Promise<PaperAnalysis> => {
     const prompt = `Perform a structured analysis of the following research paper based on its title and abstract.
     
@@ -357,7 +227,6 @@ export const analyzeSinglePaper = async (paper: ResearchPaper, model: ModelDefin
     4.  A bulleted list of potential limitations mentioned or implied.
     
     Return the result as a JSON object.`;
-
     try {
         const result = await generateJsonWithModel(prompt, model, paperAnalysisSchema);
         if (!result) {
@@ -370,22 +239,17 @@ export const analyzeSinglePaper = async (paper: ResearchPaper, model: ModelDefin
     }
 };
 
-// Fix: Implement and export extractKeyConcepts
 const keyConceptsSchema = {
     type: Type.OBJECT,
-    properties: {
-        concepts: { type: Type.ARRAY, items: { type: Type.STRING }, description: "An array of 3-5 key concepts or technical terms." },
-    },
+    properties: { concepts: { type: Type.ARRAY, items: { type: Type.STRING }, description: "An array of 3-5 key concepts or technical terms." }, },
     required: ["concepts"],
 };
-
 export const extractKeyConcepts = async (abstract: string, model: ModelDefinition): Promise<string[]> => {
     const prompt = `From the following academic abstract, extract the 3-5 most important and specific key concepts or technical terms.
     
     **Abstract:** "${abstract}"
     
     Return a single JSON object with a "concepts" key, which is an array of strings.`;
-
     try {
         const result = await generateJsonWithModel(prompt, model, keyConceptsSchema);
         return result?.concepts || [];
@@ -395,7 +259,6 @@ export const extractKeyConcepts = async (abstract: string, model: ModelDefinitio
     }
 };
 
-// Fix: Implement and export synthesizePapers
 const synthesisSchema = {
     type: Type.ARRAY,
     items: {
@@ -409,19 +272,15 @@ const synthesisSchema = {
         required: ["title", "mainFinding", "methodology", "context"]
     }
 };
-
 export const synthesizePapers = async (papers: ResearchPaper[], model: ModelDefinition): Promise<SynthesisResult> => {
     const abstracts = papers.map(p => `Title: ${p.title}\nAbstract: ${p.abstract}`).join('\n\n---\n\n');
-
     const prompt = `Synthesize the key information from the following paper abstracts into a structured table format. For each paper, extract its title, main finding, methodology, and context/sample.
     
     **Paper Abstracts:**
     ${abstracts}
     
     Return the result as a JSON array of objects, where each object represents a paper.`;
-
     try {
-        // Use the provided model for the synthesis
         const result = await generateJsonWithModel(prompt, model, synthesisSchema);
         return result || [];
     } catch (error) {
@@ -430,7 +289,6 @@ export const synthesizePapers = async (papers: ResearchPaper[], model: ModelDefi
     }
 };
 
-// Fix: Implement and export extractCitationMetadata
 const cslSchema = {
     type: Type.OBJECT,
     properties: {
@@ -466,7 +324,6 @@ const cslSchema = {
     },
     required: ["type", "title", "author", "issued"]
 };
-
 export const extractCitationMetadata = async (paper: ResearchPaper, model: ModelDefinition): Promise<object> => {
     const prompt = `From the provided paper metadata, extract the necessary fields to create a CSL JSON object for citation.
     - The author names need to be split into "family" and "given" names. Assume the last word of each author name is the family name.
@@ -483,17 +340,14 @@ export const extractCitationMetadata = async (paper: ResearchPaper, model: Model
     DOI: "${paper.doi || ''}"
 
     Return a single CSL JSON object.`;
-
     try {
         const result = await generateJsonWithModel(prompt, model, cslSchema);
         if (!result) {
-            // Fallback for AI failure
             return { title: paper.title };
         }
         return result;
     } catch (error) {
         console.error("Error extracting citation metadata:", error);
-        // Fallback for API error
         return {
             title: paper.title,
             author: [{ literal: paper.authors }],
@@ -504,19 +358,15 @@ export const extractCitationMetadata = async (paper: ResearchPaper, model: Model
 
 const studyDesignSchema = {
     type: Type.OBJECT,
-    properties: {
-        study_design: { type: Type.STRING, description: "The classified study design." },
-    },
+    properties: { study_design: { type: Type.STRING, description: "The classified study design." }, },
     required: ["study_design"],
 };
-
 export const classifyStudyDesign = async (paper: ResearchPaper, model: ModelDefinition): Promise<string> => {
     const prompt = `Classify the study design from the following abstract into one of: 'Randomized Controlled Trial', 'Systematic Review', 'Observational Study', 'Qualitative Study', 'Other'.
     
     Abstract: "${paper.abstract}"
     
     Return a single JSON object with a "study_design" key.`;
-
     try {
         const result = await generateJsonWithModel(prompt, model, studyDesignSchema);
         return result?.study_design || 'Other';
@@ -548,7 +398,6 @@ export const rerankByScreeningExample = async (
     Abstract: ${paperToRerank.abstract}
 
     Provide a relevance score from 0 (does not fit) to 100 (perfect fit) based on the examples, and a brief, one-sentence rationale for your score. Return as a JSON object with keys "score" and "rationale".`;
-
     try {
         const result = await generateJsonWithModel(prompt, model, screeningFitSchema);
         return result || { score: 0, rationale: "AI re-ranking failed." };
@@ -560,12 +409,9 @@ export const rerankByScreeningExample = async (
 
 const ragAnswerSchema = {
     type: Type.OBJECT,
-    properties: {
-        answer: { type: Type.STRING, description: "A comprehensive answer to the user's question, synthesized exclusively from the provided context." },
-    },
+    properties: { answer: { type: Type.STRING, description: "A comprehensive answer to the user's question, synthesized exclusively from the provided context." }, },
     required: ["answer"],
 };
-
 export const generateRAGAnswer = async (query: string, context: string[], model: ModelDefinition): Promise<string> => {
     const formattedContext = context.map((c, i) => `CONTEXT ${i+1}:\n${c}`).join('\n\n---\n\n');
     
@@ -583,7 +429,6 @@ export const generateRAGAnswer = async (query: string, context: string[], model:
     4.  Be concise and directly address the question.
     
     Return your response as a single JSON object with a single key "answer".`;
-    
     try {
         const result = await generateJsonWithModel(prompt, model, ragAnswerSchema);
         return result?.answer || "I could not find an answer in the provided context.";
@@ -595,16 +440,9 @@ export const generateRAGAnswer = async (query: string, context: string[], model:
 
 const paperBasedSuggestionsSchema = {
     type: Type.OBJECT,
-    properties: {
-        suggestions: {
-            type: Type.ARRAY,
-            items: { type: Type.STRING },
-            description: "An array of 5 distinct and insightful search queries."
-        },
-    },
+    properties: { suggestions: { type: Type.ARRAY, items: { type: Type.STRING }, description: "An array of 5 distinct and insightful search queries." }, },
     required: ["suggestions"],
 };
-
 export const generatePaperBasedSuggestions = async (paper: ResearchPaper, model: ModelDefinition): Promise<string[]> => {
     const prompt = `You are a research expert. Based on the title and abstract of the following academic paper, generate 5 distinct and insightful search queries that would help a user find related or follow-up research.
 
@@ -613,7 +451,6 @@ export const generatePaperBasedSuggestions = async (paper: ResearchPaper, model:
     Abstract: "${paper.abstract}"
 
     Return your response as a single JSON object with a single key "suggestions", which is an array of strings.`;
-
     try {
         const result = await generateJsonWithModel(prompt, model, paperBasedSuggestionsSchema);
         return result?.suggestions || [];

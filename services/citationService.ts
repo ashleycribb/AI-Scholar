@@ -1,11 +1,40 @@
-
-
-
-
 import type { ResearchPaper, CitationStyle, ModelDefinition } from '../types';
-import { extractCitationMetadata } from './geminiService';
+// Remove direct import of extractCitationMetadata, now from agent
+// import { extractCitationMetadata } from './geminiService';
 
 let citeConstructorPromise: Promise<any> | null = null;
+
+// New Agent Backend URL for citation-related calls
+const AGENT_BACKEND_URL = 'http://localhost:3002/api/agents';
+
+/**
+ * Helper for making requests to the new agent backend
+ * (duplicated from apiService.ts to avoid circular dependency if apiService.ts is too big)
+ */
+const callAgentBackend = async (intent: string, payload: any): Promise<any> => {
+    try {
+        const response = await fetch(AGENT_BACKEND_URL, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ intent, payload }),
+        });
+
+        if (!response.ok) {
+            const errorData = await response.json().catch(() => ({ error: `Agent backend failed with unknown error (Status: ${response.status}).` }));
+            throw new Error(errorData.error || `Agent backend failed with status: ${response.status}`);
+        }
+
+        return await response.json();
+    } catch (error) {
+        console.error(`Error calling agent backend for intent '${intent}':`, error);
+        if (error instanceof TypeError) {
+            throw new Error(`Could not connect to the AI agent backend. Please ensure the backend server is running and accessible at ${AGENT_BACKEND_URL}.`);
+        }
+        throw error;
+    }
+};
 
 /**
  * Returns a promise that resolves with the `Cite` constructor.
@@ -67,8 +96,8 @@ export const generateCitations = async (papers: ResearchPaper[], style: Citation
     try {
         const Cite = await getCiteConstructor();
         
-        // Use AI to get rich metadata for each paper
-        const cslDataPromises = papers.map(paper => extractCitationMetadata(paper, model));
+        // Use AI agent to get rich metadata for each paper
+        const cslDataPromises = papers.map(paper => callAgentBackend('extractCitationMetadata', { paper, model }));
         const cslData = await Promise.all(cslDataPromises);
         
         const cite = new Cite(cslData);
@@ -108,8 +137,8 @@ export const generateRIS = async (papers: ResearchPaper[], model: ModelDefinitio
     try {
         const Cite = await getCiteConstructor();
 
-        // Use AI to get rich metadata for each paper
-        const cslDataPromises = papers.map(paper => extractCitationMetadata(paper, model));
+        // Use AI agent to get rich metadata for each paper
+        const cslDataPromises = papers.map(paper => callAgentBackend('extractCitationMetadata', { paper, model }));
         const cslData = await Promise.all(cslDataPromises);
 
         const cite = new Cite(cslData);

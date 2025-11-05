@@ -1,4 +1,3 @@
-
 export type Verdict = 'SUPPORT' | 'REFUTE' | 'NEI';
 
 export interface Metadata {

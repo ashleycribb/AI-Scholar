@@ -1,26 +1,25 @@
-
 import { VerificationResult } from '../types';
 
-// This function communicates with the backend verification service.
-// NOTE: For this to work, the backend service in the `backend/` directory
-// must be running (`npm install` then `npm run dev` in `backend/`).
+// New Agent Backend URL for verification
+const AGENT_BACKEND_URL = 'http://localhost:3002/api/agents';
+
+// This function communicates with the new agent backend verification service.
 export async function verifyPaper(
     doi: string, 
     claimText: string
 ): Promise<VerificationResult> {
   
-  // The backend service runs on localhost:3001 by default.
-  // In a real production environment, this would be an absolute URL
-  // to the deployed backend service.
-  const VERIFICATION_API_URL = 'http://localhost:3001/api/verifyPaper';
-
   try {
-    const response = await fetch(VERIFICATION_API_URL, {
+    const response = await fetch(AGENT_BACKEND_URL, {
         method: 'POST',
         headers: {
         'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ doi, claimText }),
+        // Send intent and payload to the generic agent endpoint
+        body: JSON.stringify({ 
+            intent: 'verifyPaper', 
+            payload: { doi, claimText } 
+        }),
     });
 
     if (!response.ok) {
@@ -33,7 +32,7 @@ export async function verifyPaper(
   } catch (error) {
     console.error("Error calling verification service:", error);
     if (error instanceof TypeError) { // Often indicates a network error (e.g., backend not running)
-        throw new Error("Could not connect to the verification service. Please ensure the backend server is running and accessible.");
+        throw new Error("Could not connect to the AI agent backend. Please ensure the backend server is running and accessible at http://localhost:3002.");
     }
     throw error; // Re-throw other errors
   }

@@ -1,3 +1,5 @@
+// agent-backend/src/utils/math.ts (Copy of frontend utils/math.ts)
+
 export function cosineSimilarity(a: number[], b: number[]): number {
   const dot = a.reduce((s, v, i) => s + v * (b[i] ?? 0), 0);
   const normA = Math.sqrt(a.reduce((s,v)=> s + v*v, 0));
