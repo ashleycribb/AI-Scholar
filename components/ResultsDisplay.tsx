@@ -1,6 +1,8 @@
 
 
 
+
+
 import React, { useMemo } from 'react';
 import type { ResearchPaper, SortConfig, SortKey } from '../types';
 import { PaperCard } from './PaperCard';
@@ -15,7 +17,7 @@ interface ResultsDisplayProps {
   onSortChange: (key: SortKey) => void;
   isScreeningMode: boolean;
   onSetScreeningMode: (enabled: boolean) => void;
-  onScreenPaper: (paperId: string, status: 'include' | 'exclude') => void;
+  onScreenPaper: (paperId: string, status: 'include' | 'exclude' | 'none') => void;
   onAiRerank: () => void;
   isReranking: boolean;
 }

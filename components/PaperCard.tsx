@@ -1,8 +1,4 @@
 
-
-
-
-
 import React from 'react';
 import type { ResearchPaper } from '../types';
 import { ScreeningFitIndicator } from './ScreeningFitIndicator';
@@ -12,31 +8,53 @@ import { CheckIcon } from './icons/CheckIcon';
 import { CrossIcon } from './icons/CrossIcon';
 import { TagIcon } from './icons/TagIcon';
 import { ArxivIcon } from './icons/ArxivIcon';
+import { PdfIcon } from './icons/PdfIcon';
+import { OpenAccessIcon } from './icons/OpenAccessIcon';
 
 interface PaperCardProps {
     paper: ResearchPaper;
     isSelected: boolean;
     onSelect: () => void;
     isScreeningMode: boolean;
-    onScreenPaper: (paperId: string, status: 'include' | 'exclude') => void;
+    onScreenPaper: (paperId: string, status: 'include' | 'exclude' | 'none') => void;
 }
 
 const ScreeningActions: React.FC<{ paper: ResearchPaper; onScreenPaper: PaperCardProps['onScreenPaper'] }> = ({ paper, onScreenPaper }) => {
+    const status = paper.screeningStatus || 'none';
+
+    const handleIncludeClick = (e: React.MouseEvent) => {
+        e.stopPropagation();
+        onScreenPaper(paper.id, status === 'include' ? 'none' : 'include');
+    };
+
+    const handleExcludeClick = (e: React.MouseEvent) => {
+        e.stopPropagation();
+        onScreenPaper(paper.id, status === 'exclude' ? 'none' : 'exclude');
+    };
+
+    const includeClasses = status === 'include'
+        ? 'bg-green-600 text-white hover:bg-green-700'
+        : 'bg-green-100 text-green-800 hover:bg-green-200';
+    
+    const excludeClasses = status === 'exclude'
+        ? 'bg-red-600 text-white hover:bg-red-700'
+        : 'bg-red-100 text-red-800 hover:bg-red-200';
+
     return (
         <div className="flex gap-2">
             <button
-                onClick={(e) => { e.stopPropagation(); onScreenPaper(paper.id, 'include'); }}
-                className="flex items-center gap-1 px-3 h-8 text-xs font-semibold rounded-md bg-green-100 text-green-800 hover:bg-green-200"
-                title="Include this paper"
+                onClick={handleIncludeClick}
+                className={`flex items-center gap-1 px-3 h-8 text-xs font-semibold rounded-md transition-colors ${includeClasses}`}
+                title={status === 'include' ? "Clear screening status" : "Include this paper"}
             >
-                <CheckIcon className="w-4 h-4" /> Include
+                <CheckIcon className="w-4 h-4" /> {status === 'include' ? 'Included' : 'Include'}
             </button>
             <button
-                onClick={(e) => { e.stopPropagation(); onScreenPaper(paper.id, 'exclude'); }}
-                className="flex items-center gap-1 px-3 h-8 text-xs font-semibold rounded-md bg-red-100 text-red-800 hover:bg-red-200"
-                title="Exclude this paper"
+                onClick={handleExcludeClick}
+                className={`flex items-center gap-1 px-3 h-8 text-xs font-semibold rounded-md transition-colors ${excludeClasses}`}
+                title={status === 'exclude' ? "Clear screening status" : "Exclude this paper"}
             >
-                <CrossIcon className="w-4 h-4" /> Exclude
+                <CrossIcon className="w-4 h-4" /> {status === 'exclude' ? 'Excluded' : 'Exclude'}
             </button>
         </div>
     );
@@ -77,10 +95,20 @@ export const PaperCard: React.FC<PaperCardProps> = ({ paper, isSelected, onSelec
                                     <span>{paper.detectedStudyDesign}</span>
                                 </div>
                             )}
+                            {paper.pdfURL && (
+                                <a href={paper.pdfURL} target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()} title="View PDF" className="flex items-center">
+                                    <PdfIcon className="w-4 h-4 text-muted-foreground hover:text-primary transition-colors" />
+                                </a>
+                            )}
+                            {paper.validation?.checks.open_access && (
+                                <div title="Open Access verified by Unpaywall" className="flex items-center">
+                                    <OpenAccessIcon className="w-4 h-4 text-green-600" />
+                                </div>
+                            )}
                         </div>
                     </div>
                 </div>
-                {isScreeningMode && paper.screeningStatus === 'none' && (
+                {isScreeningMode && (
                     <div className="flex-shrink-0">
                         <ScreeningActions paper={paper} onScreenPaper={onScreenPaper} />
                     </div>

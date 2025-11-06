@@ -112,7 +112,8 @@ export async function calculatePaperScores(
             return acc;
         }, {} as { [author: string]: { author: string, count: number, totalCitations: number } })
     );
-    const authorCitationMap = new Map(authorFreq.map(a => [a.author, a.totalCitations]));
+    // FIX: Add explicit type annotation for the 'a' parameter to resolve the type inference error.
+    const authorCitationMap = new Map(authorFreq.map((a: { author: string; totalCitations: number; }) => [a.author, a.totalCitations]));
     const maxAuthorCitations = Math.max(...Array.from(authorCitationMap.values()), 1);
 
     const journalStats = new Map<string, { totalCitations: number, count: number }>();

@@ -4,6 +4,8 @@
 
 
 
+
+
 import React, { useState, useEffect, useMemo } from 'react';
 import type { ResearchPaper, SummaryLength, SummaryStyle, AdvancedSearchOptions, AnalysisResult, Project, VerificationResult, PaperAnalysis, SortConfig, SortKey, SynthesisResult, AppMode, GoldStandardPaper, UserStudyData, TestHarnessResult, ModelDefinition, ChatMessage, SearchSourceInfo, SuggestionsResult } from './types';
 import * as apiService from './services/apiService';
@@ -287,7 +289,7 @@ const App: React.FC = () => {
         }
     };
 
-    const handleScreenPaper = (paperId: string, status: 'include' | 'exclude') => {
+    const handleScreenPaper = (paperId: string, status: 'include' | 'exclude' | 'none') => {
         setPapers(prev => prev.map(p => p.id === paperId ? { ...p, screeningStatus: status } : p));
     };
 
