@@ -16,8 +16,8 @@ export const embedText = async (text: string): Promise<number[]> => {
     if (!text || text.trim() === '') {
         return [];
     }
-    const response = await ai.models.embedContent({ model, contents: { parts: [{ text }] } });
-    return response.embeddings[0].values;
+    const response = await ai.models.embedContent({ model, content: { parts: [{ text }] } });
+    return response.embedding.values;
 };
 
 /**

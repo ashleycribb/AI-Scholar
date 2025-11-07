@@ -1,6 +1,4 @@
 import type { ResearchPaper, CitationStyle, ModelDefinition } from '../types';
-// Remove direct import of extractCitationMetadata, now from agent
-// import { extractCitationMetadata } from './geminiService';
 
 let citeConstructorPromise: Promise<any> | null = null;
 
@@ -9,7 +7,6 @@ const AGENT_BACKEND_URL = 'http://localhost:3002/api/agents';
 
 /**
  * Helper for making requests to the new agent backend
- * (duplicated from apiService.ts to avoid circular dependency if apiService.ts is too big)
  */
 const callAgentBackend = async (intent: string, payload: any): Promise<any> => {
     try {
@@ -39,25 +36,20 @@ const callAgentBackend = async (intent: string, payload: any): Promise<any> => {
 /**
  * Returns a promise that resolves with the `Cite` constructor.
  * It assumes Citation.js scripts have been loaded globally via script tags in index.html.
- * It polls for the library to become available, as `window.onload` is not always reliable.
- * @returns A promise that resolves to the `Cite` constructor.
  */
 const getCiteConstructor = (): Promise<any> => {
-    // If the promise is already created (and pending or resolved), return it.
     if (citeConstructorPromise) {
         return citeConstructorPromise;
     }
 
-    // Create a promise that resolves when the library is ready.
     citeConstructorPromise = new Promise((resolve, reject) => {
         const POLLING_INTERVAL_MS = 100;
-        const MAX_WAIT_MS = 8000; // 8 seconds timeout
+        const MAX_WAIT_MS = 8000;
         let totalWait = 0;
 
         const pollForCite = setInterval(() => {
             const GlobalCite = (window as any).Cite;
 
-            // Check that the core library and both required plugins are ready.
             const isReady = typeof GlobalCite === 'function' &&
                             GlobalCite.plugins?.output?.has('ris') &&
                             GlobalCite.plugins?.csl?.templates?.has('apa');
@@ -70,13 +62,6 @@ const getCiteConstructor = (): Promise<any> => {
                 if (totalWait >= MAX_WAIT_MS) {
                     clearInterval(pollForCite);
                     let reason = "Citation.js library failed to initialize in time.";
-                    if (typeof GlobalCite !== 'function') {
-                        reason += " Core library (Cite) not found on window.";
-                    } else if (!GlobalCite.plugins?.output?.has('ris')) {
-                        reason += " RIS plugin not registered.";
-                    } else if (!GlobalCite.plugins?.csl?.templates?.has('apa')) {
-                        reason += " CSL plugin not registered (required for citation styles).";
-                    }
                     reject(new Error(reason));
                 }
             }
@@ -102,7 +87,6 @@ export const generateCitations = async (papers: ResearchPaper[], style: Citation
         
         const cite = new Cite(cslData);
         
-        // Maps our internal style names to the template names used by Citation.js
         const styleMap = {
             apa: 'apa',
             mla: 'modern-language-association',
@@ -114,12 +98,10 @@ export const generateCitations = async (papers: ResearchPaper[], style: Citation
         
         const output = cite.format('bibliography', {
             format: 'html',
-            template: styleMap[style] || 'apa', // Default to APA
+            template: styleMap[style] || 'apa',
             lang: 'en-US'
         });
         
-        // The output is a single HTML string with entries separated by newlines.
-        // We split it to get an array of individual citation strings.
         return output.split('\n').filter((c: string) => c.trim().length > 0);
     } catch (error) {
         console.error("Error during citation generation:", error);
@@ -142,8 +124,6 @@ export const generateRIS = async (papers: ResearchPaper[], model: ModelDefinitio
         const cslData = await Promise.all(cslDataPromises);
 
         const cite = new Cite(cslData);
-
-        // Generate the RIS string
         const risString = cite.format('ris');
         
         return risString;

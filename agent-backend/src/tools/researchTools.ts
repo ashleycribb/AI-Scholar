@@ -13,14 +13,426 @@ import * as EntailmentService from "../services/entailmentService";
 import * as ScoringService from "../services/scoringService";
 import * as CitationServiceBackend from "../services/citationService"; // From old backend's services
 
-import { ResearchPaper, ModelDefinition, AdvancedSearchOptions, SummaryLength, SummaryStyle, PaperAnalysis, SynthesisResult, VerificationResult, CitationStats } from "../types";
+// FIX: Add missing types for AnalysisResult and its components.
+import { ResearchPaper, ModelDefinition, AdvancedSearchOptions, SummaryLength, SummaryStyle, PaperAnalysis, SynthesisResult, VerificationResult, CitationStats, KnowledgeGraph, Entity, AuthorFrequencyData, PublicationYearData, Cluster, GraphNode, GraphEdge, AnalysisResult } from "../types";
 import { MIN_EVIDENCE_SPANS_FOR_VERIFIED, MIN_SUPPORT_EVIDENCE_CONFIDENCE } from "../utils/constants";
+import { Type } from "@google/genai";
 
 
 // Define a default model. In a real agent, this would be passed dynamically or configured for the agent.
 const DEFAULT_MODEL: ModelDefinition = { id: 'gemini-2.5-flash', name: 'Gemini Flash', provider: 'gemini' };
 
-// --- LangChain Tools ---
+// --- Phase 3: Neuro-Symbolic Types ---
+interface Fact {
+    subject: string;
+    predicate: string;
+    object: string;
+    source_paper: string;
+}
+
+interface LogicalFindings {
+    contradictions: { fact1: Fact; fact2: Fact }[];
+    unexplored_areas: { area: string; details: string }[];
+}
+
+
+// --- Phase 3: New Tools ---
+
+export class ExtractFactsTool extends Tool {
+    name = "extract_logical_facts";
+    description = "Extracts logical propositions (subject, predicate, object triples) from a given text abstract, associating them with a source paper title. Returns a JSON array of Fact objects.";
+    schema = z.object({
+        abstract: z.string().describe("The abstract text from which to extract facts."),
+        paper_title: z.string().describe("The title of the paper, to be used as a primary subject for the facts."),
+        model: z.object({ id: z.string(), name: z.string(), provider: z.string() }).optional().default(DEFAULT_MODEL).describe("The AI model to use for generation."),
+    });
+
+    async _call(input: z.infer<typeof this.schema>): Promise<string> {
+        const prompt = `You are a logic engine. From the following text, extract all logical propositions in the format of (Subject, Predicate, Object). The main subject of many facts should be the paper's title itself.
+
+        **Example Predicates:**
+        - 'uses_methodology'
+        - 'investigates_concept'
+        - 'reports_finding'
+        - 'is_type_of'
+        - 'supports'
+        - 'contradicts'
+        - 'is_limitation_of'
+        
+        **Paper Title:** "${input.paper_title}"
+        **Abstract:** "${input.abstract}"
+        
+        Return a single JSON object with a key "facts", which is an array of objects, each with "subject", "predicate", "object", and "source_paper" keys. The "source_paper" should always be the provided title.`;
+
+        const factsSchema = {
+            type: Type.OBJECT,
+            properties: {
+                facts: {
+                    type: Type.ARRAY,
+                    items: {
+                        type: Type.OBJECT,
+                        properties: {
+                            subject: { type: Type.STRING },
+                            predicate: { type: Type.STRING },
+                            object: { type: Type.STRING },
+                            source_paper: { type: Type.STRING },
+                        },
+                        required: ["subject", "predicate", "object", "source_paper"],
+                    },
+                },
+            },
+            required: ["facts"],
+        };
+        
+        const result = await GeminiService.generateJsonWithModel(prompt, input.model, factsSchema);
+        return JSON.stringify(result?.facts || []);
+    }
+}
+
+export class ReasonOverGraphTool extends Tool {
+    name = "reason_over_logical_facts";
+    description = "Analyzes a collection of logical facts (triples) to find contradictions and unexplored connections. This is a code-based tool and does not call an LLM. Returns a JSON object of type LogicalFindings.";
+    schema = z.object({
+        facts: z.array(z.object({
+            subject: z.string(),
+            predicate: z.string(),
+            object: z.string(),
+            source_paper: z.string(),
+        })).describe("An array of all facts extracted from multiple papers."),
+    });
+
+    async _call(input: z.infer<typeof this.schema>): Promise<string> {
+        const facts: Fact[] = input.facts;
+        const findings: LogicalFindings = { contradictions: [], unexplored_areas: [] };
+
+        // 1. Contradiction Logic
+        const factGroups = new Map<string, Fact[]>();
+        facts.forEach(fact => {
+            const key = `${fact.predicate.replace(/s$/, '')}|${fact.object.toLowerCase()}`;
+            if (!factGroups.has(key)) factGroups.set(key, []);
+            factGroups.get(key)!.push(fact);
+        });
+
+        const contradictionPairs = new Set(['supports|contradicts', 'proves|disproves']);
+        for (const [key, group] of factGroups.entries()) {
+            const predicate = key.split('|')[0];
+            for (const pair of contradictionPairs) {
+                if (pair.includes(predicate)) {
+                    const oppositePredicate = pair.replace(predicate, '').replace('|', '');
+                    const oppositeKey = `${oppositePredicate}|${key.split('|')[1]}`;
+                    const oppositeGroup = factGroups.get(oppositeKey);
+
+                    if (oppositeGroup) {
+                        for (const fact1 of group) {
+                            for (const fact2 of oppositeGroup) {
+                                if (fact1.source_paper !== fact2.source_paper) {
+                                    findings.contradictions.push({ fact1, fact2 });
+                                }
+                            }
+                        }
+                        // Avoid double counting
+                        factGroups.delete(oppositeKey);
+                    }
+                }
+            }
+        }
+        
+        // 2. Unexplored Area Logic
+        const concepts = new Set<string>();
+        const methodologies = new Set<string>();
+        const conceptMethodologyPairs = new Set<string>();
+
+        facts.forEach(fact => {
+            if (fact.predicate === 'investigates_concept') concepts.add(fact.object);
+            if (fact.predicate === 'uses_methodology') {
+                methodologies.add(fact.object);
+                // Assume subject is a concept being studied
+                conceptMethodologyPairs.add(`${fact.subject}|${fact.object}`);
+            }
+        });
+        
+        for (const concept of concepts) {
+            for (const methodology of methodologies) {
+                if (!conceptMethodologyPairs.has(`${concept}|${methodology}`)) {
+                    const allSubjects = facts.filter(f => f.object === concept).map(f => f.subject);
+                    if (!allSubjects.some(subj => conceptMethodologyPairs.has(`${subj}|${methodology}`))) {
+                         findings.unexplored_areas.push({
+                            area: `Unexplored Connection`,
+                            details: `The concept '${concept}' has not been investigated using the methodology '${methodology}' in this set of papers.`,
+                        });
+                    }
+                }
+            }
+        }
+
+
+        return JSON.stringify(findings);
+    }
+}
+
+// FIX: Add missing AnalyzeSearchResultsTool. This tool was being imported and used in the agent but was not defined.
+export class AnalyzeSearchResultsTool extends Tool {
+    name = "analyze_search_results";
+    description = "Performs bibliometric and cluster analysis on a list of search results. Returns an AnalysisResult object in JSON format.";
+    schema = z.object({
+        papers: z.array(z.object({
+            id: z.string(),
+            title: z.string(),
+            authors: z.string(),
+            year: z.number(),
+            abstract: z.string(),
+            citations: z.number().optional(),
+        })).describe("An array of research papers to analyze."),
+    });
+
+    async _call(input: z.infer<typeof this.schema>): Promise<string> {
+        const papers = input.papers as ResearchPaper[];
+        
+        const topAuthors: AuthorFrequencyData = Object.values(
+            papers.flatMap(p => p.authors.split(',').map(a => a.trim())).reduce((acc, author) => {
+                if (author) {
+                    acc[author] = acc[author] || { author, count: 0, totalCitations: 0 };
+                    acc[author].count++;
+                    const paper = papers.find(p => p.authors.includes(author));
+                    acc[author].totalCitations += paper?.citations || 0;
+                }
+                return acc;
+            }, {} as { [author: string]: { author: string, count: number, totalCitations: number } })
+        );
+
+        const publicationYears: PublicationYearData = Object.values(
+            papers.reduce((acc, p) => {
+                if(p.year) {
+                    acc[p.year] = acc[p.year] || { year: p.year, count: 0 };
+                    acc[p.year].count++;
+                }
+                return acc;
+            }, {} as { [year: number]: { year: number, count: number } })
+        ).sort((a,b) => a.year - b.year);
+
+        const tokenize = (text: string): string[] => {
+            if (!text) return [];
+            return text.toLowerCase().replace(/[^\w\s]/g, '').split(/\s+/).filter(Boolean);
+        };
+        const stopwords = new Set(['i', 'me', 'my', 'myself', 'we', 'our', 'ours', 'ourselves', 'you', 'your', 'yours', 'a', 'an', 'the', 'and', 'but', 'if', 'or', 'because', 'as', 'until', 'while', 'of', 'at', 'by', 'for', 'with', 'about', 'against', 'between', 'into', 'through', 'during', 'before', 'after', 'above', 'below', 'to', 'from', 'up', 'down', 'in', 'out', 'on', 'off', 'over', 'under', 'again', 'further', 'then', 'once', 'here', 'there', 'when', 'where', 'why', 'how', 'all', 'any', 'both', 'each', 'few', 'more', 'most', 'other', 'some', 'such', 'no', 'nor', 'not', 'only', 'own', 'same', 'so', 'than', 'too', 'very', 's', 't', 'can', 'will', 'just', 'don', 'should', 'now', 'd', 'll', 'm', 'o', 're', 've', 'y', 'ain', 'aren', 'couldn', 'didn', 'doesn', 'hadn', 'hasn', 'haven', 'isn', 'ma', 'mightn', 'mustn', 'needn', 'shan', 'shouldn', 'wasn', 'weren', 'won', 'wouldn', 'am', 'is', 'are', 'was', 'were', 'be', 'been', 'being', 'have', 'has', 'had', 'having', 'do', 'does', 'did', 'doing']);
+        const euclideanDistance = (a: number[], b: number[]): number => {
+            let sum = 0;
+            for (let i = 0; i < a.length; i++) {
+                sum += (a[i] - b[i]) ** 2;
+            }
+            return Math.sqrt(sum);
+        };
+        const simpleKMeans = (data: number[][], k: number, maxIterations = 50) => {
+            if (data.length < k || data.length === 0) {
+                return { clusters: data.map((_, i) => i), centroids: data };
+            }
+            let centroids = data.slice().sort(() => 0.5 - Math.random()).slice(0, k);
+            let assignments: number[] = new Array(data.length);
+            for (let iter = 0; iter < maxIterations; iter++) {
+                for (let i = 0; i < data.length; i++) {
+                    let minDistance = Infinity;
+                    let closestCentroidIndex = -1;
+                    for (let j = 0; j < centroids.length; j++) {
+                        const distance = euclideanDistance(data[i], centroids[j]);
+                        if (distance < minDistance) {
+                            minDistance = distance;
+                            closestCentroidIndex = j;
+                        }
+                    }
+                    assignments[i] = closestCentroidIndex;
+                }
+                const newCentroids: number[][] = Array.from({ length: k }, () => new Array(data[0].length).fill(0));
+                const clusterCounts: number[] = new Array(k).fill(0);
+                for (let i = 0; i < data.length; i++) {
+                    const clusterIndex = assignments[i];
+                    if (clusterIndex !== -1) {
+                        for (let d = 0; d < data[i].length; d++) {
+                            newCentroids[clusterIndex][d] += data[i][d];
+                        }
+                        clusterCounts[clusterIndex]++;
+                    }
+                }
+                for (let i = 0; i < k; i++) {
+                    if (clusterCounts[i] > 0) {
+                        for (let d = 0; d < newCentroids[i].length; d++) {
+                            newCentroids[i][d] /= clusterCounts[i];
+                        }
+                    } else {
+                        newCentroids[i] = data[Math.floor(Math.random() * data.length)];
+                    }
+                }
+                const hasConverged = centroids.every((c, i) => c.every((val, d) => val === newCentroids[i][d]));
+                centroids = newCentroids;
+                if(hasConverged) break;
+            }
+            return { clusters: assignments, centroids };
+        };
+
+        const documents = papers.map(p => p.abstract || '');
+        const tokenizedDocs = documents.map(doc => tokenize(doc).filter(word => !stopwords.has(word)));
+        const vocab = new Set<string>();
+        const docFreq = new Map<string, number>();
+        tokenizedDocs.forEach(doc => {
+            const seenWords = new Set<string>();
+            doc.forEach(word => {
+                vocab.add(word);
+                if (!seenWords.has(word)) {
+                    docFreq.set(word, (docFreq.get(word) || 0) + 1);
+                    seenWords.add(word);
+                }
+            });
+        });
+        const vocabArray = Array.from(vocab);
+        const vocabIndexMap = new Map(vocabArray.map((word, i) => [word, i]));
+        const idf = new Map<string, number>();
+        const numDocs = documents.length;
+        vocabArray.forEach(word => {
+            idf.set(word, Math.log(numDocs / (docFreq.get(word) || 1)));
+        });
+        const vectors: number[][] = tokenizedDocs.map(doc => {
+            const vector = new Array(vocab.size).fill(0);
+            if (doc.length === 0) return vector;
+            const termCounts = new Map<string, number>();
+            doc.forEach(word => {
+                termCounts.set(word, (termCounts.get(word) || 0) + 1);
+            });
+            termCounts.forEach((count, word) => {
+                const tf = count / doc.length;
+                const wordIdf = idf.get(word) || 0;
+                const wordIndex = vocabIndexMap.get(word);
+                if (wordIndex !== undefined) {
+                    vector[wordIndex] = tf * wordIdf;
+                }
+            });
+            return vector;
+        });
+        const numClusters = Math.min(papers.length, 4);
+        let clusters: Cluster[] = [];
+        if (papers.length > 2 && numClusters > 1) {
+            const kmeansResult = simpleKMeans(vectors, numClusters);
+            const clusterGroups: { [key: number]: { papers: ResearchPaper[], paperIndices: number[] } } = {};
+            kmeansResult.clusters.forEach((clusterIndex, paperIndex) => {
+                if (clusterIndex === -1) return;
+                if (!clusterGroups[clusterIndex]) clusterGroups[clusterIndex] = { papers: [], paperIndices: [] };
+                clusterGroups[clusterIndex].papers.push(papers[paperIndex]);
+                clusterGroups[clusterIndex].paperIndices.push(paperIndex);
+            });
+            clusters = Object.entries(clusterGroups).map(([clusterId, clusterData]) => {
+                const termScores: {[term: string]: number} = {};
+                clusterData.paperIndices.forEach(paperIndex => {
+                    const vector = vectors[paperIndex];
+                    vector.forEach((score, termIndex) => {
+                        if (score > 0) {
+                            const term = vocabArray[termIndex];
+                            termScores[term] = (termScores[term] || 0) + score;
+                        }
+                    });
+                });
+                const keywords = Object.entries(termScores).sort((a, b) => b[1] - a[1]).slice(0, 5).map(entry => entry[0]);
+                const clusterName = keywords.slice(0, 3).map(k => k.charAt(0).toUpperCase() + k.slice(1)).join(' / ');
+                return {
+                    clusterName: clusterName || `Cluster ${parseInt(clusterId) + 1}`,
+                    description: `A thematic group of ${clusterData.papers.length} papers related to ${keywords.join(', ')}.`,
+                    paperTitles: clusterData.papers.map(p => p.title),
+                    keywords: keywords
+                };
+            });
+        }
+
+        const nodes: GraphNode[] = papers.map(p => ({ id: p.title, year: p.year }));
+        const edges: GraphEdge[] = [];
+        clusters.forEach(cluster => {
+            const sortedPapers = cluster.paperTitles
+                .map(title => papers.find(p => p.title === title)!)
+                .filter(p => p)
+                .sort((a, b) => a.year - b.year);
+            for (let i = 0; i < sortedPapers.length - 1; i++) {
+                edges.push({
+                    source: sortedPapers[i].title,
+                    target: sortedPapers[i+1].title
+                });
+            }
+        });
+
+        const result: AnalysisResult = {
+            clusters,
+            publicationYears,
+            topAuthors,
+            graph: { nodes, edges }
+        };
+        
+        return JSON.stringify(result);
+    }
+}
+
+
+// --- LangChain Tools (Existing Tools Updated) ---
+
+export class ExtractKnowledgeGraphTool extends Tool {
+    name = "extract_knowledge_graph";
+    description = "Analyzes a research paper's abstract to extract a structured knowledge graph of entities (Concepts, Methodologies, Findings) and their relationships. Returns a JSON object of type KnowledgeGraph.";
+    schema = z.object({
+        abstract: z.string().describe("The abstract text from which to extract the knowledge graph."),
+        model: z.object({ id: z.string(), name: z.string(), provider: z.string() }).optional().default(DEFAULT_MODEL).describe("The AI model to use for generation."),
+    });
+
+    async _call(input: z.infer<typeof this.schema>): Promise<string> {
+        const prompt = `You are an expert in scientific literature analysis. Your task is to extract a structured knowledge graph from the provided research abstract.
+
+        Identify the core entities:
+        - **Concepts**: Key ideas, theories, or subjects being investigated.
+        - **Methodologies**: The techniques, tools, or procedures used in the research.
+        - **Findings**: The results, conclusions, or key takeaways of the study.
+        - **Context**: The domain or environment of the study.
+        
+        Identify the relationships between these entities, such as:
+        - A 'Concept' **is investigated by** a 'Methodology'.
+        - A 'Methodology' **produces** a 'Finding'.
+        - A 'Concept' **is related to** another 'Concept'.
+        - A 'Finding' **supports** or **contradicts** a 'Concept'.
+
+        Abstract:
+        "${input.abstract}"
+
+        Return a single JSON object that strictly follows the provided schema. Generate unique IDs for each entity.`;
+
+        const knowledgeGraphSchema = {
+            type: Type.OBJECT,
+            properties: {
+                entities: {
+                    type: Type.ARRAY,
+                    items: {
+                        type: Type.OBJECT,
+                        properties: {
+                            id: { type: Type.STRING, description: "A unique identifier for the entity (e.g., 'concept_1')." },
+                            type: { type: Type.STRING, enum: ['Concept', 'Methodology', 'Finding', 'Context'] },
+                            label: { type: Type.STRING, description: "The name of the entity." },
+                            description: { type: Type.STRING, description: "A brief one-sentence description of the entity." }
+                        },
+                        required: ["id", "type", "label", "description"]
+                    }
+                },
+                relationships: {
+                    type: Type.ARRAY,
+                    items: {
+                        type: Type.OBJECT,
+                        properties: {
+                            source: { type: Type.STRING, description: "The ID of the source entity." },
+                            target: { type: Type.STRING, description: "The ID of the target entity." },
+                            label: { type: Type.STRING, description: "The type of relationship (e.g., 'uses', 'investigates')." },
+                            description: { type: Type.STRING, description: "A brief one-sentence description of how the entities are related." }
+                        },
+                        required: ["source", "target", "label", "description"]
+                    }
+                }
+            },
+            required: ["entities", "relationships"]
+        };
+
+        const result = await GeminiService.generateJsonWithModel(prompt, input.model, knowledgeGraphSchema);
+        return JSON.stringify(result);
+    }
+}
 
 export class OpenAlexSearchTool extends Tool {
     name = "search_openalex";
@@ -147,19 +559,84 @@ export class GenerateSummaryForPapersTool extends Tool {
 
 export class AnalyzeResearchGapsTool extends Tool {
     name = "analyze_research_gaps";
-    description = "Analyzes a collection of research papers to identify research gaps, unanswered questions, and future directions, outputting a markdown report as a string.";
+    description = "Orchestrates a Phase 3 neuro-symbolic analysis to find deep research gaps. Extracts logical facts, reasons over them to find contradictions and unexplored areas, then generates an explanatory report. Outputs a markdown report as a string.";
     schema = z.object({
         papers: z.array(z.object({
             title: z.string(),
             abstract: z.string(),
+            knowledgeGraph: z.any().optional(),
         })).describe("An array of research papers for gap analysis."),
         model: z.object({ id: z.string(), name: z.string(), provider: z.string() }).optional().default(DEFAULT_MODEL).describe("The AI model to use for generation."),
     });
 
     async _call(input: z.infer<typeof this.schema>): Promise<string> {
-        return await GeminiService.analyzeResearchGaps(input.papers as ResearchPaper[], input.model as ModelDefinition);
+        try {
+            // 1. Neural -> Symbolic (Fact Extraction)
+            const factExtractionPromises = input.papers.map(p => 
+                new ExtractFactsTool()._call({ abstract: p.abstract, paper_title: p.title, model: input.model })
+            );
+            const factResults = await Promise.all(factExtractionPromises);
+            const allFacts: Fact[] = factResults.flatMap(fr => JSON.parse(fr));
+
+            // 2. Symbolic Reasoning (Inference)
+            const reasonerTool = new ReasonOverGraphTool();
+            const logicalFindingsJson = await reasonerTool._call({ facts: allFacts });
+            const logicalFindings: LogicalFindings = JSON.parse(logicalFindingsJson);
+
+            // 3. Symbolic -> Neural (Explanation)
+            let logicalContext = "No specific logical contradictions or unexplored areas were found. Proceed with a general analysis of the abstracts.";
+            if (logicalFindings.contradictions.length > 0 || logicalFindings.unexplored_areas.length > 0) {
+                logicalContext = "Based on a neuro-symbolic analysis of the provided papers, the following logical findings were discovered. Your primary task is to explain the significance of these findings to a researcher.\n\n";
+                if (logicalFindings.contradictions.length > 0) {
+                    logicalContext += "== Direct Contradictions Found ==\n";
+                    logicalFindings.contradictions.forEach(c => {
+                        logicalContext += `- The claim that '${c.fact1.object}' is '${c.fact1.predicate}' by "${c.fact1.source_paper}" is contradicted by "${c.fact2.source_paper}", which states it is '${c.fact2.predicate}'.\n`;
+                    });
+                }
+                if (logicalFindings.unexplored_areas.length > 0) {
+                    logicalContext += "\n== Unexplored Research Areas ==\n";
+                    logicalFindings.unexplored_areas.slice(0, 5).forEach(ua => { // Limit for prompt size
+                        logicalContext += `- ${ua.details}\n`;
+                    });
+                }
+            }
+            
+            const abstracts = input.papers.map(p => `Title: ${p.title}\nAbstract: ${p.abstract}`).join('\n\n---\n\n');
+
+            const prompt = `You are a distinguished research analyst. You have been provided with a set of logical findings from a reasoning engine that analyzed a collection of papers. Your task is to write a formal research gap analysis report based on these findings.
+
+            **Logical Findings from Reasoning Engine:**
+            ${logicalContext}
+
+            **Instructions:**
+            1.  First, elaborate on the significance of the logical findings. Explain why the contradictions are important and what the unexplored research areas imply.
+            2.  Then, supplement this with a broader synthesis of the abstracts to identify any other potential gaps, unanswered questions, or promising future directions that the logical engine might have missed.
+            3.  Structure your final response as a formal report in Markdown format. Use headings (e.g., '## Logically-Derived Contradictions', '## Unexplored Connections', '## Broader Thematic Gaps') and bullet points.
+
+            **Full Paper Abstracts for Additional Context:**
+            ${abstracts}
+            
+            Return a single JSON object with a "report" key.`;
+
+            const gapAnalysisSchema = {
+                type: Type.OBJECT,
+                properties: { report: { type: Type.STRING, description: "A markdown-formatted report outlining research gaps, future directions, and unanswered questions based on the logical findings and abstracts." }, },
+                required: ["report"],
+            };
+            
+            const result = await GeminiService.generateJsonWithModel(prompt, input.model as ModelDefinition, gapAnalysisSchema);
+            return result?.report || "Could not complete the research gap analysis.";
+
+        } catch (error) {
+            console.error("Error in Phase 3 AnalyzeResearchGapsTool:", error);
+            // Fallback to Phase 2 logic if Phase 3 fails
+            console.warn("Phase 3 failed. Falling back to Phase 2 gap analysis.");
+            const phase2Tool = new SynthesizePapersTool(); // Using a different existing tool as a stand-in for Phase 2 logic
+            return await phase2Tool._call(input);
+        }
     }
 }
+
 
 export class AnalyzeSinglePaperTool extends Tool {
     name = "analyze_single_paper";
@@ -194,20 +671,89 @@ export class ExtractKeyConceptsTool extends Tool {
 
 export class SynthesizePapersTool extends Tool {
     name = "synthesize_papers";
-    description = "Synthesizes key information from a collection of research papers into a structured comparative overview. Returns a JSON array of SynthesisResult objects.";
+    description = "Synthesizes key information from a collection of research papers into a structured comparative overview. Uses knowledge graphs if available to guide the synthesis. Returns a JSON array of SynthesisResult objects.";
     schema = z.object({
         papers: z.array(z.object({
             title: z.string(),
             abstract: z.string(),
+            knowledgeGraph: z.any().optional(),
         })).describe("An array of research papers to synthesize."),
         model: z.object({ id: z.string(), name: z.string(), provider: z.string() }).optional().default(DEFAULT_MODEL).describe("The AI model to use for generation."),
     });
 
     async _call(input: z.infer<typeof this.schema>): Promise<string> {
-        const synthesisResult = await GeminiService.synthesizePapers(input.papers as ResearchPaper[], input.model as ModelDefinition);
-        return JSON.stringify(synthesisResult);
+        // Phase 2 (Refined): Knowledge-Augmented Generation with Relationships
+        const allKGs = input.papers.map(p => p.knowledgeGraph).filter((kg): kg is KnowledgeGraph => !!kg);
+        const allEntities = allKGs.flatMap(kg => kg.entities);
+        const allRelationships = allKGs.flatMap(kg => kg.relationships);
+
+        const entityMap = new Map(allEntities.map(e => [e.id, e]));
+
+        const concepts = [...new Set(allEntities.filter(e => e.type === 'Concept').map(e => e.label))];
+        const findings = [...new Set(allEntities.filter(e => e.type === 'Finding').map(e => e.label))];
+
+        const observedConnections = allRelationships.filter(rel => {
+            // FIX: Cast source and target to Entity to resolve type inference issues.
+            const source = entityMap.get(rel.source) as Entity | undefined;
+            const target = entityMap.get(rel.target) as Entity | undefined;
+            return source && target && (source.type === 'Methodology' && target.type === 'Finding');
+        }).slice(0, 5).map(rel => {
+            // FIX: Cast source and target to Entity to resolve type inference issues.
+            const source = entityMap.get(rel.source)! as Entity;
+            const target = entityMap.get(rel.target)! as Entity;
+            return `'${source.label}' produced '${target.label}'`;
+        });
+
+        let knowledgeContext = '';
+        if (concepts.length > 0 || findings.length > 0) {
+            knowledgeContext = `
+To guide your synthesis, here is a consolidated list of key themes found across all papers:
+- **Key Concepts:** ${concepts.join(', ') || 'N/A'}
+- **Key Findings mentioned:** ${findings.join(', ') || 'N/A'}`;
+            if (observedConnections.length > 0) {
+                knowledgeContext += `
+- **Examples of how Findings were produced:**\n  - ${observedConnections.join('\n  - ')}`;
+            }
+        }
+
+        const abstracts = input.papers.map(p => `Title: ${p.title}\nAbstract: ${p.abstract}`).join('\n\n---\n\n');
+
+        const prompt = `You are a research assistant. Synthesize the key information from the following paper abstracts into a structured table format.
+    
+        ${knowledgeContext}
+
+        **Task:**
+        For each paper, extract its title, its single most important finding (especially in relation to the key themes), a brief (1-sentence) description of its methodology, and the context/sample studied.
+    
+        **Paper Abstracts:**
+        ${abstracts}
+        
+        Return the result as a JSON array of objects, where each object represents a paper.`;
+
+        const synthesisSchema = {
+            type: Type.ARRAY,
+            items: {
+                type: Type.OBJECT,
+                properties: {
+                    title: { type: Type.STRING, description: "The original title of the paper." },
+                    mainFinding: { type: Type.STRING, description: "The single most important finding or conclusion of the paper." },
+                    methodology: { type: Type.STRING, description: "A brief (1-sentence) description of the methodology." },
+                    context: { type: Type.STRING, description: "The context, population, or sample studied (e.g., 'University students', 'Clinical trial participants')." },
+                },
+                required: ["title", "mainFinding", "methodology", "context"]
+            }
+        };
+
+        try {
+            const result = await GeminiService.generateJsonWithModel(prompt, input.model as ModelDefinition, synthesisSchema);
+            return JSON.stringify(result || []);
+        } catch (error) {
+            console.error("Error synthesizing papers:", error);
+            throw new Error("The AI failed to synthesize the papers. Please try again.");
+        }
     }
 }
+
 
 export class ExtractCitationMetadataTool extends Tool {
     name = "extract_citation_metadata";

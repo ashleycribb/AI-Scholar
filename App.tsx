@@ -1,11 +1,3 @@
-
-
-
-
-
-
-
-
 import React, { useState, useEffect, useMemo } from 'react';
 import type { ResearchPaper, SummaryLength, SummaryStyle, AdvancedSearchOptions, AnalysisResult, Project, VerificationResult, PaperAnalysis, SortConfig, SortKey, SynthesisResult, AppMode, GoldStandardPaper, UserStudyData, TestHarnessResult, ModelDefinition, ChatMessage, SearchSourceInfo, SuggestionsResult } from './types';
 import * as apiService from './services/apiService';
@@ -60,7 +52,6 @@ const App: React.FC = () => {
     const [summaryLength, setSummaryLength] = useState<SummaryLength>('medium');
     const [summaryStyle, setSummaryStyle] = useState<SummaryStyle>('paragraph');
     const [hasSearched, setHasSearched] = useState(false);
-    const [progressMessage, setProgressMessage] = useState('');
     const [sortConfig, setSortConfig] = useState<SortConfig>({ key: 'relevance', direction: 'desc' });
     const [selectedPaper, setSelectedPaper] = useState<ResearchPaper | null>(null);
     const [workspacePapers, setWorkspacePapers] = useState<ResearchPaper[]>([]);
@@ -136,14 +127,13 @@ const App: React.FC = () => {
         setSortConfig({ key: 'relevance', direction: 'desc' });
 
         try {
-            const result = await apiService.search(searchQuery, options, summaryLength, summaryStyle, model, setProgressMessage, searchSources);
+            const result = await apiService.search(searchQuery, options, summaryLength, summaryStyle, model, searchSources);
             setPapers(result.papers);
             setAnalysis(result.analysis);
         } catch (err) {
             setError(err instanceof Error ? err.message : "An unknown error occurred.");
         } finally {
             setIsLoading(false);
-            setProgressMessage('');
         }
     };
     
@@ -163,7 +153,6 @@ const App: React.FC = () => {
         if (paper.doi && !paper.openAccessState) {
             updatePaperState(paper.id, { openAccessState: 'loading' });
             try {
-                // Fix: findOpenAccessPdf was missing from apiService. It has been added.
                 const url = await apiService.findOpenAccessPdf(paper.doi);
                 updatePaperState(paper.id, { openAccessPdfUrl: url || undefined, openAccessState: 'loaded' });
             } catch (error) {
@@ -172,18 +161,35 @@ const App: React.FC = () => {
             }
         }
 
+        // Fetch Key Concepts if not already fetched
         if (!paper.keyConceptsState || paper.keyConceptsState === 'idle') {
             if (paper.abstract.length < 150) {
                  updatePaperState(paper.id, { keyConcepts: [], keyConceptsState: 'loaded' });
-                 return;
+            } else {
+                updatePaperState(paper.id, { keyConceptsState: 'loading' });
+                try {
+                    const concepts = await apiService.extractKeyConcepts(paper.abstract, model);
+                    updatePaperState(paper.id, { keyConcepts: concepts, keyConceptsState: 'loaded' });
+                } catch (error) {
+                    console.error("Failed to extract key concepts:", error);
+                    updatePaperState(paper.id, { keyConceptsState: 'error' });
+                }
             }
-            updatePaperState(paper.id, { keyConceptsState: 'loading' });
-            try {
-                const concepts = await apiService.extractKeyConcepts(paper.abstract, model);
-                updatePaperState(paper.id, { keyConcepts: concepts, keyConceptsState: 'loaded' });
-            } catch (error) {
-                console.error("Failed to extract key concepts:", error);
-                updatePaperState(paper.id, { keyConceptsState: 'error' });
+        }
+        
+        // Fetch Knowledge Graph if not already fetched
+        if (!paper.knowledgeGraphState || paper.knowledgeGraphState === 'idle') {
+            if (paper.abstract.length < 150) {
+                 updatePaperState(paper.id, { knowledgeGraph: { entities: [], relationships: [] }, knowledgeGraphState: 'loaded' });
+            } else {
+                updatePaperState(paper.id, { knowledgeGraphState: 'loading' });
+                try {
+                    const graph = await apiService.extractKnowledgeGraph(paper.abstract, model);
+                    updatePaperState(paper.id, { knowledgeGraph: graph, knowledgeGraphState: 'loaded' });
+                } catch (error) {
+                    console.error("Failed to extract knowledge graph:", error);
+                    updatePaperState(paper.id, { knowledgeGraphState: 'error' });
+                }
             }
         }
     };
@@ -582,7 +588,7 @@ const App: React.FC = () => {
                                 ) : (
                                     <div className="space-y-6">
                                         <SearchForm query={query} onQueryChange={setQuery} onSearch={handleSearch} isLoading={isLoading} summaryLength={summaryLength} onLengthChange={setSummaryLength} summaryStyle={summaryStyle} onStyleChange={setSummaryStyle} model={model} onModelChange={setModel} availableModels={AVAILABLE_MODELS} logAnalyticsEvent={() => {}} />
-                                        {isLoading && <LoadingSpinner message={progressMessage || "Searching..."} />}
+                                        {isLoading && <LoadingSpinner message={"Searching..."} />}
                                         {error && <ErrorMessage message={error} />}
                                         {!isLoading && !error && hasSearched && (
                                             <ResultsDisplay 

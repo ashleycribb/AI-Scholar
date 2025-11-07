@@ -48,6 +48,29 @@ export interface ValidationResult {
   log: string[]; // A log of what passed/failed for debugging/display
 }
 
+// --- Neuro-Symbolic / Knowledge Graph Types ---
+export type EntityType = 'Concept' | 'Methodology' | 'Finding' | 'Context';
+
+export interface Entity {
+  id: string; // e.g., "concept_1"
+  type: EntityType;
+  label: string; // e.g., "Large Language Models"
+  description: string;
+}
+
+export interface Relationship {
+  source: string; // "concept_1"
+  target: string; // "methodology_1"
+  label: string; // "utilizes"
+  description: string;
+}
+
+export interface KnowledgeGraph {
+  entities: Entity[];
+  relationships: Relationship[];
+}
+// ---------------------------------------------
+
 
 export interface ResearchPaper {
   id: string;
@@ -71,6 +94,8 @@ export interface ResearchPaper {
   combinedScore?: number;
   keyConcepts?: string[];
   keyConceptsState?: 'idle' | 'loading' | 'loaded' | 'error';
+  knowledgeGraph?: KnowledgeGraph;
+  knowledgeGraphState?: 'idle' | 'loading' | 'loaded' | 'error';
   doi?: string;
   doiState?: 'idle' | 'loading' | 'loaded' | 'error';
   enrichmentSource?: 'arXiv';

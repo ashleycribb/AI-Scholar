@@ -15,6 +15,7 @@ import { ShieldCheckIcon } from './icons/ShieldCheckIcon';
 import { NetworkIcon } from './icons/NetworkIcon';
 import { LightbulbIcon } from './icons/LightbulbIcon';
 import { CitationIcon } from './icons/CitationIcon';
+import { KnowledgeGraphDisplay } from './KnowledgeGraphDisplay';
 
 const ToolCard: React.FC<{
     icon: React.ReactNode;
@@ -167,7 +168,7 @@ const TabButton: React.FC<{
 export const PaperDetails: React.FC<PaperDetailsProps> = (props) => {
     const { paper, isInWorkspace, onToggleWorkspacePaper, onConceptClick, onFindDoi, logAnalyticsEvent } = props;
     const { onFindConnectedPapers, isFindingConnected, onAnalyzePaper, isAnalyzingPaper, onVerifyPaper, onGenerateSuggestions, isGeneratingSuggestions, onCitePaper } = props;
-    const [activeTab, setActiveTab] = useState<'overview' | 'analysis' | 'metadata'>('overview');
+    const [activeTab, setActiveTab] = useState<'overview' | 'analysis' | 'graph' | 'metadata'>('overview');
 
     const googleScholarSearchUrl = `https://scholar.google.com/scholar?hl=en&as_sdt=0,34&q=${encodeURIComponent(`"${paper.title}"`)}`;
     
@@ -244,8 +245,9 @@ export const PaperDetails: React.FC<PaperDetailsProps> = (props) => {
             <div className="border-b border-border">
                 <nav className="-mb-px flex space-x-6" aria-label="Tabs">
                     <TabButton isActive={activeTab === 'overview'} onClick={() => setActiveTab('overview')}>Overview</TabButton>
-                    <TabButton isActive={activeTab === 'analysis'} onClick={() => setActiveTab('analysis')}>Analysis & Tools</TabButton>
-                    <TabButton isActive={activeTab === 'metadata'} onClick={() => setActiveTab('metadata')}>Metadata & Validation</TabButton>
+                    <TabButton isActive={activeTab === 'graph'} onClick={() => setActiveTab('graph')}>Knowledge Graph</TabButton>
+                    <TabButton isActive={activeTab === 'analysis'} onClick={() => setActiveTab('analysis')}>Tools</TabButton>
+                    <TabButton isActive={activeTab === 'metadata'} onClick={() => setActiveTab('metadata')}>Metadata</TabButton>
                 </nav>
             </div>
 
@@ -263,6 +265,15 @@ export const PaperDetails: React.FC<PaperDetailsProps> = (props) => {
                             </h4>
                             {renderKeyConcepts()}
                         </div>
+                    </div>
+                )}
+                
+                {activeTab === 'graph' && (
+                    <div className="animate-fade-in">
+                        <KnowledgeGraphDisplay 
+                            graph={paper.knowledgeGraph}
+                            state={paper.knowledgeGraphState}
+                        />
                     </div>
                 )}
 

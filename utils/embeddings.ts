@@ -9,13 +9,10 @@ const model = "gemini-2.5-flash-preview-embedder";
 export const embedText = async (text: string): Promise<number[]> => {
     if (!text || text.trim() === '') {
         // Cannot embed empty string, return empty array or handle as error.
-        // For now, returning an empty array and letting the caller handle it.
         return [];
     }
-    // FIX: The parameter for embedContent should be 'contents', not 'content'.
-    const response = await ai.models.embedContent({ model, contents: { parts: [{ text }] } });
-    // FIX: The response contains an 'embeddings' array. For a single request, access the first element.
-    return response.embeddings[0].values;
+    const response = await ai.models.embedContent({ model, content: { parts: [{ text }] } });
+    return response.embedding.values;
 };
 
 /**

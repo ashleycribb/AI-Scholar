@@ -1,5 +1,6 @@
 
 
+
 import React, { useState, useEffect, useMemo } from 'react';
 import type { GoldStandardPaper, UserStudyData, ResearchPaper, VerificationResult } from '../types';
 import * as verificationService from '../services/verificationService';

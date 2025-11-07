@@ -77,7 +77,7 @@ const mockApiAdapter = async (prompt: string, modelId: string, schema: any): Pro
 const geminiApiAdapter = async (prompt: string, modelId: string, schema: any): Promise<any> => {
     const response = await ai.models.generateContent({
         model: modelId,
-        contents: [{text: prompt}], // Corrected to expect ArrayOfParts
+        contents: prompt,
         config: {
             responseMimeType: "application/json",
             responseSchema: schema,
