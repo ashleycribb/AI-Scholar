@@ -2,8 +2,8 @@ import type { ResearchPaper, CitationStyle, ModelDefinition } from '../types';
 
 let citeConstructorPromise: Promise<any> | null = null;
 
-// New Agent Backend URL for citation-related calls
-const AGENT_BACKEND_URL = 'http://localhost:3002/api/agents';
+// Use an environment variable for the backend URL, with a fallback for local development.
+const AGENT_BACKEND_URL = process.env.AGENT_BACKEND_URL || 'http://localhost:3002/api/agents';
 
 /**
  * Helper for making requests to the new agent backend

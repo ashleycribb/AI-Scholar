@@ -1,7 +1,7 @@
 import { VerificationResult } from '../types';
 
-// New Agent Backend URL for verification
-const AGENT_BACKEND_URL = 'http://localhost:3002/api/agents';
+// Use an environment variable for the backend URL, with a fallback for local development.
+const AGENT_BACKEND_URL = process.env.AGENT_BACKEND_URL || 'http://localhost:3002/api/agents';
 
 // This function communicates with the new agent backend verification service.
 export async function verifyPaper(
@@ -32,7 +32,7 @@ export async function verifyPaper(
   } catch (error) {
     console.error("Error calling verification service:", error);
     if (error instanceof TypeError) { // Often indicates a network error (e.g., backend not running)
-        throw new Error("Could not connect to the AI agent backend. Please ensure the backend server is running and accessible at http://localhost:3002.");
+        throw new Error(`Could not connect to the AI agent backend. Please ensure the backend server is running and accessible at ${AGENT_BACKEND_URL}.`);
     }
     throw error; // Re-throw other errors
   }

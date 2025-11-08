@@ -11,7 +11,7 @@ import type {
   SynthesisResult,
   GroundingSource,
   ModelDefinition
-} from "../types";
+} from "../types/index.js";
 
 const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 

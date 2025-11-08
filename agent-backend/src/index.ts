@@ -1,5 +1,5 @@
 // agent-backend/src/index.ts
-import app from './app';
+import app from './app.js';
 
 const PORT = process.env.PORT || 3002; // Use a different port than the old backend (3001)
 

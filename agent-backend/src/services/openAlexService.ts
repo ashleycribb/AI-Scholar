@@ -1,6 +1,6 @@
 // agent-backend/src/services/openAlexService.ts (Copy of frontend services/openalexService.ts)
-import type { ResearchPaper, AdvancedSearchOptions } from '../types';
-import { createPaperId, deinvertAbstract } from './utils';
+import type { ResearchPaper, AdvancedSearchOptions } from '../types/index.js';
+import { createPaperId, deinvertAbstract } from './utils.js';
 
 // Client-side cache for OpenAlex results (keep for now, might be moved to a proper cache later)
 interface CacheEntry {

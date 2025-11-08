@@ -21,10 +21,10 @@ import {
     ExtractFactsTool,
     ReasonOverGraphTool,
     AnalyzeSearchResultsTool
-} from "../tools/researchTools";
-import { ModelDefinition, AdvancedSearchOptions, SummaryLength, SummaryStyle, ResearchPaper, SearchSourceInfo } from "../types";
-import { combineArxivAndOpenAlexResults, calculatePaperScores } from "./utils/paperProcessing"; 
-import * as GeminiService from "../services/geminiService";
+} from "../tools/researchTools.js";
+import { ModelDefinition, AdvancedSearchOptions, SummaryLength, SummaryStyle, ResearchPaper, SearchSourceInfo } from "../types/index.js";
+import { combineArxivAndOpenAlexResults, calculatePaperScores } from "./utils/paperProcessing.js"; 
+import * as GeminiService from "../services/geminiService.js";
 
 const DEFAULT_AGENT_MODEL: ModelDefinition = { id: 'gemini-2.5-flash', name: 'Gemini Flash', provider: 'gemini' };
 
@@ -107,10 +107,8 @@ class ResearchAdvisorAgent {
         // 4. Generate overall summary
         const summary: string = await new GenerateSummaryForPapersTool()._call({ papers: papers.slice(0, 5), summaryLength, summaryStyle, model });
         
-        // 5. Perform bibliometric and cluster analysis
-        const analysis = await new AnalyzeSearchResultsTool()._call({ papers });
-        
-        return { papers, summary, analysis: JSON.parse(analysis) };
+        // Bibliometric analysis is now handled client-side for performance.
+        return { papers, summary, analysis: null };
     }
 
     async runAgent(intent: string, payload: any): Promise<any> {

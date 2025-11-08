@@ -4,8 +4,8 @@ import { createPaperId } from './extensionService';
 import * as unpaywallService from './unpaywallService';
 import * as openAlexService from './openalexService';
 
-// New Agent Backend URL
-const AGENT_BACKEND_URL = 'http://localhost:3002/api/agents';
+// Use an environment variable for the backend URL, with a fallback for local development.
+const AGENT_BACKEND_URL = process.env.AGENT_BACKEND_URL || 'http://localhost:3002/api/agents';
 
 // Helper for making requests to the new agent backend
 const callAgentBackend = async (intent: string, payload: any): Promise<any> => {
@@ -40,15 +40,13 @@ export const search = async (
     summaryStyle: SummaryStyle,
     model: ModelDefinition,
     sources: SearchSourceInfo[]
-): Promise<{ papers: ResearchPaper[], summary: string, analysis: AnalysisResult | null }> => {
+): Promise<{ papers: ResearchPaper[], summary: string }> => {
     const agentPayload = { query, options, summaryLength, summaryStyle, model, searchSources: sources };
     const agentResponse = await callAgentBackend('search', agentPayload);
     
-    // The agent backend now returns papers that are already scored and processed.
-    // We just need to perform the final client-side validation check.
+    // The agent backend returns papers and a summary. Analysis is now done client-side.
     const papers = agentResponse.papers as ResearchPaper[];
     const summary = agentResponse.summary as string;
-    const analysis = agentResponse.analysis as AnalysisResult | null;
     
     // Client-side validation is quick, so we keep it here.
     const validationResponses = await Promise.all(papers.map(p => validationService.validatePaper(p)));
@@ -59,7 +57,7 @@ export const search = async (
         validation: validationResponses[index].validation,
     }));
 
-    return { papers: validatedPapers, summary, analysis };
+    return { papers: validatedPapers, summary };
 };
 
 

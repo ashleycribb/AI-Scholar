@@ -1,6 +1,6 @@
 // agent-backend/src/routes/agentRoutes.ts
 import { Router, Request, Response } from 'express';
-import { researchAdvisorAgent } from '../agents/researchAdvisorAgent';
+import { researchAdvisorAgent } from '../agents/researchAdvisorAgent.js';
 
 const router = Router();
 

@@ -1,5 +1,5 @@
 // agent-backend/src/services/utils.ts
-import { ResearchPaper, CrossrefWork } from "../types";
+import { ResearchPaper, CrossrefWork } from "../types/index.js";
 
 // Function to create a stable ID for a paper, identical to the one in extensionService.ts
 export const createPaperId = (paper: Partial<ResearchPaper>): string => {

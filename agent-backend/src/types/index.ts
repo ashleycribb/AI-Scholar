@@ -44,7 +44,6 @@ export interface ValidationResult {
   log: string[]; // A log of what passed/failed for debugging/display
 }
 
-// FIX: Add missing KnowledgeGraph-related types.
 // --- Neuro-Symbolic / Knowledge Graph Types ---
 export type EntityType = 'Concept' | 'Methodology' | 'Finding' | 'Context';
 
@@ -77,7 +76,6 @@ export interface ResearchPaper {
   abstract: string;
   sourceURL?: string;
   pdfURL?: string;
-  // Fix: Add properties to track open access PDF fetching status
   openAccessPdfUrl?: string;
   openAccessState?: 'idle' | 'loading' | 'loaded' | 'error';
   citations?: number;
@@ -91,6 +89,8 @@ export interface ResearchPaper {
   combinedScore?: number;
   keyConcepts?: string[];
   keyConceptsState?: 'idle' | 'loading' | 'loaded' | 'error';
+  knowledgeGraph?: KnowledgeGraph;
+  knowledgeGraphState?: 'idle' | 'loading' | 'loaded' | 'error';
   doi?: string;
   doiState?: 'idle' | 'loading' | 'loaded' | 'error';
   enrichmentSource?: 'arXiv';

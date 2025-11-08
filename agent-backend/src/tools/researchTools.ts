@@ -2,20 +2,19 @@
 import { Tool } from "@langchain/core/tools";
 import { z } from "zod";
 
-import * as CrossrefService from "../services/crossrefService";
-import * as OpenAlexService from "../services/openAlexService";
-import * as ArxivService from "../services/arxivService";
-import * as UnpaywallService from "../services/unpaywallService";
-import * as GeminiService from "../services/geminiService";
-import * as MetadataService from "../services/metadataService";
-import * as RetrievalService from "../services/retrievalService";
-import * as EntailmentService from "../services/entailmentService";
-import * as ScoringService from "../services/scoringService";
-import * as CitationServiceBackend from "../services/citationService"; // From old backend's services
+import * as CrossrefService from "../services/crossrefService.js";
+import * as OpenAlexService from "../services/openAlexService.js";
+import * as ArxivService from "../services/arxivService.js";
+import * as UnpaywallService from "../services/unpaywallService.js";
+import * as GeminiService from "../services/geminiService.js";
+import * as MetadataService from "../services/metadataService.js";
+import * as RetrievalService from "../services/retrievalService.js";
+import * as EntailmentService from "../services/entailmentService.js";
+import * as ScoringService from "../services/scoringService.js";
+import * as CitationServiceBackend from "../services/citationService.js"; // From old backend's services
 
-// FIX: Add missing types for AnalysisResult and its components.
-import { ResearchPaper, ModelDefinition, AdvancedSearchOptions, SummaryLength, SummaryStyle, PaperAnalysis, SynthesisResult, VerificationResult, CitationStats, KnowledgeGraph, Entity, AuthorFrequencyData, PublicationYearData, Cluster, GraphNode, GraphEdge, AnalysisResult } from "../types";
-import { MIN_EVIDENCE_SPANS_FOR_VERIFIED, MIN_SUPPORT_EVIDENCE_CONFIDENCE } from "../utils/constants";
+import { ResearchPaper, ModelDefinition, AdvancedSearchOptions, SummaryLength, SummaryStyle, PaperAnalysis, SynthesisResult, VerificationResult, CitationStats, KnowledgeGraph, Entity, AuthorFrequencyData, PublicationYearData, Cluster, GraphNode, GraphEdge, AnalysisResult } from "../types/index.js";
+import { MIN_EVIDENCE_SPANS_FOR_VERIFIED, MIN_SUPPORT_EVIDENCE_CONFIDENCE } from "../utils/constants.js";
 import { Type } from "@google/genai";
 
 
@@ -170,7 +169,6 @@ export class ReasonOverGraphTool extends Tool {
     }
 }
 
-// FIX: Add missing AnalyzeSearchResultsTool. This tool was being imported and used in the agent but was not defined.
 export class AnalyzeSearchResultsTool extends Tool {
     name = "analyze_search_results";
     description = "Performs bibliometric and cluster analysis on a list of search results. Returns an AnalysisResult object in JSON format.";
@@ -630,9 +628,37 @@ export class AnalyzeResearchGapsTool extends Tool {
         } catch (error) {
             console.error("Error in Phase 3 AnalyzeResearchGapsTool:", error);
             // Fallback to Phase 2 logic if Phase 3 fails
-            console.warn("Phase 3 failed. Falling back to Phase 2 gap analysis.");
-            const phase2Tool = new SynthesizePapersTool(); // Using a different existing tool as a stand-in for Phase 2 logic
-            return await phase2Tool._call(input);
+            console.warn("Phase 3 failed. Falling back to Phase 2 (abstract-only) gap analysis.");
+            
+            const abstracts = input.papers.map(p => `Title: ${p.title}\nAbstract: ${p.abstract}`).join('\n\n---\n\n');
+        
+            const fallbackPrompt = `As an expert researcher, analyze the following collection of paper abstracts to identify research gaps.
+            
+            **Instructions:**
+            1.  Synthesize the key findings and limitations from all abstracts.
+            2.  Identify common themes and areas where the research converges or diverges.
+            3.  Based on this synthesis, identify and articulate potential research gaps, unanswered questions, and promising future directions.
+            4.  Structure your response as a formal report in Markdown format. Use headings (e.g., '## Identified Research Gaps') and bullet points.
+        
+            **Paper Abstracts:**
+            ${abstracts}
+            
+            Return a single JSON object with a "report" key.`;
+        
+            const gapAnalysisSchema = {
+                type: Type.OBJECT,
+                properties: { report: { type: Type.STRING, description: "A markdown-formatted report outlining research gaps, future directions, and unanswered questions." }, },
+                required: ["report"],
+            };
+        
+            try {
+                const result = await GeminiService.generateJsonWithModel(fallbackPrompt, input.model as ModelDefinition, gapAnalysisSchema);
+                return result?.report || "Could not complete the research gap analysis.";
+            } catch (fallbackError) {
+                console.error("Fallback gap analysis also failed:", fallbackError);
+                // Instead of throwing, return a formatted error report. This makes the tool more robust.
+                return "## Analysis Failed\n\nAn unexpected error occurred during both the primary and fallback analysis attempts. Please try again later or with a different set of papers.";
+            }
         }
     }
 }
@@ -693,12 +719,10 @@ export class SynthesizePapersTool extends Tool {
         const findings = [...new Set(allEntities.filter(e => e.type === 'Finding').map(e => e.label))];
 
         const observedConnections = allRelationships.filter(rel => {
-            // FIX: Cast source and target to Entity to resolve type inference issues.
             const source = entityMap.get(rel.source) as Entity | undefined;
             const target = entityMap.get(rel.target) as Entity | undefined;
             return source && target && (source.type === 'Methodology' && target.type === 'Finding');
         }).slice(0, 5).map(rel => {
-            // FIX: Cast source and target to Entity to resolve type inference issues.
             const source = entityMap.get(rel.source)! as Entity;
             const target = entityMap.get(rel.target)! as Entity;
             return `'${source.label}' produced '${target.label}'`;

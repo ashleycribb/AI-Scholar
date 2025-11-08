@@ -1,8 +1,8 @@
 // agent-backend/src/app.ts
 import express from 'express';
 import cors from 'cors';
-import testRoutes from './routes/testRoutes';
-import agentRoutes from './routes/agentRoutes'; // Import new agent routes
+import testRoutes from './routes/testRoutes.js';
+import agentRoutes from './routes/agentRoutes.js'; // Import new agent routes
 
 const app = express();
 

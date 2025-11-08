@@ -1,5 +1,5 @@
 // agent-backend/src/services/metadataService.ts (Copy of backend/src/services/metadataService.ts)
-import { Metadata } from "../types";
+import { Metadata } from "../types/index.js";
 
 // Very simple temporal scoring: decays linearly over 20 years
 function calculateTemporalScore(year?: number): number {

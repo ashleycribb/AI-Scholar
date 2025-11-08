@@ -1,5 +1,5 @@
 // agent-backend/src/services/citationService.ts (Copy of backend/src/services/citationService.ts)
-import { CitationStats } from "../types";
+import { CitationStats } from "../types/index.js";
 
 /**
  * Fetch citation contexts and compute simple support/contradict counts.

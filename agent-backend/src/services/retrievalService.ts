@@ -1,8 +1,8 @@
 // agent-backend/src/services/retrievalService.ts (Copy of backend/src/services/retrievalService.ts)
-import { embedText } from "../utils/embeddings";
-import { cosineSimilarity } from "../utils/math";
-import { EvidenceSpan } from "../types";
-import { deinvertAbstract } from "./utils";
+import { embedText } from "../utils/embeddings.js";
+import { cosineSimilarity } from "../utils/math.js";
+import { EvidenceSpan } from "../types/index.js";
+import { deinvertAbstract } from "./utils.js";
 
 async function fetchFullText(url: string): Promise<string | null> {
   try {

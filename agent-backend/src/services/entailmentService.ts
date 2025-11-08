@@ -1,5 +1,5 @@
 // agent-backend/src/services/entailmentService.ts (Copy of backend/src/services/entailmentService.ts)
-import { Verdict } from "../types";
+import { Verdict } from "../types/index.js";
 
 export async function checkEntailment(claim: string, passage: string): Promise<{ verdict: Verdict; confidence: number }> {
   if (!process.env.ENTAILMENT_URL) {

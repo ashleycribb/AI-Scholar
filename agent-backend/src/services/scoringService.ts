@@ -1,6 +1,6 @@
 // agent-backend/src/services/scoringService.ts (Copy of backend/src/services/scoringService.ts)
-import { WEIGHTS, MIN_SUPPORT_EVIDENCE_CONFIDENCE } from "../utils/constants";
-import { Metadata, CitationStats, VerificationResult, EvidenceSpan } from "../types";
+import { WEIGHTS, MIN_SUPPORT_EVIDENCE_CONFIDENCE } from "../utils/constants.js";
+import { Metadata, CitationStats, VerificationResult, EvidenceSpan } from "../types/index.js";
 
 export function computeVACS(meta: Metadata, citationStats: CitationStats, evidenceSpans: EvidenceSpan[]): VerificationResult {
   const C = meta.credibilityScore ?? 0.5;

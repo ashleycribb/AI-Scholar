@@ -105,12 +105,25 @@ const simpleKMeans = (data: number[][], k: number, maxIterations = 50) => {
 // --- End of Custom Implementations ---
 
 
-export const analyzePapers = async (papers: ResearchPaper[], topAuthors: AuthorFrequencyData): Promise<AnalysisResult> => {
-    const cacheKey = JSON.stringify({ papers: papers.map(p => p.id), topAuthors });
+export const analyzePapers = async (papers: ResearchPaper[]): Promise<AnalysisResult> => {
+    const cacheKey = JSON.stringify({ papers: papers.map(p => p.id) });
     const cachedEntry = analysisCache.get(cacheKey);
     if (cachedEntry && (Date.now() - cachedEntry.timestamp < CACHE_TTL_MS)) {
         return cachedEntry.result;
     }
+
+    // Calculate top authors internally
+    const topAuthors: AuthorFrequencyData = Object.values(
+        papers.flatMap(p => p.authors.split(',').map(a => a.trim())).reduce((acc, author) => {
+            if (author) {
+                acc[author] = acc[author] || { author, count: 0, totalCitations: 0 };
+                acc[author].count++;
+                const paper = papers.find(p => p.authors.includes(author));
+                acc[author].totalCitations += paper?.citations || 0;
+            }
+            return acc;
+        }, {} as { [author: string]: { author: string, count: number, totalCitations: number } })
+    );
 
     // 1. Bibliometrics
     const publicationYears: PublicationYearData = Object.values(

@@ -1,7 +1,7 @@
 // agent-backend/src/agents/utils/paperProcessing.ts
-import { ResearchPaper, AdvancedSearchOptions, ModelDefinition } from "../../types";
-import * as embeddingService from "../../utils/embeddings";
-import { ClassifyStudyDesignTool, EvaluateScreeningFitTool, GenerateHypotheticalAnswerTool } from "../../tools/researchTools";
+import { ResearchPaper, AdvancedSearchOptions, ModelDefinition } from "../../types/index.js";
+import * as embeddingService from "../../utils/embeddings.js";
+import { ClassifyStudyDesignTool, EvaluateScreeningFitTool, GenerateHypotheticalAnswerTool } from "../../tools/researchTools.js";
 
 
 // A set of common English stop words.
@@ -102,11 +102,9 @@ export async function calculatePaperScores(
     const authorFreq = Object.values(
         papersWithScreening.flatMap(p => p.authors.split(',').map(a => a.trim())).reduce((acc, author) => {
             if (author) {
-                // Fix: Corrected property name to 'totalCitations'
                 acc[author] = acc[author] || { author, count: 0, totalCitations: 0 };
                 acc[author].count++;
                 const paper = papersWithScreening.find(p => p.authors.includes(author));
-                // Fix: Corrected property name to 'totalCitations'
                 acc[author].totalCitations += paper?.citations || 0;
             }
             return acc;

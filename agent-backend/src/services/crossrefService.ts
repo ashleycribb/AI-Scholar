@@ -1,6 +1,6 @@
 // agent-backend/src/services/crossrefService.ts (Copy of frontend services/crossrefService.ts)
-import type { ResearchPaper, CrossrefWork } from '../types';
-import { normalizeString, checkAuthorMatch } from './utils';
+import type { ResearchPaper, CrossrefWork } from '../types/index.js';
+import { normalizeString, checkAuthorMatch } from './utils.js';
 
 /**
  * Fetches paper metadata from the Crossref API to find a high-confidence match.

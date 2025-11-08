@@ -27,6 +27,7 @@ import { analyticsService } from './services/analyticsService';
 import { CitationModal } from './components/CitationModal';
 import * as extensionService from './services/extensionService';
 import { DatabaseFinderModal } from './components/DatabaseFinderModal';
+import * as analysisService from './services/analysisService';
 
 
 const PROJECT_COLORS = ['sky', 'green', 'yellow', 'red', 'purple', 'pink', 'indigo', 'teal'];
@@ -128,8 +129,12 @@ const App: React.FC = () => {
 
         try {
             const result = await apiService.search(searchQuery, options, summaryLength, summaryStyle, model, searchSources);
+            
+            // Run bibliometric analysis on the client-side for performance
+            const analysisResult = await analysisService.analyzePapers(result.papers);
+
             setPapers(result.papers);
-            setAnalysis(result.analysis);
+            setAnalysis(analysisResult);
         } catch (err) {
             setError(err instanceof Error ? err.message : "An unknown error occurred.");
         } finally {

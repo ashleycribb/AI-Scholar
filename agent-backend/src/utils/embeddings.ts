@@ -2,8 +2,8 @@
 
 import { GoogleGenAI } from "@google/genai";
 // FIX: Add necessary imports for the new calculateSemanticScores function.
-import type { ResearchPaper } from '../types';
-import { cosineSimilarity } from './math';
+import type { ResearchPaper } from '../types/index.js';
+import { cosineSimilarity } from './math.js';
 
 
 const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
