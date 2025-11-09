@@ -1,5 +1,4 @@
-// This file is largely deprecated as AI functions are now handled by the agent-backend.
-// Keeping it as a placeholder or for potential future client-side specific direct calls if needed.
+// This file now handles all direct AI model interactions, removing the need for a backend.
 
 import { GoogleGenAI, Type } from "@google/genai";
 import type {
@@ -12,13 +11,12 @@ import type {
   SummaryStyle,
   SynthesisResult,
   GroundingSource,
-  ModelDefinition
+  ModelDefinition,
+  KnowledgeGraph
 } from "../types";
 
-// Always use `const ai = new GoogleGenAI({apiKey: process.env.API_KEY});`.
 const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
-// Utility to safely parse JSON from a string
 const safeJsonParse = (jsonString: string) => {
   try {
     const cleanedString = jsonString.replace(/```json/g, '').replace(/```/g, '').trim();
@@ -30,50 +28,20 @@ const safeJsonParse = (jsonString: string) => {
   }
 };
 
-// --- ADAPTER IMPLEMENTATIONS ---
-
-/**
- * [MOCK] Adapter for OpenAI or other non-Gemini models for demonstration.
- * In a real implementation, this would use the OpenAI SDK.
- */
 const mockApiAdapter = async (prompt: string, modelId: string, schema: any): Promise<any> => {
     console.warn(`[MOCK] Adapter called for model ${modelId}. Returning mock data.`);
-
-    // Based on the schema, return a mock response.
-    if (schema.properties?.hypothetical_abstract) {
-        return {
-            hypothetical_abstract: `[Mock Response from ${modelId}] This is a mock abstract demonstrating how a different model could respond. It highlights the architectural pattern of using adapters for different AI providers.`
-        };
-    }
-    if (schema.properties?.score && schema.properties?.rationale) {
-        return { score: 75, rationale: `[Mock Response] This paper seems like a reasonably good fit based on the mock analysis.` };
-    }
-    if (schema.properties?.summary) {
-        return { summary: `[Mock Summary from ${modelId}] This mock summary demonstrates the multi-model architecture.` };
-    }
-    if (schema.properties?.concepts) {
-        return { concepts: ['Mock Concept 1', 'Mock Concept 2', 'Adapter Pattern'] };
-    }
-     if (schema.properties?.suggestions) {
-        return { suggestions: [`Mock suggestion from ${modelId}`, 'Another great idea'] };
-    }
-    if (schema.properties?.recipeName) { // From a generic example, good for citation testing
-        return { title: '[Mock] Chocolate Chip Cookies', author: [{ family: 'Mock', given: 'Chef' }], issued: { 'date-parts': [[2023]] }, type: 'article-journal' };
-    }
-    if (schema.properties?.answer) { // For RAG
-        return { answer: `[Mock RAG Response from ${modelId}] Based on the provided context, the answer appears to be related to the core themes of the mocked-up papers.` };
-    }
-    if (schema.properties?.study_design) { // For classifyStudyDesign
-        return { study_design: 'Observational Study' };
-    }
-
-    // Generic fallback mock
-    return { mock_response: "This is a generic mock response from a mock adapter." };
+    if (schema.properties?.hypothetical_abstract) { return { hypothetical_abstract: `[Mock Response from ${modelId}] This is a mock abstract.` }; }
+    if (schema.properties?.score && schema.properties?.rationale) { return { score: 75, rationale: `[Mock Response] This paper seems like a reasonably good fit.` }; }
+    if (schema.properties?.summary) { return { summary: `[Mock Summary from ${modelId}] This mock summary.` }; }
+    if (schema.properties?.concepts) { return { concepts: ['Mock Concept 1', 'Mock Concept 2'] }; }
+    if (schema.properties?.suggestions) { return { suggestions: [`Mock suggestion from ${modelId}`, 'Another idea'] }; }
+    if (schema.properties?.recipeName) { return { title: '[Mock] Chocolate Chip Cookies', author: [{ family: 'Mock', given: 'Chef' }], issued: { 'date-parts': [[2023]] }, type: 'article-journal' }; }
+    if (schema.properties?.answer) { return { answer: `[Mock RAG Response from ${modelId}] The answer is mocked.` }; }
+    if (schema.properties?.study_design) { return { study_design: 'Observational Study' }; }
+    if (schema.properties?.entities) { return { entities: [{id: 'e1', type: 'Concept', label: 'Mock Concept', description: 'A mock concept'}], relationships: [] }; }
+    return { mock_response: "This is a generic mock response." };
 };
 
-/**
- * [REAL] Adapter for Google Gemini models.
- */
 const geminiApiAdapter = async (prompt: string, modelId: string, schema: any): Promise<any> => {
     const response = await ai.models.generateContent({
         model: modelId,
@@ -90,73 +58,22 @@ const geminiApiAdapter = async (prompt: string, modelId: string, schema: any): P
     return result;
 };
 
-
-// --- UNIFIED GENERATION FUNCTION (THE "FACTORY") ---
-const generateJsonWithModel = async (
-    prompt: string,
-    model: ModelDefinition,
-    schema: any
-): Promise<any> => {
+const generateJsonWithModel = async (prompt: string, model: ModelDefinition, schema: any): Promise<any> => {
     try {
         switch (model.provider) {
             case 'gemini':
                 return await geminiApiAdapter(prompt, model.id, schema);
             case 'openai':
             case 'anthropic':
-                // In a real implementation, these would call their respective SDKs.
-                // For now, they all use the same mock adapter for demonstration.
                 return await mockApiAdapter(prompt, model.id, schema);
             default:
                 throw new Error(`Unsupported model provider: ${model.provider}`);
         }
     } catch (error) {
         console.error(`Error during AI generation with ${model.name}:`, error);
-        throw error; // Re-throw to be handled by the caller
+        throw error;
     }
 };
-
-
-/**
- * Attempts to verify a URL points to an accessible PDF by making a HEAD request.
- * This is a best-effort client-side check and may be blocked by CORS policies.
- * @param url The URL of the PDF to check.
- * @returns An object with the determined link state and a reason.
- */
-export const checkPdfUrl = async (url: string): Promise<{ linkState: 'valid' | 'invalid' | 'paywalled' | 'unchecked', reason: string }> => {
-    if (!url) {
-        return { linkState: 'invalid', reason: 'No URL provided.' };
-    }
-
-    try {
-        // Use a timeout to prevent long waits on unresponsive servers
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 5000); // 5-second timeout
-
-        // A HEAD request is lighter than GET. It's still subject to CORS, but it's our best-effort client-side check.
-        const response = await fetch(url, { method: 'HEAD', signal: controller.signal });
-        clearTimeout(timeoutId);
-
-        if (!response.ok) {
-             return { linkState: 'invalid', reason: `Link is broken or inaccessible (Status: ${response.status}).` };
-        }
-
-        const contentType = response.headers.get('Content-Type');
-        if (contentType?.includes('application/pdf')) {
-            return { linkState: 'valid', reason: 'Direct PDF link confirmed.' };
-        }
-        if (contentType?.includes('text/html')) {
-            return { linkState: 'paywalled', reason: 'Link leads to a webpage, not a direct PDF. A paywall is likely.' };
-        }
-
-        return { linkState: 'unchecked', reason: 'Could not definitively determine content type from headers.' };
-
-    } catch (error) {
-        // This will be triggered by timeouts, network errors, and most CORS errors.
-        console.warn(`Could not verify PDF link (${url}):`, error);
-        return { linkState: 'invalid', reason: 'Could not access the link due to network issues, a timeout, or browser security (CORS) restrictions.' };
-    }
-};
-
 
 const hypotheticalAnswerSchema = {
     type: Type.OBJECT,
@@ -184,8 +101,6 @@ export const generateHypotheticalAnswer = async (userQuery: string, model: Model
 
     try {
         const result = await generateJsonWithModel(prompt, model, hypotheticalAnswerSchema);
-        // If generation fails or returns an empty string, fall back to the original query.
-        // This ensures the search can still proceed, albeit with less accuracy.
         if (!result || !result.hypothetical_abstract) {
             console.warn("Hypothetical answer generation failed. Falling back to original query.");
             return userQuery;
@@ -193,7 +108,6 @@ export const generateHypotheticalAnswer = async (userQuery: string, model: Model
         return result.hypothetical_abstract;
     } catch (error) {
         console.error("Error generating hypothetical answer:", error);
-        // Fallback to the original query in case of an API error
         return userQuery;
     }
 };
@@ -212,7 +126,6 @@ const screeningFitSchema = {
     },
     required: ["score", "rationale"],
 };
-
 
 export const evaluateScreeningFit = async (
     paper: ResearchPaper,
@@ -235,9 +148,6 @@ export const evaluateScreeningFit = async (
 
     try {
         const result = await generateJsonWithModel(prompt, model, screeningFitSchema);
-        if (!result) {
-            return { score: 0, rationale: "AI screening failed to produce a valid response." };
-        }
         return { score: result.score ?? 0, rationale: result.rationale ?? "No rationale provided." };
     } catch (error) {
         console.error("Error evaluating screening fit:", error);
@@ -245,7 +155,6 @@ export const evaluateScreeningFit = async (
     }
 };
 
-// Fix: Implement and export generateSummaryForPapers
 const summaryStyleMap = {
     'paragraph': 'a concise summary paragraph.',
     'bullets': 'a bulleted list of the key findings.',
@@ -273,8 +182,7 @@ export const generateSummaryForPapers = async (
     model: ModelDefinition
 ): Promise<string> => {
     if (papers.length === 0) return "";
-    const topPapers = papers.slice(0, 5); // Use top 5 papers for the summary
-    const abstracts = topPapers.map(p => `Title: ${p.title}\nAbstract: ${p.abstract}`).join('\n\n---\n\n');
+    const abstracts = papers.slice(0, 5).map(p => `Title: ${p.title}\nAbstract: ${p.abstract}`).join('\n\n---\n\n');
 
     const prompt = `You are a research assistant. Based on the following abstracts from top search results, generate an overall summary.
     
@@ -298,7 +206,6 @@ export const generateSummaryForPapers = async (
     }
 };
 
-// Fix: Implement and export analyzeResearchGaps
 const gapAnalysisSchema = {
     type: Type.OBJECT,
     properties: {
@@ -324,7 +231,6 @@ export const analyzeResearchGaps = async (papers: ResearchPaper[], model: ModelD
     Return a single JSON object with a "report" key.`;
 
     try {
-        // Use the provided model for the analysis
         const result = await generateJsonWithModel(prompt, model, gapAnalysisSchema);
         return result?.report || "Could not complete the research gap analysis.";
     } catch (error) {
@@ -370,7 +276,6 @@ export const analyzeSinglePaper = async (paper: ResearchPaper, model: ModelDefin
     }
 };
 
-// Fix: Implement and export extractKeyConcepts
 const keyConceptsSchema = {
     type: Type.OBJECT,
     properties: {
@@ -395,7 +300,6 @@ export const extractKeyConcepts = async (abstract: string, model: ModelDefinitio
     }
 };
 
-// Fix: Implement and export synthesizePapers
 const synthesisSchema = {
     type: Type.ARRAY,
     items: {
@@ -421,7 +325,6 @@ export const synthesizePapers = async (papers: ResearchPaper[], model: ModelDefi
     Return the result as a JSON array of objects, where each object represents a paper.`;
 
     try {
-        // Use the provided model for the synthesis
         const result = await generateJsonWithModel(prompt, model, synthesisSchema);
         return result || [];
     } catch (error) {
@@ -430,7 +333,6 @@ export const synthesizePapers = async (papers: ResearchPaper[], model: ModelDefi
     }
 };
 
-// Fix: Implement and export extractCitationMetadata
 const cslSchema = {
     type: Type.OBJECT,
     properties: {
@@ -487,13 +389,11 @@ export const extractCitationMetadata = async (paper: ResearchPaper, model: Model
     try {
         const result = await generateJsonWithModel(prompt, model, cslSchema);
         if (!result) {
-            // Fallback for AI failure
             return { title: paper.title };
         }
         return result;
     } catch (error) {
         console.error("Error extracting citation metadata:", error);
-        // Fallback for API error
         return {
             title: paper.title,
             author: [{ literal: paper.authors }],
@@ -621,4 +521,61 @@ export const generatePaperBasedSuggestions = async (paper: ResearchPaper, model:
         console.error("Error generating paper-based suggestions:", error);
         throw new Error("Failed to generate search suggestions for the selected paper.");
     }
+};
+
+const knowledgeGraphSchema = {
+    type: Type.OBJECT,
+    properties: {
+        entities: {
+            type: Type.ARRAY,
+            items: {
+                type: Type.OBJECT,
+                properties: {
+                    id: { type: Type.STRING, description: "A unique identifier for the entity (e.g., 'concept_1')." },
+                    type: { type: Type.STRING, enum: ['Concept', 'Methodology', 'Finding', 'Context'] },
+                    label: { type: Type.STRING, description: "The name of the entity." },
+                    description: { type: Type.STRING, description: "A brief one-sentence description of the entity." }
+                },
+                required: ["id", "type", "label", "description"]
+            }
+        },
+        relationships: {
+            type: Type.ARRAY,
+            items: {
+                type: Type.OBJECT,
+                properties: {
+                    source: { type: Type.STRING, description: "The ID of the source entity." },
+                    target: { type: Type.STRING, description: "The ID of the target entity." },
+                    label: { type: Type.STRING, description: "The type of relationship (e.g., 'uses', 'investigates')." },
+                    description: { type: Type.STRING, description: "A brief one-sentence description of how the entities are related." }
+                },
+                required: ["source", "target", "label", "description"]
+            }
+        }
+    },
+    required: ["entities", "relationships"]
+};
+
+export const extractKnowledgeGraph = async (abstract: string, model: ModelDefinition): Promise<KnowledgeGraph> => {
+    const prompt = `You are an expert in scientific literature analysis. Your task is to extract a structured knowledge graph from the provided research abstract.
+
+    Identify the core entities:
+    - **Concepts**: Key ideas, theories, or subjects being investigated.
+    - **Methodologies**: The techniques, tools, or procedures used in the research.
+    - **Findings**: The results, conclusions, or key takeaways of the study.
+    - **Context**: The domain or environment of the study.
+    
+    Identify the relationships between these entities, such as:
+    - A 'Concept' **is investigated by** a 'Methodology'.
+    - A 'Methodology' **produces** a 'Finding'.
+    - A 'Concept' **is related to** another 'Concept'.
+    - A 'Finding' **supports** or **contradicts** a 'Concept'.
+
+    Abstract:
+    "${abstract}"
+
+    Return a single JSON object that strictly follows the provided schema. Generate unique IDs for each entity.`;
+
+    const result = await generateJsonWithModel(prompt, model, knowledgeGraphSchema);
+    return result || { entities: [], relationships: [] };
 };

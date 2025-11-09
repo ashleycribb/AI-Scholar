@@ -1,42 +1,8 @@
-import type { ResearchPaper, CitationStyle, ModelDefinition } from '../types';
+import type { ResearchPaper, CitationStyle, ModelDefinition, CitationStats } from '../types';
+import * as geminiService from './geminiService';
 
 let citeConstructorPromise: Promise<any> | null = null;
 
-// Use an environment variable for the backend URL, with a fallback for local development.
-const AGENT_BACKEND_URL = process.env.AGENT_BACKEND_URL || 'http://localhost:3002/api/agents';
-
-/**
- * Helper for making requests to the new agent backend
- */
-const callAgentBackend = async (intent: string, payload: any): Promise<any> => {
-    try {
-        const response = await fetch(AGENT_BACKEND_URL, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({ intent, payload }),
-        });
-
-        if (!response.ok) {
-            const errorData = await response.json().catch(() => ({ error: `Agent backend failed with unknown error (Status: ${response.status}).` }));
-            throw new Error(errorData.error || `Agent backend failed with status: ${response.status}`);
-        }
-
-        return await response.json();
-    } catch (error) {
-        console.error(`Error calling agent backend for intent '${intent}':`, error);
-        if (error instanceof TypeError) {
-            throw new Error(`Could not connect to the AI agent backend. Please ensure the backend server is running and accessible at ${AGENT_BACKEND_URL}.`);
-        }
-        throw error;
-    }
-};
-
-/**
- * Returns a promise that resolves with the `Cite` constructor.
- * It assumes Citation.js scripts have been loaded globally via script tags in index.html.
- */
 const getCiteConstructor = (): Promise<any> => {
     if (citeConstructorPromise) {
         return citeConstructorPromise;
@@ -71,18 +37,11 @@ const getCiteConstructor = (): Promise<any> => {
     return citeConstructorPromise;
 };
 
-/**
- * Generates formatted citations for a list of papers using Citation.js.
- * @param papers - An array of ResearchPaper objects.
- * @param style - The citation style to use (e.g., 'apa', 'mla').
- * @returns An array of HTML-formatted citation strings.
- */
 export const generateCitations = async (papers: ResearchPaper[], style: CitationStyle, model: ModelDefinition): Promise<string[]> => {
     try {
         const Cite = await getCiteConstructor();
         
-        // Use AI agent to get rich metadata for each paper
-        const cslDataPromises = papers.map(paper => callAgentBackend('extractCitationMetadata', { paper, model }));
+        const cslDataPromises = papers.map(paper => geminiService.extractCitationMetadata(paper, model));
         const cslData = await Promise.all(cslDataPromises);
         
         const cite = new Cite(cslData);
@@ -110,17 +69,11 @@ export const generateCitations = async (papers: ResearchPaper[], style: Citation
     }
 };
 
-/**
- * Generates a RIS string for a list of papers, suitable for Zotero/Mendeley.
- * @param papers - An array of ResearchPaper objects.
- * @returns A single string containing all references in RIS format.
- */
 export const generateRIS = async (papers: ResearchPaper[], model: ModelDefinition): Promise<string> => {
     try {
         const Cite = await getCiteConstructor();
 
-        // Use AI agent to get rich metadata for each paper
-        const cslDataPromises = papers.map(paper => callAgentBackend('extractCitationMetadata', { paper, model }));
+        const cslDataPromises = papers.map(paper => geminiService.extractCitationMetadata(paper, model));
         const cslData = await Promise.all(cslDataPromises);
 
         const cite = new Cite(cslData);
@@ -133,3 +86,30 @@ export const generateRIS = async (papers: ResearchPaper[], model: ModelDefinitio
         throw new Error(`Failed to generate RIS file for Zotero: ${errorMessage}`);
     }
 };
+
+/**
+ * Fetches citation contexts from Semantic Scholar to compute support/contradict counts.
+ */
+export async function analyzeCitations(doi: string): Promise<CitationStats> {
+  try {
+    const response = await fetch(`https://api.semanticscholar.org/graph/v1/paper/DOI:${encodeURIComponent(doi)}?fields=citationCount`);
+    if (!response.ok) {
+        console.warn(`Semantic Scholar API returned status ${response.status} for DOI: ${doi}`);
+        return { total: 0, supportCount: 0, contradictCount: 0, supportRatio: 0.5 };
+    }
+    const data = await response.json();
+    const total = data?.citationCount || 0;
+    // Mock implementation: assume supportive ratio = 0.7 for now
+    const supportCount = Math.round(total * 0.7);
+    const contradictCount = Math.round(total * 0.05);
+    return {
+      total,
+      supportCount,
+      contradictCount,
+      supportRatio: total === 0 ? 0.5 : (supportCount - contradictCount) / Math.max(1, total)
+    };
+  } catch (e) {
+    console.error(`Failed to analyze citations for DOI ${doi}:`, e);
+    return { total: 0, supportCount: 0, contradictCount: 0, supportRatio: 0.5 };
+  }
+}

@@ -1,8 +1,3 @@
-
-
-
-
-
 import React, { useMemo } from 'react';
 import type { ResearchPaper, SortConfig, SortKey } from '../types';
 import { PaperCard } from './PaperCard';
@@ -20,6 +15,9 @@ interface ResultsDisplayProps {
   onScreenPaper: (paperId: string, status: 'include' | 'exclude' | 'none') => void;
   onAiRerank: () => void;
   isReranking: boolean;
+  onLoadMore: () => void;
+  hasMore: boolean;
+  isLoadingMore: boolean;
 }
 
 const sortOptions: { key: SortKey; label: string; available: (papers: ResearchPaper[]) => boolean }[] = [
@@ -36,7 +34,7 @@ const SortArrow: React.FC<{ direction: 'asc' | 'desc' }> = ({ direction }) => {
 };
 
 export const ResultsDisplay: React.FC<ResultsDisplayProps> = (props) => {
-    const { papers, selectedPaperId, onSelectPaper, sortConfig, onSortChange, isScreeningMode, onSetScreeningMode, onScreenPaper, onAiRerank, isReranking } = props;
+    const { papers, selectedPaperId, onSelectPaper, sortConfig, onSortChange, isScreeningMode, onSetScreeningMode, onScreenPaper, onAiRerank, isReranking, onLoadMore, hasMore, isLoadingMore } = props;
 
     const screeningStats = useMemo(() => {
         if (!isScreeningMode) return { included: 0, excluded: 0, none: 0 };
@@ -113,6 +111,17 @@ export const ResultsDisplay: React.FC<ResultsDisplayProps> = (props) => {
                     />
                 ))}
             </div>
+            {hasMore && (
+                <div className="flex justify-center pt-4">
+                    <button
+                        onClick={onLoadMore}
+                        disabled={isLoadingMore}
+                        className="h-10 px-6 font-semibold rounded-md bg-secondary text-secondary-foreground hover:bg-accent disabled:opacity-50"
+                    >
+                        {isLoadingMore ? 'Loading...' : 'Load More Results'}
+                    </button>
+                </div>
+            )}
         </div>
     );
 };

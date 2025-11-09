@@ -1,4 +1,3 @@
-
 import { Metadata } from "../types";
 
 // Very simple temporal scoring: decays linearly over 20 years

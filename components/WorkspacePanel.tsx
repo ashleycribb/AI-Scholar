@@ -50,6 +50,7 @@ interface WorkspacePanelProps {
     papers: ResearchPaper[];
     selectedPaper: ResearchPaper | null;
     analysis: AnalysisResult | null;
+    summary: string;
     workspacePapers: ResearchPaper[];
     projects: Project[];
     sources: SearchSourceInfo[];
@@ -104,7 +105,7 @@ const TabButton: React.FC<{
 
 export const WorkspacePanel: React.FC<WorkspacePanelProps> = (props) => {
     const { 
-        papers, selectedPaper, analysis, workspacePapers, projects,
+        papers, selectedPaper, analysis, summary, workspacePapers, projects,
         refinedQueries, isGeneratingRefined, onRefinedQuerySearch, model
     } = props;
     const [activeTab, setActiveTab] = useState<'details' | 'analysis' | 'workspace' | 'bibliography'>('analysis');
@@ -153,7 +154,7 @@ export const WorkspacePanel: React.FC<WorkspacePanelProps> = (props) => {
                             isLoading={isGeneratingRefined}
                             onQueryClick={onRefinedQuerySearch}
                         />
-                        {analysis && <AnalysisDashboard analysis={analysis} summary={""} />}
+                        {analysis && <AnalysisDashboard analysis={analysis} summary={summary} />}
                     </div>
                 ) : (
                     <div className="text-center text-muted-foreground py-16">

@@ -1,11 +1,12 @@
-
-
 import type { ResearchPaper, AdvancedSearchOptions } from '../types';
 import { createPaperId } from './extensionService';
 
 // Client-side cache for OpenAlex results
 interface CacheEntry {
-    papers: ResearchPaper[];
+    result: {
+        papers: ResearchPaper[];
+        hasMore: boolean;
+    };
     timestamp: number;
 }
 const openAlexCache = new Map<string, CacheEntry>();
@@ -80,23 +81,25 @@ const mapOpenAlexWorkToResearchPaper = (work: any): ResearchPaper | null => {
  * Searches the OpenAlex database for research papers.
  * @param query - The user's search query string.
  * @param options - Advanced search options including year range and authors.
- * @returns A promise that resolves to an array of ResearchPaper objects.
+ * @returns A promise that resolves to an object containing an array of ResearchPaper objects and a boolean indicating if more results are available.
  */
-export const searchOpenAlex = async (query: string, options: AdvancedSearchOptions): Promise<ResearchPaper[]> => {
+export const searchOpenAlex = async (query: string, options: AdvancedSearchOptions, page: number = 1): Promise<{ papers: ResearchPaper[], hasMore: boolean }> => {
     // 1. Create a consistent cache key
-    const cacheKey = JSON.stringify({ query, ...options });
+    const cacheKey = JSON.stringify({ query, ...options, page });
     
     // 2. Check the cache
     const cachedEntry = openAlexCache.get(cacheKey);
     if (cachedEntry && (Date.now() - cachedEntry.timestamp < CACHE_TTL_MS)) {
         console.log("Serving from OpenAlex cache:", cacheKey);
-        return cachedEntry.papers;
+        return cachedEntry.result;
     }
 
+    const PER_PAGE = 15;
     const BASE_URL = 'https://api.openalex.org/works';
     const params = new URLSearchParams({
         search: query,
-        'per-page': '30',
+        'per-page': PER_PAGE.toString(),
+        'page': page.toString(),
         // Use a more specific, yet still example, email for the polite pool.
         mailto: 'contact@ai-research-explorer.com'
     });
@@ -133,12 +136,14 @@ export const searchOpenAlex = async (query: string, options: AdvancedSearchOptio
         const data = await response.json();
 
         const papers = (data.results || []).map(mapOpenAlexWorkToResearchPaper).filter((p): p is ResearchPaper => p !== null);
+        const totalCount = data.meta?.count || 0;
+        const hasMore = (page * PER_PAGE) < totalCount;
 
         // 3. Store the result in the cache
         console.log("Caching OpenAlex result:", cacheKey);
-        openAlexCache.set(cacheKey, { papers, timestamp: Date.now() });
+        openAlexCache.set(cacheKey, { result: { papers, hasMore }, timestamp: Date.now() });
 
-        return papers;
+        return { papers, hasMore };
     } catch (error) {
         console.error("Error searching OpenAlex. Request URL:", url);
         if (response) {

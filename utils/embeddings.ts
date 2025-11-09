@@ -1,7 +1,8 @@
 import { GoogleGenAI } from "@google/genai";
 
 const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-const model = "gemini-2.5-flash-preview-embedder";
+// FIX: The batch embedding API requires the full model path.
+const model = "models/gemini-2.5-flash-preview-embedder";
 
 /**
  * Generates an embedding for a single piece of text.
@@ -16,7 +17,7 @@ export const embedText = async (text: string): Promise<number[]> => {
 };
 
 /**
- * Generates embeddings for multiple pieces of text by running requests in parallel.
+ * Generates embeddings for multiple pieces of text using the efficient batch API.
  */
 export const batchEmbedText = async (texts: string[]): Promise<number[][]> => {
     if (!texts || texts.length === 0) {
@@ -24,16 +25,38 @@ export const batchEmbedText = async (texts: string[]): Promise<number[][]> => {
     }
     
     try {
-        // Use Promise.all to execute multiple embedText calls in parallel.
-        const embeddingPromises = texts.map(text => {
-            if (!text || typeof text !== 'string' || text.trim() === '') {
-                return Promise.resolve([]); // Return empty array for invalid input
+        // The API requires valid content. We create a map to handle sparse valid texts
+        // and reconstruct the full array later to maintain order and length.
+        const validRequests: { text: string, originalIndex: number }[] = [];
+        texts.forEach((text, index) => {
+            if (text && typeof text === 'string' && text.trim() !== '') {
+                validRequests.push({ text, originalIndex: index });
             }
-            return embedText(text);
+        });
+
+        // If no valid texts to embed, return empty arrays for all.
+        if (validRequests.length === 0) {
+            return texts.map(() => []);
+        }
+
+        const requests = validRequests.map(({ text }) => ({
+            model,
+            content: { parts: [{ text }] },
+        }));
+
+        const response = await ai.models.batchEmbedContents({ requests });
+        const embeddings = response.embeddings.map(e => e.values);
+
+        // Reconstruct the full array of embeddings, placing results in their original positions.
+        const finalEmbeddings: number[][] = Array(texts.length).fill([]);
+        validRequests.forEach(({ originalIndex }, i) => {
+            // Ensure we don't try to access an index that's out of bounds
+            if (i < embeddings.length) {
+                finalEmbeddings[originalIndex] = embeddings[i];
+            }
         });
         
-        const embeddings = await Promise.all(embeddingPromises);
-        return embeddings;
+        return finalEmbeddings;
 
     } catch (error) {
         console.error("Error during batch embedding:", error);

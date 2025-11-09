@@ -64,6 +64,13 @@ const App: React.FC = () => {
     const [projectChats, setProjectChats] = useState<{ [projectId: string]: { history: ChatMessage[], isLoading: boolean } }>({});
     const [searchSources, setSearchSources] = useState<SearchSourceInfo[]>([{ id: 'openalex', name: 'OpenAlex', description: 'A comprehensive open index of scholarly works.' }]);
     
+    // Pagination state
+    const [summary, setSummary] = useState<string>('');
+    const [currentPage, setCurrentPage] = useState(1);
+    const [isLoadingMore, setIsLoadingMore] = useState(false);
+    const [hasMore, setHasMore] = useState(false);
+    const [lastUsedOptions, setLastUsedOptions] = useState<AdvancedSearchOptions>({ startYear: '', endYear: '', authors: '', excludeKeywords: '', inclusionCriteria: '', exclusionCriteria: '', studyDesign: 'any' });
+
     // Modals State
     const [isVerificationModalOpen, setIsVerificationModalOpen] = useState(false);
     const [paperToVerify, setPaperToVerify] = useState<ResearchPaper | null>(null);
@@ -121,24 +128,56 @@ const App: React.FC = () => {
         setIsLoading(true);
         setError(null);
         setPapers([]);
+        setSummary('');
         setHasSearched(true);
         setSelectedPaper(null);
         setAnalysis(null);
         setIsScreeningMode(false);
         setSortConfig({ key: 'relevance', direction: 'desc' });
+        setCurrentPage(1);
+        setLastUsedOptions(options);
 
         try {
-            const result = await apiService.search(searchQuery, options, summaryLength, summaryStyle, model, searchSources);
+            const result = await apiService.search(searchQuery, options, summaryLength, summaryStyle, model, searchSources, 1);
             
             // Run bibliometric analysis on the client-side for performance
             const analysisResult = await analysisService.analyzePapers(result.papers);
 
             setPapers(result.papers);
             setAnalysis(analysisResult);
+            setHasMore(result.hasMore);
+            if (result.summary) {
+                setSummary(result.summary);
+            }
         } catch (err) {
             setError(err instanceof Error ? err.message : "An unknown error occurred.");
         } finally {
             setIsLoading(false);
+        }
+    };
+
+    const handleLoadMore = async () => {
+        if (!query.trim() || isLoadingMore || !hasMore) return;
+    
+        setIsLoadingMore(true);
+        setError(null);
+        
+        const pageToFetch = currentPage + 1;
+        
+        try {
+            const result = await apiService.search(query, lastUsedOptions, summaryLength, summaryStyle, model, searchSources, pageToFetch);
+            
+            const newPapers = [...papers, ...result.papers];
+            setPapers(newPapers);
+            setCurrentPage(pageToFetch);
+            setHasMore(result.hasMore);
+    
+            const analysisResult = await analysisService.analyzePapers(newPapers);
+            setAnalysis(analysisResult);
+        } catch (err) {
+            setError(err instanceof Error ? err.message : "An unknown error occurred.");
+        } finally {
+            setIsLoadingMore(false);
         }
     };
     
@@ -607,6 +646,9 @@ const App: React.FC = () => {
                                                 onScreenPaper={handleScreenPaper}
                                                 onAiRerank={handleAiRerank}
                                                 isReranking={isReranking}
+                                                onLoadMore={handleLoadMore}
+                                                hasMore={hasMore}
+                                                isLoadingMore={isLoadingMore}
                                             />
                                         )}
                                     </div>
@@ -615,7 +657,7 @@ const App: React.FC = () => {
 
                             {hasSearched && (
                                 <aside className="lg:col-span-2">
-                                <WorkspacePanel papers={papers} selectedPaper={selectedPaper} analysis={analysis} workspacePapers={workspacePapers} projects={projects} sources={[]} onToggleWorkspacePaper={handleToggleWorkspacePaper} onFindConnectedPapers={() => {}} isFindingConnected={false} onAnalyzePaper={handleAnalyzePaper} onCitePaper={handleOpenCitationModal} isAnalyzingPaper={isAnalyzingPaper} onConceptClick={handleConceptSearch} onFindDoi={() => {}} onGenerateSuggestions={handleGenerateSuggestions} isGeneratingSuggestions={isGeneratingSuggestions} onVerifyPaper={handleOpenVerificationModal} logAnalyticsEvent={() => {}} refinedQueries={refinedQueries} isGeneratingRefined={false} onRefinedQuerySearch={() => {}} onAnalyzeGaps={handleAnalyzeGaps} onSynthesizeWorkspace={handleSynthesizeWorkspace} onCreateProject={handleCreateProject} onDeleteProject={handleDeleteProject} onMovePaperToProject={handleMovePaperToProject} onUpdateProjectColor={handleUpdateProjectColor} model={model} onIndexPaperForRag={handleIndexPaperForRag} projectChats={projectChats} onProjectChat={handleProjectChat} />
+                                <WorkspacePanel papers={papers} selectedPaper={selectedPaper} analysis={analysis} summary={summary} workspacePapers={workspacePapers} projects={projects} sources={[]} onToggleWorkspacePaper={handleToggleWorkspacePaper} onFindConnectedPapers={() => {}} isFindingConnected={false} onAnalyzePaper={handleAnalyzePaper} onCitePaper={handleOpenCitationModal} isAnalyzingPaper={isAnalyzingPaper} onConceptClick={handleConceptSearch} onFindDoi={() => {}} onGenerateSuggestions={handleGenerateSuggestions} isGeneratingSuggestions={isGeneratingSuggestions} onVerifyPaper={handleOpenVerificationModal} logAnalyticsEvent={() => {}} refinedQueries={refinedQueries} isGeneratingRefined={false} onRefinedQuerySearch={() => {}} onAnalyzeGaps={handleAnalyzeGaps} onSynthesizeWorkspace={handleSynthesizeWorkspace} onCreateProject={handleCreateProject} onDeleteProject={handleDeleteProject} onMovePaperToProject={handleMovePaperToProject} onUpdateProjectColor={handleUpdateProjectColor} model={model} onIndexPaperForRag={handleIndexPaperForRag} projectChats={projectChats} onProjectChat={handleProjectChat} />
                                 </aside>
                             )}
                         </div>

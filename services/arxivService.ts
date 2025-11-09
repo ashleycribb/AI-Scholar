@@ -1,4 +1,3 @@
-
 import type { ResearchPaper } from '../types';
 
 // A simple regex to extract arXiv IDs from various URL formats (e.g., /abs/..., /pdf/...).
@@ -77,10 +76,13 @@ export const enrichFromArxiv = async (paper: ResearchPaper): Promise<Partial<Res
 /**
  * Searches the arXiv API for papers matching a query.
  * @param query The search query string.
- * @returns A promise that resolves to an array of ResearchPaper objects.
+ * @param page The page number for pagination.
+ * @returns A promise that resolves to an object containing an array of ResearchPaper objects and a boolean indicating if more results are available.
  */
-export const searchArxiv = async (query: string): Promise<ResearchPaper[]> => {
-    const apiUrl = `https://export.arxiv.org/api/query?search_query=all:${encodeURIComponent(query)}&max_results=20`;
+export const searchArxiv = async (query: string, page: number = 1): Promise<{ papers: ResearchPaper[], hasMore: boolean }> => {
+    const resultsPerPage = 15;
+    const start = (page - 1) * resultsPerPage;
+    const apiUrl = `https://export.arxiv.org/api/query?search_query=all:${encodeURIComponent(query)}&max_results=${resultsPerPage}&start=${start}`;
     
     try {
         const response = await fetch(apiUrl);
@@ -90,6 +92,11 @@ export const searchArxiv = async (query: string): Promise<ResearchPaper[]> => {
         const xmlText = await response.text();
         const parser = new DOMParser();
         const xmlDoc = parser.parseFromString(xmlText, "application/xml");
+
+        const totalResultsNode = xmlDoc.querySelector("opensearch\\:totalResults");
+        const totalResults = totalResultsNode ? parseInt(totalResultsNode.textContent || '0', 10) : 0;
+
+        const hasMore = (start + resultsPerPage) < totalResults;
 
         const entries = Array.from(xmlDoc.querySelectorAll("entry"));
         const papers: ResearchPaper[] = entries.map(entry => {
@@ -115,11 +122,11 @@ export const searchArxiv = async (query: string): Promise<ResearchPaper[]> => {
             return { ...paperData, id: '' };
         });
 
-        return papers;
+        return { papers, hasMore };
 
     } catch (error) {
         console.error("Error searching arXiv:", error);
         // Return empty array on error to not break the entire search process
-        return [];
+        return { papers: [], hasMore: false };
     }
 };
