@@ -1,5 +1,7 @@
+
 import type { ResearchPaper, CitationStyle, ModelDefinition, CitationStats } from '../types';
 import * as geminiService from './geminiService';
+import * as crossrefService from './crossrefService';
 
 let citeConstructorPromise: Promise<any> | null = null;
 
@@ -37,11 +39,36 @@ const getCiteConstructor = (): Promise<any> => {
     return citeConstructorPromise;
 };
 
+/**
+ * Orchestrates citation data retrieval using a waterfall strategy.
+ * 1. Tries to fetch structured CSL-JSON from Crossref if a DOI is available.
+ * 2. Falls back to AI-based metadata extraction if the first step fails.
+ */
+const getPaperCslData = async (paper: ResearchPaper, model: ModelDefinition): Promise<object> => {
+    // Step 1: Prioritize Crossref for papers with a DOI.
+    if (paper.doi) {
+        try {
+            const crossrefCsl = await crossrefService.fetchCslFromCrossref(paper.doi);
+            if (crossrefCsl) {
+                console.log(`[Citation] Successfully fetched CSL from Crossref for DOI: ${paper.doi}`);
+                return crossrefCsl;
+            }
+        } catch (error) {
+            console.warn(`[Citation] Crossref fetch failed for DOI ${paper.doi}, falling back to AI.`, error);
+        }
+    }
+
+    // Step 2: Fallback to Gemini AI-based parsing.
+    console.log(`[Citation] Falling back to AI extraction for paper: ${paper.title}`);
+    return geminiService.extractCitationMetadata(paper, model);
+};
+
+
 export const generateCitations = async (papers: ResearchPaper[], style: CitationStyle, model: ModelDefinition): Promise<string[]> => {
     try {
         const Cite = await getCiteConstructor();
         
-        const cslDataPromises = papers.map(paper => geminiService.extractCitationMetadata(paper, model));
+        const cslDataPromises = papers.map(paper => getPaperCslData(paper, model));
         const cslData = await Promise.all(cslDataPromises);
         
         const cite = new Cite(cslData);
@@ -73,7 +100,7 @@ export const generateRIS = async (papers: ResearchPaper[], model: ModelDefinitio
     try {
         const Cite = await getCiteConstructor();
 
-        const cslDataPromises = papers.map(paper => geminiService.extractCitationMetadata(paper, model));
+        const cslDataPromises = papers.map(paper => getPaperCslData(paper, model));
         const cslData = await Promise.all(cslDataPromises);
 
         const cite = new Cite(cslData);

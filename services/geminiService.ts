@@ -12,7 +12,8 @@ import type {
   SynthesisResult,
   GroundingSource,
   ModelDefinition,
-  KnowledgeGraph
+  KnowledgeGraph,
+  AdvancedSearchOptions
 } from "../types";
 
 const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
@@ -39,13 +40,16 @@ const mockApiAdapter = async (prompt: string, modelId: string, schema: any): Pro
     if (schema.properties?.answer) { return { answer: `[Mock RAG Response from ${modelId}] The answer is mocked.` }; }
     if (schema.properties?.study_design) { return { study_design: 'Observational Study' }; }
     if (schema.properties?.entities) { return { entities: [{id: 'e1', type: 'Concept', label: 'Mock Concept', description: 'A mock concept'}], relationships: [] }; }
+    if (schema.properties?.papers) { return { papers: [ { title: `[Mock Paper from ${modelId}]`, authors: 'Mock Author', year: 2023, abstract: 'A mock abstract.', sourceURL: 'https://mock.url', connection: 'mock connection', summary: 'mock summary' } ] }; }
+    if (schema.properties?.core_search_query) { return { core_search_query: prompt }; }
     return { mock_response: "This is a generic mock response." };
 };
 
-const geminiApiAdapter = async (prompt: string, modelId: string, schema: any): Promise<any> => {
+const geminiApiAdapter = async (prompt: string, modelId: string, schema: any, useGoogleSearch: boolean = false): Promise<any> => {
     const response = await ai.models.generateContent({
         model: modelId,
         contents: prompt,
+        tools: useGoogleSearch ? [{googleSearch: {}}] : undefined,
         config: {
             responseMimeType: "application/json",
             responseSchema: schema,
@@ -58,11 +62,11 @@ const geminiApiAdapter = async (prompt: string, modelId: string, schema: any): P
     return result;
 };
 
-const generateJsonWithModel = async (prompt: string, model: ModelDefinition, schema: any): Promise<any> => {
+const generateJsonWithModel = async (prompt: string, model: ModelDefinition, schema: any, useGoogleSearch: boolean = false): Promise<any> => {
     try {
         switch (model.provider) {
             case 'gemini':
-                return await geminiApiAdapter(prompt, model.id, schema);
+                return await geminiApiAdapter(prompt, model.id, schema, useGoogleSearch);
             case 'openai':
             case 'anthropic':
                 return await mockApiAdapter(prompt, model.id, schema);
@@ -74,6 +78,53 @@ const generateJsonWithModel = async (prompt: string, model: ModelDefinition, sch
         throw error;
     }
 };
+
+const structuredSearchSchema = {
+    type: Type.OBJECT,
+    properties: {
+        core_search_query: {
+            type: Type.STRING,
+            description: "The main topic or concept of the user's query, rephrased as an optimal search string for an academic database."
+        },
+        startYear: { type: Type.NUMBER, description: "The starting publication year, if specified." },
+        endYear: { type: Type.NUMBER, description: "The ending publication year, if specified." },
+        authors: { type: Type.STRING, description: "Any author names mentioned, formatted as a string." },
+        excludeKeywords: { type: Type.STRING, description: "Any concepts, words, or authors the user wants to exclude, as a comma-separated string." },
+        journal: { type: Type.STRING, description: "A specific journal or publication venue mentioned." },
+        minCitations: { type: Type.NUMBER, description: "A minimum number of citations, if specified." },
+        isOpenAccess: { type: Type.BOOLEAN, description: "Whether the user requested only open access results." },
+    },
+    required: ["core_search_query"],
+};
+
+export const parseQueryToStructuredFilters = async (userQuery: string, model: ModelDefinition): Promise<Partial<AdvancedSearchOptions> & { core_search_query: string }> => {
+    const prompt = `You are an expert academic librarian. Your task is to parse a user's natural language research query into a structured JSON object that can be used to query an academic database like OpenAlex.
+
+    **Instructions:**
+    1.  Identify the main topic and rephrase it into a 'core_search_query'. This should be a concise and effective search string.
+    2.  Extract any specific filters mentioned by the user.
+    3.  If a filter is not mentioned, do not include its key in the final JSON.
+    4.  Pay attention to dates, author names, exclusions, journals, citation counts, and open access requirements.
+    5.  For date ranges, extract 'startYear' and 'endYear'. A query like "since 2020" means startYear is 2020. "before 2019" means endYear is 2018. "in 2021" means both startYear and endYear are 2021.
+    6.  For exclusions, combine them into a single 'excludeKeywords' string.
+
+    **User's Query:** "${userQuery}"
+
+    Return ONLY the JSON object.`;
+
+    try {
+        const result = await generateJsonWithModel(prompt, model, structuredSearchSchema);
+        if (!result || !result.core_search_query) {
+            console.warn("Neuro-symbolic parsing failed. Falling back to using the raw query.");
+            return { core_search_query: userQuery };
+        }
+        return result;
+    } catch (error) {
+        console.error("Error in neuro-symbolic query parsing:", error);
+        return { core_search_query: userQuery }; // Fallback on error
+    }
+};
+
 
 const hypotheticalAnswerSchema = {
     type: Type.OBJECT,
@@ -532,7 +583,7 @@ const knowledgeGraphSchema = {
                 type: Type.OBJECT,
                 properties: {
                     id: { type: Type.STRING, description: "A unique identifier for the entity (e.g., 'concept_1')." },
-                    type: { type: Type.STRING, enum: ['Concept', 'Methodology', 'Finding', 'Context'] },
+                    type: { type: Type.STRING, description: "The type of entity. Must be one of: 'Concept', 'Methodology', 'Finding', 'Context'" },
                     label: { type: Type.STRING, description: "The name of the entity." },
                     description: { type: Type.STRING, description: "A brief one-sentence description of the entity." }
                 },
@@ -578,4 +629,122 @@ export const extractKnowledgeGraph = async (abstract: string, model: ModelDefini
 
     const result = await generateJsonWithModel(prompt, model, knowledgeGraphSchema);
     return result || { entities: [], relationships: [] };
+};
+
+
+const foundPapersSchema = {
+    type: Type.OBJECT,
+    properties: {
+        papers: {
+            type: Type.ARRAY,
+            description: "An array of academic papers found, up to a maximum of 10.",
+            items: {
+                type: Type.OBJECT,
+                properties: {
+                    title: { type: Type.STRING },
+                    authors: { type: Type.STRING, description: "A single string of comma-separated authors." },
+                    year: { type: Type.NUMBER },
+                    abstract: { type: Type.STRING, description: "A brief summary or abstract of the paper. If a full abstract is not available, a descriptive snippet is acceptable." },
+                    sourceURL: { type: Type.STRING, description: "A direct URL to the paper's landing page (e.g., on arXiv, a publisher's site, or Google Scholar)." }
+                },
+                required: ["title", "authors", "year", "abstract", "sourceURL"]
+            }
+        }
+    },
+    required: ["papers"]
+};
+
+export const findPapersWithGoogleSearch = async (
+    query: string,
+    model: ModelDefinition
+): Promise<Pick<ResearchPaper, 'title' | 'authors' | 'year' | 'abstract' | 'sourceURL'>[]> => {
+    const prompt = `You are an expert research assistant. A user has provided a research query. Your task is to use Google Search to find up to 10 of the most relevant academic papers, dissertations, or pre-prints that answer this query. Do not prioritize only recent papers; older, foundational work is just as important.
+
+**CRITICAL INSTRUCTIONS:**
+1.  **Prioritize Academic Sources:** Focus on results from Google Scholar, university repositories (like ProQuest, institutional archives), arXiv, Semantic Scholar, PubMed, etc.
+2.  **Extract All Fields:** For each paper you find, you MUST provide: title, authors (use "N/A" if not found), publication year, a concise abstract or summary (a descriptive snippet is acceptable if a full abstract isn't visible), and a direct URL to the paper's source page.
+3.  **Be Resilient:** Do not give up if a source is not a major publisher. University dissertations and conference proceedings are highly valuable. It is better to return a result with a short summary than no result at all.
+
+**User Query:** "${query}"
+
+Return your findings as a single JSON object containing a "papers" array.`;
+
+    try {
+        // Use a more powerful model for this complex task involving tool use.
+        const groundedModel = { ...model, id: 'gemini-2.5-pro' };
+        const result = await generateJsonWithModel(prompt, groundedModel, foundPapersSchema, true);
+        return result?.papers || [];
+    } catch (error) {
+        console.error("Error during AI Grounded Search:", error);
+        throw new Error("The AI-powered search failed. This may be a temporary issue. Please try again.");
+    }
+};
+
+const connectedPapersSchema = {
+    type: Type.OBJECT,
+    properties: {
+        papers: {
+            type: Type.ARRAY,
+            items: {
+                type: Type.OBJECT,
+                properties: {
+                    title: { type: Type.STRING },
+                    authors: { type: Type.STRING },
+                    year: { type: Type.NUMBER },
+                    connection: { type: Type.STRING, description: "How this paper is connected (e.g., 'builds upon', 'refutes', 'is cited by')." },
+                    summary: { type: Type.STRING, description: "A one-sentence summary of the connected paper." },
+                    sourceURL: { type: Type.STRING, description: "A URL to the paper, if found." }
+                },
+                required: ["title", "authors", "year", "connection", "summary"]
+            }
+        }
+    },
+    required: ["papers"]
+};
+
+export const findConnectedPapers = async (paper: ResearchPaper, model: ModelDefinition): Promise<ConnectedPaper[]> => {
+    const prompt = `You are a research expert. Based on the provided seed paper, use Google Search to find 5 connected academic papers. For each, identify a specific connection (e.g., "builds upon", "refutes the findings of", "is a foundational work for", "applies the methodology of") and provide a brief summary.
+
+    **Seed Paper:**
+    Title: "${paper.title}"
+    Abstract: "${paper.abstract}"
+
+    Return the results as a JSON object with a "papers" array.`;
+
+    try {
+        const groundedModel = { ...model, id: 'gemini-2.5-pro' };
+        const result = await generateJsonWithModel(prompt, groundedModel, connectedPapersSchema, true);
+        return result?.papers || [];
+    } catch (error) {
+        console.error("Error finding connected papers:", error);
+        throw new Error("The AI failed to find connected papers.");
+    }
+};
+
+const searchSuggestionsSchema = {
+    type: Type.OBJECT,
+    properties: {
+        suggestions: {
+            type: Type.ARRAY,
+            items: { type: Type.STRING },
+            description: "An array of 3-5 concise and relevant search query suggestions based on the user's partial input."
+        },
+    },
+    required: ["suggestions"],
+};
+
+export const generateSearchSuggestions = async (partialQuery: string, model: ModelDefinition): Promise<string[]> => {
+    const prompt = `You are an expert academic librarian. A user is typing a search query. Based on their partial input, generate 3-5 distinct and insightful search query suggestions that could help them find relevant academic papers. The suggestions should be alternative phrasings, more specific queries, or related concepts.
+
+    User's partial query: "${partialQuery}"
+
+    Return your response as a single JSON object with a "suggestions" key, which is an array of strings.`;
+
+    try {
+        const result = await generateJsonWithModel(prompt, model, searchSuggestionsSchema);
+        return result?.suggestions || [];
+    } catch (error) {
+        console.error("Error generating search suggestions:", error);
+        return [];
+    }
 };

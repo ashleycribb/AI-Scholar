@@ -1,13 +1,9 @@
-
-
-
-
-
-
 import React, { useState } from 'react';
 import { SearchIcon } from './icons/SearchIcon';
 import type { SummaryLength, AdvancedSearchOptions, SummaryStyle, ModelDefinition } from '../types';
 import { ChevronDownIcon } from './icons/ChevronDownIcon';
+import { RefineIcon } from './icons/RefineIcon';
+import { SearchSuggestions } from './SearchSuggestions';
 
 interface SearchFormProps {
   query: string;
@@ -22,6 +18,9 @@ interface SearchFormProps {
   onModelChange: (model: ModelDefinition) => void;
   availableModels: ModelDefinition[];
   logAnalyticsEvent: (eventName: string, payload: object) => void;
+  suggestions: string[];
+  isSuggestionsLoading: boolean;
+  onSuggestionClick: (suggestion: string) => void;
 }
 
 const summaryStyles: { id: SummaryStyle; name: string }[] = [
@@ -50,22 +49,39 @@ export const SearchForm: React.FC<SearchFormProps> = ({
     onStyleChange,
     model,
     onModelChange,
-    availableModels
+    availableModels,
+    suggestions,
+    isSuggestionsLoading,
+    onSuggestionClick
 }) => {
-  const [studyDesign, setStudyDesign] = useState('any');
+  const [isRefineOpen, setIsRefineOpen] = useState(false);
+  const [advancedOptions, setAdvancedOptions] = useState<AdvancedSearchOptions>({
+    startYear: '',
+    endYear: '',
+    authors: '',
+    excludeKeywords: '',
+    inclusionCriteria: '',
+    exclusionCriteria: '',
+    studyDesign: 'any',
+    journal: '',
+    minCitations: '',
+    titleKeywords: '',
+    abstractKeywords: '',
+    isOpenAccess: false,
+  });
+
+  const handleAdvancedChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => {
+    const { name, value, type } = e.target;
+    if (type === 'checkbox') {
+        setAdvancedOptions(prev => ({ ...prev, [name]: (e.target as HTMLInputElement).checked }));
+    } else {
+        setAdvancedOptions(prev => ({ ...prev, [name]: value }));
+    }
+  };
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    const searchOptions: AdvancedSearchOptions = {
-      startYear: '',
-      endYear: '',
-      authors: '',
-      excludeKeywords: '',
-      inclusionCriteria: '',
-      exclusionCriteria: '',
-      studyDesign: studyDesign
-    };
-    onSearch(query, searchOptions);
+    onSearch(query, advancedOptions);
   };
   
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -112,6 +128,18 @@ export const SearchForm: React.FC<SearchFormProps> = ({
                 <ChevronDownIcon className="w-4 h-4 text-muted-foreground" />
               </div>
             </div>
+            <button
+                type="button"
+                onClick={() => setIsRefineOpen(!isRefineOpen)}
+                aria-pressed={isRefineOpen}
+                title="Refine Search"
+                className={`w-11 h-11 flex-shrink-0 flex items-center justify-center font-semibold rounded-md border border-input focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-ring disabled:cursor-not-allowed transition-colors duration-200 ${
+                isRefineOpen ? 'bg-primary/10 text-primary ring-1 ring-ring' : 'bg-secondary text-secondary-foreground hover:bg-accent'
+                }`}
+                disabled={isLoading}
+            >
+                <RefineIcon className="w-5 h-5" />
+            </button>
           <button
             type="submit"
             disabled={isLoading || !query.trim()}
@@ -121,6 +149,63 @@ export const SearchForm: React.FC<SearchFormProps> = ({
           </button>
         </div>
         
+        {isRefineOpen && (
+          <div className="p-4 bg-muted/50 border border-border rounded-lg mt-2 animate-fade-in space-y-4">
+            <h3 className="text-sm font-semibold text-foreground">Advanced Search Filters</h3>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label htmlFor="startYear" className="block text-xs font-medium text-muted-foreground mb-1">Start Year</label>
+                  <input type="number" name="startYear" id="startYear" value={advancedOptions.startYear} onChange={handleAdvancedChange} placeholder="e.g., 2018" className="w-full h-9 px-3 text-sm bg-background border border-input rounded-md"/>
+                </div>
+                <div>
+                  <label htmlFor="endYear" className="block text-xs font-medium text-muted-foreground mb-1">End Year</label>
+                  <input type="number" name="endYear" id="endYear" value={advancedOptions.endYear} onChange={handleAdvancedChange} placeholder="e.g., 2023" className="w-full h-9 px-3 text-sm bg-background border border-input rounded-md"/>
+                </div>
+              </div>
+               <div>
+                  <label htmlFor="authors" className="block text-xs font-medium text-muted-foreground mb-1">Authors</label>
+                  <input type="text" name="authors" id="authors" value={advancedOptions.authors} onChange={handleAdvancedChange} placeholder="e.g., Smith J" className="w-full h-9 px-3 text-sm bg-background border border-input rounded-md"/>
+                </div>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <label htmlFor="journal" className="block text-xs font-medium text-muted-foreground mb-1">Journal / Venue</label>
+                <input type="text" name="journal" id="journal" value={advancedOptions.journal || ''} onChange={handleAdvancedChange} placeholder="e.g., Nature" className="w-full h-9 px-3 text-sm bg-background border border-input rounded-md"/>
+              </div>
+              <div>
+                <label htmlFor="minCitations" className="block text-xs font-medium text-muted-foreground mb-1">Minimum Citations</label>
+                <input type="number" name="minCitations" id="minCitations" value={advancedOptions.minCitations || ''} onChange={handleAdvancedChange} placeholder="e.g., 50" className="w-full h-9 px-3 text-sm bg-background border border-input rounded-md"/>
+              </div>
+            </div>
+            <div className="space-y-2">
+                <div>
+                  <label htmlFor="titleKeywords" className="block text-xs font-medium text-muted-foreground mb-1">Keywords in Title (comma-separated)</label>
+                  <input type="text" name="titleKeywords" id="titleKeywords" value={advancedOptions.titleKeywords || ''} onChange={handleAdvancedChange} placeholder="e.g., transformer, architecture" className="w-full h-9 px-3 text-sm bg-background border border-input rounded-md"/>
+                </div>
+                <div>
+                  <label htmlFor="abstractKeywords" className="block text-xs font-medium text-muted-foreground mb-1">Keywords in Abstract (comma-separated)</label>
+                  <input type="text" name="abstractKeywords" id="abstractKeywords" value={advancedOptions.abstractKeywords || ''} onChange={handleAdvancedChange} placeholder="e.g., attention mechanism" className="w-full h-9 px-3 text-sm bg-background border border-input rounded-md"/>
+                </div>
+            </div>
+             <div className="flex items-center gap-2 pt-2">
+                <input type="checkbox" name="isOpenAccess" id="isOpenAccess" checked={advancedOptions.isOpenAccess || false} onChange={handleAdvancedChange} className="h-4 w-4 rounded border-input text-primary focus:ring-primary"/>
+                <label htmlFor="isOpenAccess" className="text-sm font-medium text-foreground">Show only Open Access results</label>
+            </div>
+            <hr className="border-border" />
+             <div className="space-y-2">
+                <div>
+                  <label htmlFor="inclusionCriteria" className="block text-xs font-medium text-muted-foreground mb-1">Inclusion Criteria (for AI screening)</label>
+                  <textarea name="inclusionCriteria" id="inclusionCriteria" value={advancedOptions.inclusionCriteria} onChange={handleAdvancedChange} rows={2} placeholder="e.g., must focus on adolescent populations" className="w-full p-2 text-sm bg-background border border-input rounded-md"/>
+                </div>
+                <div>
+                  <label htmlFor="exclusionCriteria" className="block text-xs font-medium text-muted-foreground mb-1">Exclusion Criteria (for AI screening)</label>
+                  <textarea name="exclusionCriteria" id="exclusionCriteria" value={advancedOptions.exclusionCriteria} onChange={handleAdvancedChange} rows={2} placeholder="e.g., exclude animal studies" className="w-full p-2 text-sm bg-background border border-input rounded-md"/>
+                </div>
+            </div>
+          </div>
+        )}
+
         <div className="flex flex-col sm:flex-row justify-between items-center gap-4">
             <div className="flex flex-wrap items-center justify-center sm:justify-start gap-x-6 gap-y-3">
                 <div className="flex items-center gap-2">
@@ -163,8 +248,9 @@ export const SearchForm: React.FC<SearchFormProps> = ({
             <div className="relative">
                 <select
                     id="study-design-select"
-                    value={studyDesign}
-                    onChange={(e) => setStudyDesign(e.target.value)}
+                    name="studyDesign"
+                    value={advancedOptions.studyDesign}
+                    onChange={handleAdvancedChange}
                     disabled={isLoading}
                     className="h-9 pl-3 pr-8 bg-background border border-input rounded-md appearance-none focus:ring-2 focus:ring-ring text-sm"
                     aria-label="Filter by Study Design"
@@ -177,6 +263,13 @@ export const SearchForm: React.FC<SearchFormProps> = ({
             </div>
         </div>
       </form>
+      {(isSuggestionsLoading || suggestions.length > 0) && (
+        <SearchSuggestions
+            suggestions={suggestions}
+            isLoading={isSuggestionsLoading}
+            onSuggestionClick={onSuggestionClick}
+        />
+      )}
     </div>
   );
 };

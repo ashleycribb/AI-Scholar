@@ -1,4 +1,5 @@
 import React from 'react';
+import { SearchIcon } from './icons/SearchIcon';
 
 interface SearchSuggestionsProps {
   suggestions: string[];
@@ -7,26 +8,23 @@ interface SearchSuggestionsProps {
 }
 
 export const SearchSuggestions: React.FC<SearchSuggestionsProps> = ({ suggestions, isLoading, onSuggestionClick }) => {
-  if (!isLoading && suggestions.length === 0) {
-    return null;
-  }
-
   return (
-    <div className="absolute top-full mt-2 w-full bg-white rounded-lg shadow-lg border border-gray-200 z-20">
-      {isLoading ? (
-        <div className="p-3 text-sm text-gray-500 text-center">
-          Loading suggestions...
+    <div className="absolute top-full mt-2 w-full bg-card rounded-lg shadow-lg border border-border z-20 animate-fade-in">
+      {isLoading && suggestions.length === 0 ? (
+        <div className="p-3 text-sm text-muted-foreground text-center">
+          Generating suggestions...
         </div>
       ) : (
-        <ul className="divide-y divide-gray-100">
+        <ul className="divide-y divide-border">
           {suggestions.map((suggestion, index) => (
             <li key={index}>
               <button
                 type="button"
                 onClick={() => onSuggestionClick(suggestion)}
-                className="w-full text-left px-4 py-2.5 text-gray-700 hover:bg-gray-100 transition-colors duration-150"
+                className="w-full text-left px-4 py-2.5 text-foreground hover:bg-muted transition-colors duration-150 flex items-center gap-2"
               >
-                {suggestion}
+                <SearchIcon className="w-4 h-4 text-muted-foreground" />
+                <span>{suggestion}</span>
               </button>
             </li>
           ))}

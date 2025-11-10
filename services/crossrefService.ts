@@ -1,3 +1,4 @@
+
 import type { ResearchPaper, CrossrefWork } from '../types';
 
 // Helper to normalize strings for comparison by removing case and non-alphanumeric characters.
@@ -56,7 +57,7 @@ export const fetchPaperFromCrossref = async (paper: ResearchPaper): Promise<Cros
             const normalizedApiTitle = normalizeString(apiTitle);
             
             // A match is considered high-confidence if the titles are very similar AND an author name matches.
-            const titleIsSimilar = normalizedApiTitle.includes(normalizedPaperTitle) || normalizedPaperTitle.includes(normalizedApiTitle);
+            const titleIsSimilar = normalizedApiTitle.includes(normalizedPaperTitle) || normalizedPaperTitle.includes(normalizedPaperTitle);
 
             if (titleIsSimilar && checkAuthorMatch(paper.authors, item.author)) {
                 return item as CrossrefWork; // Found a confident match.
@@ -115,5 +116,27 @@ export const findDoiForPaper = async (paper: ResearchPaper): Promise<string | nu
     } catch (error) {
         console.error("Error finding DOI:", error);
         throw new Error("Failed to communicate with Crossref API to find DOI.");
+    }
+};
+
+/**
+ * Fetches a perfectly formatted CSL-JSON object directly from the Crossref API.
+ * This is the most reliable way to get citation data for a paper with a DOI.
+ * @param doi The Digital Object Identifier of the paper.
+ * @returns A promise that resolves to a CSL-JSON object or null if not found.
+ */
+export const fetchCslFromCrossref = async (doi: string): Promise<object | null> => {
+    const url = `https://api.crossref.org/works/${encodeURIComponent(doi)}/transform/application/vnd.citationstyles.csl+json`;
+    try {
+        const response = await fetch(url);
+        if (!response.ok) {
+            console.warn(`Crossref CSL fetch failed for DOI ${doi}: Status ${response.status}`);
+            return null;
+        }
+        const cslData = await response.json();
+        return cslData;
+    } catch (error) {
+        console.error(`Error fetching CSL from Crossref for DOI ${doi}:`, error);
+        return null;
     }
 };

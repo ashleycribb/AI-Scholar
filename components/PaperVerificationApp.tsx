@@ -1,6 +1,3 @@
-
-
-
 import React, { useState, useEffect, useMemo } from 'react';
 import type { GoldStandardPaper, UserStudyData, ResearchPaper, VerificationResult } from '../types';
 import * as verificationService from '../services/verificationService';
@@ -113,7 +110,7 @@ export const PaperVerificationApp: React.FC<PaperVerificationAppProps> = ({ data
     }
 
     return (
-        <div className="container mx-auto p-8 max-w-4xl">
+        <div className="container mx-auto px-8 py-6 max-w-4xl">
             <h1 className="text-2xl font-bold mb-2">Evaluation Task</h1>
             <p className="text-muted-foreground mb-6">Please evaluate the following claim based on the provided paper abstract.</p>
 

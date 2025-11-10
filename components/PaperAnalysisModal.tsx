@@ -10,6 +10,7 @@ import { ExternalLinkIcon } from './icons/ExternalLinkIcon';
 import { CheckIcon } from './icons/CheckIcon';
 
 interface PaperAnalysisModalProps {
+  isOpen: boolean;
   result: {
     paper: ResearchPaper;
     analysis: PaperAnalysis;
@@ -30,7 +31,11 @@ const AnalysisSection: React.FC<{ title: string; children: React.ReactNode }> = 
     </div>
 );
 
-export const PaperAnalysisModal: React.FC<PaperAnalysisModalProps> = ({ result, onClose, error, isLoading, onSaveAnalysis, isAnalysisSaved }) => {
+export const PaperAnalysisModal: React.FC<PaperAnalysisModalProps> = ({ isOpen, result, onClose, error, isLoading, onSaveAnalysis, isAnalysisSaved }) => {
+  if (!isOpen) {
+    return null;
+  }
+  
   if (!result) {
     return null;
   }

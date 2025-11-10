@@ -1,6 +1,3 @@
-
-
-
 import React, { useState } from 'react';
 import type { GoldStandardPaper, TestHarnessResult, UserStudyData } from '../types';
 import * as apiService from '../services/apiService';
@@ -238,7 +235,7 @@ export const ResearcherDashboard: React.FC<ResearcherDashboardProps> = (props) =
     }
 
     return (
-        <div className="container mx-auto p-4 sm:p-6 lg:p-8">
+        <div className="container mx-auto px-4 sm:px-6 lg:px-8 py-6">
             <h1 className="text-3xl font-bold mb-4">Researcher Dashboard</h1>
             
             <div className="border-b mb-4">

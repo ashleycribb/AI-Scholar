@@ -26,6 +26,9 @@ interface InitialSearchScreenProps {
   children?: React.ReactNode;
   onOpenDbFinder: () => void;
   searchSources: SearchSourceInfo[];
+  suggestions: string[];
+  isSuggestionsLoading: boolean;
+  onSuggestionClick: (suggestion: string) => void;
 }
 
 export const InitialSearchScreen: React.FC<InitialSearchScreenProps> = (props) => {

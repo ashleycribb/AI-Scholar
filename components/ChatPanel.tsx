@@ -1,9 +1,9 @@
 
-
 import React, { useState, useEffect, useRef } from 'react';
 import type { ChatMessage } from '../types';
 import { SendIcon } from './icons/SendIcon';
 import { GroundingSources } from './GroundingSources';
+import { ToolCallDisplay } from './ToolCallDisplay';
 
 interface ChatPanelProps {
     history: ChatMessage[];
@@ -57,19 +57,35 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({ history, isLoading, error,
     return (
         <div className="h-full bg-card p-4 flex flex-col">
             <div className="flex-grow overflow-y-auto pr-2 space-y-4">
-                {history.map((msg, index) => (
-                    <div key={index} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                        <div className={`max-w-prose px-4 py-2 rounded-xl ${msg.role === 'user' ? 'bg-primary text-primary-foreground' : 'bg-secondary text-secondary-foreground'}`}>
-                            <p className="text-base whitespace-pre-wrap">
-                                <FormattedMessage text={msg.parts[0].text} />
-                                {isLoading && msg.role === 'model' && index === history.length - 1 && <ChatBlinkingCursor />}
-                            </p>
-                            {msg.sources && msg.sources.length > 0 && (
-                                <GroundingSources sources={msg.sources} />
-                            )}
+                {history.map((msg, index) => {
+                    if (msg.role === 'tool') {
+                        const toolCall = msg.parts[0]?.toolCall;
+                        const toolResponse = msg.parts[0]?.toolResponse;
+                        return (
+                            <ToolCallDisplay
+                                key={index}
+                                toolName={toolCall?.name || 'unknown_tool'}
+                                toolArgs={toolCall?.args || {}}
+                                result={toolResponse?.result}
+                                isExecuting={!toolResponse}
+                            />
+                        );
+                    }
+
+                    return (
+                        <div key={index} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                            <div className={`max-w-prose px-4 py-2 rounded-xl ${msg.role === 'user' ? 'bg-primary text-primary-foreground' : 'bg-secondary text-secondary-foreground'}`}>
+                                <div className="text-base whitespace-pre-wrap">
+                                    {msg.parts[0]?.text && <FormattedMessage text={msg.parts[0].text} />}
+                                    {isLoading && msg.role === 'model' && index === history.length - 1 && <ChatBlinkingCursor />}
+                                </div>
+                                {msg.sources && msg.sources.length > 0 && (
+                                    <GroundingSources sources={msg.sources} />
+                                )}
+                            </div>
                         </div>
-                    </div>
-                ))}
+                    );
+                })}
                 {/* Invisible element to scroll to */}
                 <div ref={messagesEndRef} />
             </div>

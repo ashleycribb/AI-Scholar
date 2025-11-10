@@ -1,7 +1,8 @@
+
 import React, { useState, useEffect, useMemo } from 'react';
-import type { ResearchPaper, SummaryLength, SummaryStyle, AdvancedSearchOptions, AnalysisResult, Project, VerificationResult, PaperAnalysis, SortConfig, SortKey, SynthesisResult, AppMode, GoldStandardPaper, UserStudyData, TestHarnessResult, ModelDefinition, ChatMessage, SearchSourceInfo, SuggestionsResult } from './types';
+import type { ResearchPaper, SummaryLength, SummaryStyle, AdvancedSearchOptions, AnalysisResult, Project, VerificationResult, PaperAnalysis, SortConfig, SortKey, SynthesisResult, AppMode, GoldStandardPaper, UserStudyData, TestHarnessResult, ModelDefinition, ChatMessage, SearchSourceInfo, SuggestionsResult, ConnectedPaper } from './types';
 import * as apiService from './services/apiService';
-import * as ragService from './services/ragService';
+import * as agentService from './services/agentService';
 import { ResultsDisplay } from './components/ResultsDisplay';
 import { LoadingSpinner } from './components/LoadingSpinner';
 import { ErrorMessage } from './components/ErrorMessage';
@@ -10,7 +11,6 @@ import { ExtensionPromo } from './components/ExtensionPromo';
 import { WorkspacePanel } from './components/WorkspacePanel';
 import { SuggestionsModal } from './components/SuggestionsModal';
 import { VerificationModal } from './components/VerificationModal';
-import { DashboardToggleButton } from './components/ResearcherLoginButton';
 import { SearchForm } from './components/SearchForm';
 import { OnboardingModal } from './components/OnboardingModal';
 import { InfoModal } from './components/InfoModal';
@@ -21,13 +21,13 @@ import { SynthesisModal } from './components/SynthesisModal';
 import { ResearcherDashboard } from './components/ResearcherDashboard';
 import { PaperVerificationApp } from './components/PaperVerificationApp';
 import * as verificationService from './services/verificationService';
-import { HelpButton } from './components/HelpButton';
-import { AboutButton } from './components/AboutButton';
 import { analyticsService } from './services/analyticsService';
 import { CitationModal } from './components/CitationModal';
 import * as extensionService from './services/extensionService';
 import { DatabaseFinderModal } from './components/DatabaseFinderModal';
 import * as analysisService from './services/analysisService';
+import { Header } from './components/Header';
+import { ConnectedPapersModal } from './components/ConnectedPapersModal';
 
 
 const PROJECT_COLORS = ['sky', 'green', 'yellow', 'red', 'purple', 'pink', 'indigo', 'teal'];
@@ -38,7 +38,6 @@ export const AVAILABLE_MODELS: ModelDefinition[] = [
   { id: 'gpt-4-turbo', name: 'OpenAI GPT-4 Turbo', provider: 'openai', isMock: true },
   { id: 'claude-3-sonnet', name: 'Anthropic Claude 3 Sonnet', provider: 'anthropic', isMock: true },
 ];
-
 
 const App: React.FC = () => {
     // App mode
@@ -64,12 +63,29 @@ const App: React.FC = () => {
     const [projectChats, setProjectChats] = useState<{ [projectId: string]: { history: ChatMessage[], isLoading: boolean } }>({});
     const [searchSources, setSearchSources] = useState<SearchSourceInfo[]>([{ id: 'openalex', name: 'OpenAlex', description: 'A comprehensive open index of scholarly works.' }]);
     
+    // Live Search Suggestions
+    const [searchSuggestions, setSearchSuggestions] = useState<string[]>([]);
+    const [isGeneratingSearchSuggestions, setIsGeneratingSearchSuggestions] = useState(false);
+
     // Pagination state
     const [summary, setSummary] = useState<string>('');
     const [currentPage, setCurrentPage] = useState(1);
     const [isLoadingMore, setIsLoadingMore] = useState(false);
     const [hasMore, setHasMore] = useState(false);
-    const [lastUsedOptions, setLastUsedOptions] = useState<AdvancedSearchOptions>({ startYear: '', endYear: '', authors: '', excludeKeywords: '', inclusionCriteria: '', exclusionCriteria: '', studyDesign: 'any' });
+    const [lastUsedOptions, setLastUsedOptions] = useState<AdvancedSearchOptions>({
+        startYear: '',
+        endYear: '',
+        authors: '',
+        excludeKeywords: '',
+        inclusionCriteria: '',
+        exclusionCriteria: '',
+        studyDesign: 'any',
+        journal: '',
+        minCitations: '',
+        titleKeywords: '',
+        abstractKeywords: '',
+        isOpenAccess: false,
+    });
 
     // Modals State
     const [isVerificationModalOpen, setIsVerificationModalOpen] = useState(false);
@@ -95,6 +111,10 @@ const App: React.FC = () => {
     const [suggestionsResult, setSuggestionsResult] = useState<SuggestionsResult | null>(null);
     const [isGeneratingSuggestions, setIsGeneratingSuggestions] = useState(false);
     const [suggestionsError, setSuggestionsError] = useState<string | null>(null);
+    const [isConnectionsModalOpen, setIsConnectionsModalOpen] = useState(false);
+    const [connectionsResult, setConnectionsResult] = useState<{ seedPaper: ResearchPaper; connections: ConnectedPaper[] } | null>(null);
+    const [isFindingConnections, setIsFindingConnections] = useState(false);
+    const [connectionsError, setConnectionsError] = useState<string | null>(null);
 
 
     // Dissertation Study State
@@ -122,9 +142,46 @@ const App: React.FC = () => {
         return cleanup;
     }, []);
 
+    // Effect for debouncing search suggestions
+    useEffect(() => {
+        const fetchSearchSuggestions = async (currentQuery: string) => {
+            setIsGeneratingSearchSuggestions(true);
+            try {
+                const suggestions = await apiService.generateSearchSuggestions(currentQuery, model);
+                // Only update suggestions if the query hasn't changed while fetching
+                setQuery(prevQuery => {
+                    if (prevQuery === currentQuery) {
+                        setSearchSuggestions(suggestions);
+                    }
+                    return prevQuery;
+                });
+            } catch (error) {
+                console.error("Failed to fetch search suggestions:", error);
+                setSearchSuggestions([]);
+            } finally {
+                setIsGeneratingSearchSuggestions(false);
+            }
+        };
+
+        const handler = setTimeout(() => {
+            if (query.length > 3 && !isLoading && !hasSearched) {
+                fetchSearchSuggestions(query);
+            } else {
+                setSearchSuggestions([]);
+            }
+        }, 500); // 500ms debounce
+
+        return () => {
+            clearTimeout(handler);
+        };
+    }, [query, isLoading, hasSearched, model]);
+
+
     const handleSearch = async (searchQuery: string, options: AdvancedSearchOptions) => {
         if (!searchQuery.trim()) return;
 
+        setSearchSuggestions([]);
+        setIsGeneratingSearchSuggestions(false);
         setIsLoading(true);
         setError(null);
         setPapers([]);
@@ -154,6 +211,11 @@ const App: React.FC = () => {
         } finally {
             setIsLoading(false);
         }
+    };
+    
+    const handleSuggestionSearch = (suggestion: string) => {
+        setQuery(suggestion);
+        handleSearch(suggestion, lastUsedOptions);
     };
 
     const handleLoadMore = async () => {
@@ -252,6 +314,7 @@ const App: React.FC = () => {
     };
     
     const handleOpenVerificationModal = (paper: ResearchPaper) => {
+        analyticsService.logEvent('tool_used', { tool: 'verify_paper_modal_opened', paperId: paper.id });
         setPaperToVerify(paper);
         setIsVerificationModalOpen(true);
     };
@@ -265,6 +328,7 @@ const App: React.FC = () => {
     };
 
     const handleAnalyzeGaps = async (papersToAnalyze: ResearchPaper[], modelToUse: ModelDefinition) => {
+        analyticsService.logEvent('tool_used', { tool: 'analyze_gaps', paperCount: papersToAnalyze.length });
         setIsGapAnalysisModalOpen(true);
         setIsAnalyzingGaps(true);
         setGapAnalysisError(null);
@@ -282,6 +346,7 @@ const App: React.FC = () => {
     };
 
     const handleAnalyzePaper = async (paper: ResearchPaper) => {
+        analyticsService.logEvent('tool_used', { tool: 'analyze_single_paper', paperId: paper.id });
         setIsAnalysisModalOpen(true);
         setIsAnalyzingPaper(true);
         setAnalysisError(null);
@@ -312,10 +377,11 @@ const App: React.FC = () => {
     const handleConceptSearch = (concept: string) => {
         const currentQuery = query;
         setQuery(concept);
-        handleSearch(concept, { startYear: '', endYear: '', authors: '', excludeKeywords: '', inclusionCriteria: `"${concept}" OR "${currentQuery}"`, exclusionCriteria: '', studyDesign: 'any' });
+        handleSearch(concept, { ...lastUsedOptions, inclusionCriteria: `"${concept}" OR "${currentQuery}"` });
     };
     
     const handleOpenCitationModal = (paper: ResearchPaper) => {
+        analyticsService.logEvent('tool_used', { tool: 'open_citation_modal', paperId: paper.id });
         setPaperForCitation(paper);
         setIsCitationModalOpen(true);
     };
@@ -346,11 +412,12 @@ const App: React.FC = () => {
     const handleAiRerank = async () => {
         setIsReranking(true);
         try {
-            const included = papers.filter(p => p.screeningStatus === 'include');
+            const includedExplicit = papers.filter(p => p.screeningStatus === 'include');
+            const allIncluded = [...new Map([...includedExplicit, ...workspacePapers].map(item => [item.id, item])).values()];
             const excluded = papers.filter(p => p.screeningStatus === 'exclude');
-            const unscreened = papers.filter(p => p.screeningStatus === 'none');
+            const unscreened = papers.filter(p => !p.screeningStatus || p.screeningStatus === 'none');
 
-            const rerankedResults = await apiService.rerankForScreening(included, excluded, unscreened, model);
+            const rerankedResults = await apiService.rerankForScreening(allIncluded, excluded, unscreened, model);
 
             const rerankedMap = new Map(rerankedResults.map(r => [r.paperId, { score: r.score, rationale: r.rationale }]));
 
@@ -374,6 +441,7 @@ const App: React.FC = () => {
     };
 
     const handleGenerateSuggestions = async (paper: ResearchPaper) => {
+        analyticsService.logEvent('tool_used', { tool: 'generate_suggestions', paperId: paper.id });
         setIsGeneratingSuggestions(true);
         setSuggestionsError(null);
         setIsSuggestionsModalOpen(true);
@@ -390,10 +458,43 @@ const App: React.FC = () => {
         }
     };
 
-    const handleSuggestionSearch = (newQuery: string) => {
+    const handleSuggestionClick = (newQuery: string) => {
         setIsSuggestionsModalOpen(false);
         setQuery(newQuery);
-        handleSearch(newQuery, { startYear: '', endYear: '', authors: '', excludeKeywords: '', inclusionCriteria: '', exclusionCriteria: '', studyDesign: 'any' });
+        handleSearch(newQuery, lastUsedOptions);
+    };
+
+    const handleFindDoi = async (paperToUpdate: ResearchPaper) => {
+        analyticsService.logEvent('tool_used', { tool: 'find_doi', paperId: paperToUpdate.id });
+        updatePaperState(paperToUpdate.id, { doiState: 'loading' });
+        try {
+            const doi = await apiService.findDoiForPaper(paperToUpdate);
+            if (doi) {
+                updatePaperState(paperToUpdate.id, { doi: doi, doiState: 'loaded' });
+            } else {
+                updatePaperState(paperToUpdate.id, { doiState: 'error' });
+            }
+        } catch (error) {
+            console.error("Failed to find DOI:", error);
+            updatePaperState(paperToUpdate.id, { doiState: 'error' });
+        }
+    };
+
+    const handleFindConnectedPapers = async (paper: ResearchPaper) => {
+        analyticsService.logEvent('tool_used', { tool: 'find_connected_papers', paperId: paper.id });
+        setIsConnectionsModalOpen(true);
+        setIsFindingConnections(true);
+        setConnectionsError(null);
+        setConnectionsResult({ seedPaper: paper, connections: [] });
+
+        try {
+            const connections = await apiService.findConnectedPapers(paper, model);
+            setConnectionsResult({ seedPaper: paper, connections });
+        } catch (err) {
+            setConnectionsError(err instanceof Error ? err.message : "An unknown error occurred.");
+        } finally {
+            setIsFindingConnections(false);
+        }
     };
 
 
@@ -466,6 +567,7 @@ const App: React.FC = () => {
     };
 
     const handleSynthesizeWorkspace = async (papersToSynthesize: ResearchPaper[], modelToUse: ModelDefinition) => {
+        analyticsService.logEvent('tool_used', { tool: 'synthesize_workspace', paperCount: papersToSynthesize.length });
         setIsSynthesisModalOpen(true);
         setIsSynthesizing(true);
         setSynthesisError(null);
@@ -505,9 +607,9 @@ const App: React.FC = () => {
     const handleProjectChat = async (projectId: string, message: string) => {
         const project = projects.find(p => p.id === projectId);
         if (!project) return;
-
+    
         const userMessage: ChatMessage = { role: 'user', parts: [{ text: message }] };
-
+    
         setProjectChats(prev => ({
             ...prev,
             [projectId]: {
@@ -515,20 +617,40 @@ const App: React.FC = () => {
                 isLoading: true,
             }
         }));
-
+    
         try {
             const projectPapers = project.paperIds.map(id => workspacePapers.find(p => p.id === id)).filter((p): p is ResearchPaper => !!p);
-            const responseText = await ragService.chatWithProject(message, projectPapers, model);
-            const modelMessage: ChatMessage = { role: 'model', parts: [{ text: responseText }] };
             
-            setProjectChats(prev => ({
-                ...prev,
-                [projectId]: {
-                    history: [...(prev[projectId]?.history || []), modelMessage],
-                    isLoading: false,
-                }
-            }));
-
+            // The agent service now streams updates. We'll handle them one by one.
+            const agentStream = agentService.runAgentTask(message, project, projectPapers, model);
+    
+            for await (const update of agentStream) {
+                setProjectChats(prev => {
+                    const currentHistory = prev[projectId]?.history || [];
+                    let newHistory = [...currentHistory];
+    
+                    if (update.type === 'tool-start') {
+                        newHistory.push({ role: 'tool', parts: [{ toolCall: update.toolCall }] });
+                    } else if (update.type === 'tool-end') {
+                        // Find the corresponding tool-start message and add the result
+                        const lastMsgIndex = newHistory.length - 1;
+                        if (newHistory[lastMsgIndex]?.role === 'tool' && newHistory[lastMsgIndex].parts[0].toolCall?.name === update.toolResponse.name) {
+                            newHistory[lastMsgIndex].parts[0].toolResponse = update.toolResponse;
+                        }
+                    } else if (update.type === 'final-answer') {
+                        newHistory.push({ role: 'model', parts: [{ text: update.text }] });
+                    }
+    
+                    return {
+                        ...prev,
+                        [projectId]: {
+                            ...prev[projectId],
+                            history: newHistory,
+                        },
+                    };
+                });
+            }
+    
         } catch (error) {
             const errorMessage = error instanceof Error ? error.message : "An error occurred.";
             const modelMessage: ChatMessage = { role: 'model', parts: [{ text: `Error: ${errorMessage}` }] };
@@ -536,6 +658,14 @@ const App: React.FC = () => {
                 ...prev,
                 [projectId]: {
                     history: [...(prev[projectId]?.history || []), modelMessage],
+                    isLoading: false,
+                }
+            }));
+        } finally {
+            setProjectChats(prev => ({
+                ...prev,
+                [projectId]: {
+                    ...prev[projectId],
                     isLoading: false,
                 }
             }));
@@ -622,16 +752,50 @@ const App: React.FC = () => {
             case 'search':
             default:
                 return (
-                    <div className="container mx-auto p-4 sm:p-6 lg:p-8">
+                    <div className="container mx-auto px-4 sm:px-6 lg:px-8 py-6">
                         <div className="grid grid-cols-1 lg:grid-cols-5 gap-8">
                             <main className={hasSearched ? "lg:col-span-3" : "lg:col-span-5"}>
                                 {!hasSearched ? (
-                                    <InitialSearchScreen query={query} onQueryChange={setQuery} onSearch={handleSearch} isLoading={isLoading} summaryLength={summaryLength} onLengthChange={setSummaryLength} summaryStyle={summaryStyle} onStyleChange={setSummaryStyle} model={model} onModelChange={setModel} availableModels={AVAILABLE_MODELS} logAnalyticsEvent={() => {}} onOpenDbFinder={() => setIsDbFinderOpen(true)} searchSources={searchSources}>
+                                    <InitialSearchScreen 
+                                        query={query} 
+                                        onQueryChange={setQuery} 
+                                        onSearch={handleSearch} 
+                                        isLoading={isLoading} 
+                                        summaryLength={summaryLength} 
+                                        onLengthChange={setSummaryLength} 
+                                        summaryStyle={summaryStyle} 
+                                        onStyleChange={setSummaryStyle} 
+                                        model={model} 
+                                        onModelChange={setModel} 
+                                        availableModels={AVAILABLE_MODELS} 
+                                        logAnalyticsEvent={() => {}} 
+                                        onOpenDbFinder={() => setIsDbFinderOpen(true)} 
+                                        searchSources={searchSources}
+                                        suggestions={searchSuggestions}
+                                        isSuggestionsLoading={isGeneratingSearchSuggestions}
+                                        onSuggestionClick={handleSuggestionSearch}
+                                    >
                                         <ExtensionPromo />
                                     </InitialSearchScreen>
                                 ) : (
                                     <div className="space-y-6">
-                                        <SearchForm query={query} onQueryChange={setQuery} onSearch={handleSearch} isLoading={isLoading} summaryLength={summaryLength} onLengthChange={setSummaryLength} summaryStyle={summaryStyle} onStyleChange={setSummaryStyle} model={model} onModelChange={setModel} availableModels={AVAILABLE_MODELS} logAnalyticsEvent={() => {}} />
+                                        <SearchForm 
+                                            query={query} 
+                                            onQueryChange={setQuery} 
+                                            onSearch={handleSearch} 
+                                            isLoading={isLoading} 
+                                            summaryLength={summaryLength} 
+                                            onLengthChange={setSummaryLength} 
+                                            summaryStyle={summaryStyle} 
+                                            onStyleChange={setSummaryStyle} 
+                                            model={model} 
+                                            onModelChange={setModel} 
+                                            availableModels={AVAILABLE_MODELS} 
+                                            logAnalyticsEvent={() => {}}
+                                            suggestions={searchSuggestions}
+                                            isSuggestionsLoading={isGeneratingSearchSuggestions}
+                                            onSuggestionClick={handleSuggestionSearch}
+                                        />
                                         {isLoading && <LoadingSpinner message={"Searching..."} />}
                                         {error && <ErrorMessage message={error} />}
                                         {!isLoading && !error && hasSearched && (
@@ -657,7 +821,7 @@ const App: React.FC = () => {
 
                             {hasSearched && (
                                 <aside className="lg:col-span-2">
-                                <WorkspacePanel papers={papers} selectedPaper={selectedPaper} analysis={analysis} summary={summary} workspacePapers={workspacePapers} projects={projects} sources={[]} onToggleWorkspacePaper={handleToggleWorkspacePaper} onFindConnectedPapers={() => {}} isFindingConnected={false} onAnalyzePaper={handleAnalyzePaper} onCitePaper={handleOpenCitationModal} isAnalyzingPaper={isAnalyzingPaper} onConceptClick={handleConceptSearch} onFindDoi={() => {}} onGenerateSuggestions={handleGenerateSuggestions} isGeneratingSuggestions={isGeneratingSuggestions} onVerifyPaper={handleOpenVerificationModal} logAnalyticsEvent={() => {}} refinedQueries={refinedQueries} isGeneratingRefined={false} onRefinedQuerySearch={() => {}} onAnalyzeGaps={handleAnalyzeGaps} onSynthesizeWorkspace={handleSynthesizeWorkspace} onCreateProject={handleCreateProject} onDeleteProject={handleDeleteProject} onMovePaperToProject={handleMovePaperToProject} onUpdateProjectColor={handleUpdateProjectColor} model={model} onIndexPaperForRag={handleIndexPaperForRag} projectChats={projectChats} onProjectChat={handleProjectChat} />
+                                <WorkspacePanel papers={papers} selectedPaper={selectedPaper} analysis={analysis} summary={summary} workspacePapers={workspacePapers} projects={projects} sources={[]} onToggleWorkspacePaper={handleToggleWorkspacePaper} onFindConnectedPapers={handleFindConnectedPapers} isFindingConnected={isFindingConnections} onAnalyzePaper={handleAnalyzePaper} onCitePaper={handleOpenCitationModal} isAnalyzingPaper={isAnalyzingPaper} onConceptClick={handleConceptSearch} onFindDoi={handleFindDoi} onGenerateSuggestions={handleGenerateSuggestions} isGeneratingSuggestions={isGeneratingSuggestions} onVerifyPaper={handleOpenVerificationModal} logAnalyticsEvent={() => {}} refinedQueries={refinedQueries} isGeneratingRefined={false} onRefinedQuerySearch={() => {}} onAnalyzeGaps={handleAnalyzeGaps} onSynthesizeWorkspace={handleSynthesizeWorkspace} onCreateProject={handleCreateProject} onDeleteProject={handleDeleteProject} onMovePaperToProject={handleMovePaperToProject} onUpdateProjectColor={handleUpdateProjectColor} model={model} onIndexPaperForRag={handleIndexPaperForRag} projectChats={projectChats} onProjectChat={handleProjectChat} />
                                 </aside>
                             )}
                         </div>
@@ -667,13 +831,16 @@ const App: React.FC = () => {
     }
 
     return (
-        <div className="min-h-screen bg-background text-foreground">
-            <div className="absolute top-4 right-4 sm:top-6 sm:right-6 lg:top-8 lg:right-8 flex items-center gap-2 z-10">
-                <AboutButton onClick={() => setIsAboutModalOpen(true)} />
-                <HelpButton onClick={() => setIsOnboardingOpen(true)} />
-                <DashboardToggleButton appMode={appMode} onModeChange={setAppMode} />
+        <div className="min-h-screen bg-background text-foreground flex flex-col">
+            <Header
+                onOpenAbout={() => setIsAboutModalOpen(true)}
+                onOpenHelp={() => setIsOnboardingOpen(true)}
+                appMode={appMode}
+                onModeChange={setAppMode}
+            />
+            <div className="flex-grow">
+                {renderAppMode()}
             </div>
-            {renderAppMode()}
             
             {/* Modals are kept at the top level to be accessible from any mode */}
             {isOnboardingOpen && <OnboardingModal onComplete={() => setIsOnboardingOpen(false)} onSkip={() => setIsOnboardingOpen(false)} />}
@@ -684,7 +851,8 @@ const App: React.FC = () => {
             <SynthesisModal isOpen={isSynthesisModalOpen} onClose={() => setIsSynthesisModalOpen(false)} isLoading={isSynthesizing} result={synthesisResult} error={synthesisError} />
             <CitationModal isOpen={isCitationModalOpen} onClose={() => setIsCitationModalOpen(false)} paper={paperForCitation} model={model} />
             <DatabaseFinderModal isOpen={isDbFinderOpen} onClose={() => setIsDbFinderOpen(false)} onAddSource={handleAddSource} existingSources={searchSources} />
-            <SuggestionsModal isOpen={isSuggestionsModalOpen} onClose={() => setIsSuggestionsModalOpen(false)} result={suggestionsResult} isLoading={isGeneratingSuggestions} error={suggestionsError} onSuggestionClick={handleSuggestionSearch} />
+            <SuggestionsModal isOpen={isSuggestionsModalOpen} onClose={() => setIsSuggestionsModalOpen(false)} result={suggestionsResult} isLoading={isGeneratingSuggestions} error={suggestionsError} onSuggestionClick={handleSuggestionClick} />
+            <ConnectedPapersModal isOpen={isConnectionsModalOpen} onClose={() => setIsConnectionsModalOpen(false)} result={connectionsResult} error={connectionsError} isLoading={isFindingConnections} />
         </div>
     );
 };

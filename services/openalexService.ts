@@ -119,6 +119,12 @@ export const searchOpenAlex = async (query: string, options: AdvancedSearchOptio
         // Use the .search field to find authors
         filters.push(`authorships.author.display_name.search:${options.authors}`);
     }
+    if (options.journal) {
+        filters.push(`host_venue.display_name.search:${options.journal}`);
+    }
+    if (options.minCitations && parseInt(options.minCitations, 10) > 0) {
+        filters.push(`cited_by_count:>${parseInt(options.minCitations, 10)}`);
+    }
     
     if (filters.length > 0) {
         params.append('filter', filters.join(','));

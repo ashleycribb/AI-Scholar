@@ -1,4 +1,4 @@
-import type { AdvancedSearchOptions, ResearchPaper, SummaryLength, SummaryStyle, ModelDefinition, SearchSourceInfo, KnowledgeGraph, PaperAnalysis, SynthesisResult } from '../types';
+import type { AdvancedSearchOptions, ResearchPaper, SummaryLength, SummaryStyle, ModelDefinition, SearchSourceInfo, KnowledgeGraph, PaperAnalysis, SynthesisResult, ConnectedPaper } from '../types';
 import * as validationService from './validationService';
 import { createPaperId } from './extensionService';
 import * as unpaywallService from './unpaywallService';
@@ -6,6 +6,11 @@ import * as openalexService from './openalexService';
 import * as arxivService from './arxivService';
 import * as geminiService from './geminiService';
 import * as embeddingService from './embeddingService';
+import { cosineSimilarity } from '../utils/math';
+// FIX: Import batchEmbedText directly as it's not exported from embeddingService.
+import { batchEmbedText } from '../utils/embeddings';
+import * as crossrefService from './crossrefService';
+import * as semanticScholarService from './semanticScholarService';
 
 // --- HELPER FUNCTIONS MOVED FROM AGENT BACKEND ---
 
@@ -26,18 +31,42 @@ const calculateTitleMatchScore = (query: string, title: string): number => {
     return (matchCount / uniqueQueryWords.size) * 100;
 };
 
-async function combineArxivAndOpenAlexResults(allPapers: ResearchPaper[]): Promise<ResearchPaper[]> {
-    const uniquePapersMap = new Map<string, ResearchPaper>();
+function combineAndDeduplicateResults(allPapers: ResearchPaper[]): ResearchPaper[] {
+    const paperGroups = new Map<string, ResearchPaper[]>();
+
     allPapers.forEach(paper => {
-        // Use createPaperId for robust de-duplication
         const id = createPaperId(paper);
-        const existingPaper = uniquePapersMap.get(id);
-        // Prioritize arXiv entries if they exist, as they are often more complete
-        if (!existingPaper || paper.enrichmentSource === 'arXiv') {
-            uniquePapersMap.set(id, { ...paper, id });
+        if (!paperGroups.has(id)) {
+            paperGroups.set(id, []);
         }
+        paperGroups.get(id)!.push(paper);
     });
-    return Array.from(uniquePapersMap.values());
+
+    const mergedPapers: ResearchPaper[] = [];
+
+    paperGroups.forEach((papers, id) => {
+        // Simple merge strategy: start with the first paper and fill in missing fields from others.
+        // A more sophisticated strategy could prioritize sources (e.g., OpenAlex for citations, arXiv for PDF).
+        const merged = papers.reduce((acc, current) => {
+            return {
+                ...acc,
+                // Prioritize longer abstracts
+                abstract: (current.abstract && current.abstract.length > (acc.abstract?.length || 0) && current.abstract !== 'No abstract available for this paper.') ? current.abstract : acc.abstract,
+                // Prioritize available citations
+                citations: current.citations ?? acc.citations,
+                // Prioritize available PDF URLs
+                pdfURL: current.pdfURL ?? acc.pdfURL,
+                // Prioritize more specific source URLs
+                sourceURL: current.sourceURL?.includes('doi.org') ? current.sourceURL : (acc.sourceURL || current.sourceURL),
+                journal: current.journal ?? acc.journal,
+                enrichmentSource: current.enrichmentSource ?? acc.enrichmentSource,
+            };
+        }, { ...papers[0], id }); // Start with the first paper as the base
+        
+        mergedPapers.push(merged);
+    });
+
+    return mergedPapers;
 }
 
 async function calculatePaperScores(
@@ -51,9 +80,74 @@ async function calculatePaperScores(
 
     const semanticallyRankedPapers = await embeddingService.calculateSemanticScores(hypotheticalAnswer, papers);
 
-    let papersWithStudyDesign = semanticallyRankedPapers;
+    let processedPapers = semanticallyRankedPapers;
+
+    // --- New Semantic Impact Score Calculation ---
+    const papersWithAbstracts = processedPapers.filter(p => p.abstract && p.abstract.trim().length > 50);
+
+    if (papersWithAbstracts.length > 1) {
+        const abstracts = papersWithAbstracts.map(p => p.abstract);
+        // FIX: Call batchEmbedText directly since it is not exported from embeddingService.
+        const allPaperEmbeddings = await batchEmbedText(abstracts);
+
+        const embeddingMap = new Map<string, number[]>();
+        papersWithAbstracts.forEach((paper, index) => {
+            embeddingMap.set(paper.id, allPaperEmbeddings[index]);
+        });
+
+        const centralityScores = new Map<string, number>();
+        papersWithAbstracts.forEach(paperA => {
+            const embeddingA = embeddingMap.get(paperA.id);
+            if (!embeddingA || embeddingA.length === 0) {
+                centralityScores.set(paperA.id, 0); return;
+            }
+            let totalSimilarity = 0;
+            let count = 0;
+            papersWithAbstracts.forEach(paperB => {
+                if (paperA.id === paperB.id) return;
+                const embeddingB = embeddingMap.get(paperB.id);
+                if (embeddingB && embeddingB.length > 0) {
+                    totalSimilarity += cosineSimilarity(embeddingA, embeddingB);
+                    count++;
+                }
+            });
+            const avgSimilarity = count > 0 ? totalSimilarity / count : 0;
+            centralityScores.set(paperA.id, ((avgSimilarity + 1) / 2) * 100); // Normalize to 0-100
+        });
+
+        const currentYear = new Date().getFullYear();
+        const papersWithCitationsPerYear = papersWithAbstracts.map(paper => {
+            const age = Math.max(1, currentYear - paper.year);
+            const citationsPerYear = (paper.citations || 0) / age;
+            return { id: paper.id, citationsPerYear };
+        });
+        const maxCitationsPerYear = Math.max(...papersWithCitationsPerYear.map(p => p.citationsPerYear), 1);
+
+        processedPapers = processedPapers.map(paper => {
+            const centrality = centralityScores.get(paper.id) || 0;
+            const cpyData = papersWithCitationsPerYear.find(p => p.id === paper.id);
+            const citationImpact = cpyData ? (cpyData.citationsPerYear / maxCitationsPerYear) * 100 : 0;
+            
+            // New impactScore combines semantic centrality (how representative it is of the topic)
+            // with citation velocity (how impactful it has been over time).
+            const newImpactScore = (citationImpact * 0.6) + (centrality * 0.4);
+            return { ...paper, impactScore: newImpactScore };
+        });
+    } else {
+         // Fallback for single result or if no abstracts are available
+        const currentYear = new Date().getFullYear();
+        processedPapers = processedPapers.map(paper => {
+            const age = Math.max(1, currentYear - paper.year);
+            const citationsPerYear = (paper.citations || 0) / age;
+            const impactScore = citationsPerYear > 0 ? 50 : 0; // Can't normalize with one item, give it a medium score.
+            return { ...paper, impactScore };
+        });
+    }
+
+
+    let papersWithStudyDesign = processedPapers;
     if (options.studyDesign && options.studyDesign !== 'any') {
-        const designClassificationPromises = semanticallyRankedPapers.map(async (paper) => {
+        const designClassificationPromises = papersWithStudyDesign.map(async (paper) => {
             const design = await geminiService.classifyStudyDesign(paper, model);
             return { ...paper, detectedStudyDesign: design };
         });
@@ -62,32 +156,27 @@ async function calculatePaperScores(
 
     let papersWithScreening = papersWithStudyDesign;
     if (options.inclusionCriteria?.trim() || options.exclusionCriteria?.trim()) {
-        const screeningPromises = papersWithStudyDesign.map(p => 
+        const screeningPromises = papersWithScreening.map(p => 
             geminiService.evaluateScreeningFit(p, options.inclusionCriteria, options.exclusionCriteria, model)
         );
         const screeningResults = await Promise.all(screeningPromises);
-        papersWithScreening = papersWithStudyDesign.map((paper, index) => ({
+        papersWithScreening = papersWithScreening.map((paper, index) => ({
             ...paper,
             screeningFitScore: screeningResults[index].score,
             screeningRationale: screeningResults[index].rationale,
         }));
     }
     
-    const currentYear = new Date().getFullYear();
-    const maxCitations = Math.max(...papersWithScreening.map(p => p.citations || 0), 1);
-
     const papersWithCombinedScore = papersWithScreening.map(paper => {
         const semanticScore = paper.semanticScore || 0;
-        const normalizedCitations = Math.log10((paper.citations || 0) + 1);
-        const maxNormalizedCitations = Math.log10(maxCitations + 1);
-        const impactScore = maxNormalizedCitations > 0 ? (normalizedCitations / maxNormalizedCitations) * 100 : 0;
-        const age = currentYear - paper.year;
-        const recencyScore = Math.max(0, 100 - (age * 5));
+        const impactScore = paper.impactScore || 0;
+        const currentYear = new Date().getFullYear();
+        const recencyScore = Math.max(0, 100 - ((currentYear - paper.year) * 5));
         const titleMatchScore = calculateTitleMatchScore(query, paper.title);
 
-        const combinedScore = (semanticScore * 0.5) + (impactScore * 0.2) + (recencyScore * 0.15) + (titleMatchScore * 0.15);
+        const combinedScore = (semanticScore * 0.60) + (impactScore * 0.20) + (titleMatchScore * 0.15) + (recencyScore * 0.05);
         
-        return { ...paper, impactScore, combinedScore };
+        return { ...paper, combinedScore };
     });
 
     return papersWithCombinedScore.sort((a, b) => (b.combinedScore || 0) - (a.combinedScore || 0));
@@ -105,22 +194,91 @@ export const search = async (
     page: number = 1
 ): Promise<{ papers: ResearchPaper[], summary: string, hasMore: boolean }> => {
     
-    const hypotheticalAnswer = await geminiService.generateHypotheticalAnswer(query, model);
-    
-    const searchPromises: Promise<{ papers: ResearchPaper[], hasMore: boolean }>[] = [];
+    // Neuro-Symbolic Step: Parse the natural language query into structured filters.
+    const parsedFilters = await geminiService.parseQueryToStructuredFilters(query, model);
+
+    // Merge explicitly set options from the UI with the parsed filters. UI options take precedence.
+    const finalOptions: AdvancedSearchOptions = {
+        ...parsedFilters,
+        ...options,
+        startYear: options.startYear || parsedFilters.startYear?.toString() || '',
+        endYear: options.endYear || parsedFilters.endYear?.toString() || '',
+        authors: options.authors || parsedFilters.authors || '',
+        excludeKeywords: options.excludeKeywords || parsedFilters.excludeKeywords || '',
+        journal: options.journal || parsedFilters.journal || '',
+        minCitations: options.minCitations || parsedFilters.minCitations?.toString() || '',
+        isOpenAccess: options.isOpenAccess || parsedFilters.isOpenAccess || false,
+    };
+
+    const retrievalQuery = parsedFilters.core_search_query;
+    const hypotheticalAnswer = await geminiService.generateHypotheticalAnswer(retrievalQuery, model);
+
+    const searchPromises: Promise<ResearchPaper[]>[] = [];
+    let openAlexHasMore = false; 
+
+    // Add API-based searches
     if (sources.some(s => s.id === 'openalex')) {
-        searchPromises.push(openalexService.searchOpenAlex(query, options, page));
+        const promise = openalexService.searchOpenAlex(retrievalQuery, finalOptions, page).then(result => {
+            openAlexHasMore = result.hasMore;
+            return result.papers;
+        });
+        searchPromises.push(promise);
     }
     if (sources.some(s => s.id === 'arxiv')) {
-        searchPromises.push(arxivService.searchArxiv(query, page));
+        const promise = arxivService.searchArxiv(retrievalQuery, page).then(result => result.papers);
+        searchPromises.push(promise);
     }
 
-    const searchResults = await Promise.all(searchPromises);
-    const allPapers = searchResults.flatMap(r => r.papers);
-    const hasMore = searchResults.some(r => r.hasMore);
+    // Add AI Grounded Search to run in parallel on the first page load.
+    if (page === 1) {
+        console.log("Running parallel AI Grounded Search.");
+        const groundedSearchPromise = geminiService.findPapersWithGoogleSearch(query, model).then(foundPapers => 
+            foundPapers.map(p => {
+                const paperData: Omit<ResearchPaper, 'id'> = {
+                    title: p.title,
+                    authors: p.authors,
+                    year: p.year,
+                    abstract: p.abstract,
+                    sourceURL: p.sourceURL,
+                    pdfURL: undefined,
+                    citations: undefined, 
+                };
+                return { ...paperData, id: createPaperId(paperData) };
+            })
+        ).catch(err => {
+            console.warn("AI Grounded search failed, but other sources may succeed.", err);
+            return []; // Return empty array on failure so other sources aren't blocked
+        });
+        searchPromises.push(groundedSearchPromise);
+    }
+
+    const allResults = await Promise.all(searchPromises);
+    const allPapers = allResults.flat();
     
-    let papers = await combineArxivAndOpenAlexResults(allPapers);
-    papers = await calculatePaperScores(papers, query, hypotheticalAnswer, model, options);
+    if (allPapers.length === 0) {
+        throw new Error("No academic papers were found for this query from any source. Please try a different query.");
+    }
+    
+    // For pagination, we'll rely on the structured source (OpenAlex)
+    const hasMore = openAlexHasMore;
+    
+    let papers = combineAndDeduplicateResults(allPapers);
+    
+    // --- Apply Manticore-inspired pre-filters before scoring ---
+    if (finalOptions.titleKeywords) {
+        const keywords = finalOptions.titleKeywords.split(',').map(k => k.trim().toLowerCase()).filter(Boolean);
+        if (keywords.length > 0) {
+            papers = papers.filter(p => keywords.every(kw => p.title.toLowerCase().includes(kw)));
+        }
+    }
+    if (finalOptions.abstractKeywords) {
+        const keywords = finalOptions.abstractKeywords.split(',').map(k => k.trim().toLowerCase()).filter(Boolean);
+        if (keywords.length > 0) {
+            papers = papers.filter(p => keywords.every(kw => p.abstract.toLowerCase().includes(kw)));
+        }
+    }
+
+    papers = await calculatePaperScores(papers, retrievalQuery, hypotheticalAnswer, model, finalOptions);
 
     const validationPromises = papers.map(async (p) => {
         const { validation, updatedPaperData } = await validationService.validatePaper(p);
@@ -131,13 +289,22 @@ export const search = async (
         };
     });
 
-    const validatedPapers = await Promise.all(validationPromises);
+    let validatedPapers = await Promise.all(validationPromises);
+    
+    // Apply Open Access filter *after* validation, which discovers OA status
+    if (finalOptions.isOpenAccess) {
+        validatedPapers = validatedPapers.filter(p => p.validation?.checks.open_access);
+    }
 
-    const summary = page === 1 
+    const summary = page === 1 && validatedPapers.length > 0
         ? await geminiService.generateSummaryForPapers(validatedPapers.slice(0, 5), summaryLength, summaryStyle, model)
         : "";
 
     return { papers: validatedPapers, summary, hasMore };
+};
+
+export const generateSearchSuggestions = async (query: string, model: ModelDefinition): Promise<string[]> => {
+    return await geminiService.generateSearchSuggestions(query, model);
 };
 
 export const analyzeGaps = async (papers: ResearchPaper[], model: ModelDefinition): Promise<string> => {
@@ -168,6 +335,10 @@ export const fetchMetadataByDOI = async (doi: string): Promise<ResearchPaper | n
     return await openalexService.searchOpenAlexByDoi(doi);
 };
 
+export const findDoiForPaper = async (paper: ResearchPaper): Promise<string | null> => {
+    return await crossrefService.findDoiForPaper(paper);
+};
+
 export const rerankForScreening = async (
     included: ResearchPaper[],
     excluded: ResearchPaper[],
@@ -190,4 +361,24 @@ export const rerankForScreening = async (
 
 export const generateSuggestions = async (paper: ResearchPaper, model: ModelDefinition): Promise<string[]> => {
     return await geminiService.generatePaperBasedSuggestions(paper, model);
+};
+
+export const findConnectedPapers = async (paper: ResearchPaper, model: ModelDefinition): Promise<ConnectedPaper[]> => {
+    if (!paper.doi) {
+        // Fallback to the original Gemini-based method if there's no DOI
+        console.log("No DOI for connected papers, falling back to AI search.");
+        return await geminiService.findConnectedPapers(paper, model);
+    }
+
+    try {
+        const { references, citations } = await semanticScholarService.getCitationGraph(paper.doi);
+        
+        // Combine them into a single list for the modal, the `connection` field will distinguish them
+        return [...citations, ...references];
+
+    } catch (error) {
+        console.error("Failed to get citation graph, falling back to AI search.", error);
+        // Fallback to Gemini if the new service fails
+        return await geminiService.findConnectedPapers(paper, model);
+    }
 };

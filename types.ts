@@ -1,9 +1,4 @@
 
-
-
-
-
-
 export type SummaryLength = 'short' | 'medium' | 'detailed';
 export type SummaryStyle = 'paragraph' | 'bullets' | 'qa';
 export type CitationStyle = 'apa' | 'mla' | 'chicago' | 'harvard' | 'ieee' | 'vancouver';
@@ -32,6 +27,12 @@ export interface AdvancedSearchOptions {
   inclusionCriteria: string;
   exclusionCriteria: string;
   studyDesign: string;
+  // New fields inspired by Manticore
+  journal?: string;
+  minCitations?: string;
+  titleKeywords?: string;
+  abstractKeywords?: string;
+  isOpenAccess?: boolean;
 }
 
 export interface ValidationResult {
@@ -140,8 +141,19 @@ export interface GroundingSource {
 }
 
 export interface ChatMessage {
-  role: 'user' | 'model';
-  parts: { text: string }[];
+  role: 'user' | 'model' | 'tool';
+  parts: { 
+    text?: string;
+    toolCall?: {
+      name: string;
+      args: any;
+      thinking: string;
+    };
+    toolResponse?: {
+      name: string;
+      result: any;
+    };
+  }[];
   sources?: GroundingSource[];
 }
 

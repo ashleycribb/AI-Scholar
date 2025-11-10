@@ -1,13 +1,7 @@
-
-
-
-
-
 import React, { useState, useEffect, useCallback } from 'react';
 import type { ResearchPaper, CitationStyle, ModelDefinition } from '../types';
 import { ErrorMessage } from './ErrorMessage';
 import { CopyIcon } from './icons/CopyIcon';
-// Fix: Imported from citationService instead of apiService for citation-related functions.
 import * as citationService from '../services/citationService';
 import { ZoteroIcon } from './icons/ZoteroIcon';
 
@@ -39,7 +33,6 @@ export const BibliographyGenerator: React.FC<BibliographyGeneratorProps> = ({ pa
     setError(null);
     setCitations([]);
     try {
-      // Fix: Called generateCitations from citationService.
       const result = await citationService.generateCitations(papers, style, model);
       setCitations(result);
     } catch (err) {
@@ -67,7 +60,6 @@ export const BibliographyGenerator: React.FC<BibliographyGeneratorProps> = ({ pa
     if (papers.length === 0) return;
     setIsExporting(true);
     try {
-        // Fix: Called generateRIS from citationService.
         const risString = await citationService.generateRIS(papers, model);
         const blob = new Blob([risString], { type: 'application/x-research-info-systems' });
         const url = URL.createObjectURL(blob);
