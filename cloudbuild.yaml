@@ -21,6 +21,13 @@ steps:
   - name: 'gcr.io/cloud-builders/docker'
     args: ['push', 'us-central1-docker.pkg.dev/$PROJECT_ID/$_ARTIFACT_REGISTRY_REPO/frontend:$COMMIT_SHA']
 
+  # Build the fine-tuning-service image
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['build', '-t', 'us-central1-docker.pkg.dev/$PROJECT_ID/$_ARTIFACT_REGISTRY_REPO/fine-tuning-service:$COMMIT_SHA', './fine-tuning-service']
+  # Push the fine-tuning-service image
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['push', 'us-central1-docker.pkg.dev/$PROJECT_ID/$_ARTIFACT_REGISTRY_REPO/fine-tuning-service:$COMMIT_SHA']
+
   # Deploy agent-backend to Cloud Run
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
     entrypoint: gcloud
@@ -59,10 +66,24 @@ steps:
       - '--platform=managed'
       - '--allow-unauthenticated'
 
+  # Deploy fine-tuning-service to Cloud Run
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: gcloud
+    args:
+      - 'run'
+      - 'deploy'
+      - 'fine-tuning-service'
+      - '--image=us-central1-docker.pkg.dev/$PROJECT_ID/$_ARTIFACT_REGISTRY_REPO/fine-tuning-service:$COMMIT_SHA'
+      - '--region=us-central1'
+      - '--platform=managed'
+      - '--allow-unauthenticated'
+      - '--update-secrets=GCLOUD_PROJECT=GCLOUD_PROJECT:latest,GCLOUD_LOCATION=GCLOUD_LOCATION:latest'
+
 images:
   - 'us-central1-docker.pkg.dev/$PROJECT_ID/$_ARTIFACT_REGISTRY_REPO/agent-backend:$COMMIT_SHA'
   - 'us-central1-docker.pkg.dev/$PROJECT_ID/$_ARTIFACT_REGISTRY_REPO/backend:$COMMIT_SHA'
   - 'us-central1-docker.pkg.dev/$PROJECT_ID/$_ARTIFACT_REGISTRY_REPO/frontend:$COMMIT_SHA'
+  - 'us-central1-docker.pkg.dev/$PROJECT_ID/$_ARTIFACT_REGISTRY_REPO/fine-tuning-service:$COMMIT_SHA'
 
 options:
   logging: CLOUD_LOGGING_ONLY

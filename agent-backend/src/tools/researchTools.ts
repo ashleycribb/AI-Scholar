@@ -6,7 +6,7 @@ import * as CrossrefService from "../services/crossrefService.js";
 import * as OpenAlexService from "../services/openAlexService.js";
 import * as ArxivService from "../services/arxivService.js";
 import * as UnpaywallService from "../services/unpaywallService.js";
-import * as GeminiService from "../services/geminiService.js";
+import * as AiService from "../services/aiService.js";
 import * as MetadataService from "../services/metadataService.js";
 import * as RetrievalService from "../services/retrievalService.js";
 import * as EntailmentService from "../services/entailmentService.js";
@@ -83,7 +83,7 @@ export class ExtractFactsTool extends Tool {
             required: ["facts"],
         };
         
-        const result = await GeminiService.generateJsonWithModel(prompt, input.model, factsSchema);
+        const result = await AiService.generateJsonWithModel(prompt, input.model, factsSchema);
         return JSON.stringify(result?.facts || []);
     }
 }
@@ -427,7 +427,7 @@ export class ExtractKnowledgeGraphTool extends Tool {
             required: ["entities", "relationships"]
         };
 
-        const result = await GeminiService.generateJsonWithModel(prompt, input.model, knowledgeGraphSchema);
+        const result = await AiService.generateJsonWithModel(prompt, input.model, knowledgeGraphSchema);
         return JSON.stringify(result);
     }
 }
@@ -514,7 +514,7 @@ export class GenerateHypotheticalAnswerTool extends Tool {
     });
 
     async _call(input: z.infer<typeof this.schema>): Promise<string> {
-        return await GeminiService.generateHypotheticalAnswer(input.userQuery, input.model as ModelDefinition);
+        return await AiService.generateHypotheticalAnswer(input.userQuery, input.model as ModelDefinition);
     }
 }
 
@@ -532,7 +532,7 @@ export class EvaluateScreeningFitTool extends Tool {
     });
 
     async _call(input: z.infer<typeof this.schema>): Promise<string> {
-        const result = await GeminiService.evaluateScreeningFit(input.paper as ResearchPaper, input.inclusionCriteria, input.exclusionCriteria, input.model as ModelDefinition);
+        const result = await AiService.evaluateScreeningFit(input.paper as ResearchPaper, input.inclusionCriteria, input.exclusionCriteria, input.model as ModelDefinition);
         return JSON.stringify(result);
     }
 }
@@ -551,7 +551,7 @@ export class GenerateSummaryForPapersTool extends Tool {
     });
 
     async _call(input: z.infer<typeof this.schema>): Promise<string> {
-        return await GeminiService.generateSummaryForPapers(input.papers as ResearchPaper[], input.summaryLength as SummaryLength, input.summaryStyle as SummaryStyle, input.model as ModelDefinition);
+        return await AiService.generateSummaryForPapers(input.papers as ResearchPaper[], input.summaryLength as SummaryLength, input.summaryStyle as SummaryStyle, input.model as ModelDefinition);
     }
 }
 
@@ -622,7 +622,7 @@ export class AnalyzeResearchGapsTool extends Tool {
                 required: ["report"],
             };
             
-            const result = await GeminiService.generateJsonWithModel(prompt, input.model as ModelDefinition, gapAnalysisSchema);
+            const result = await AiService.generateJsonWithModel(prompt, input.model as ModelDefinition, gapAnalysisSchema);
             return result?.report || "Could not complete the research gap analysis.";
 
         } catch (error) {
@@ -652,7 +652,7 @@ export class AnalyzeResearchGapsTool extends Tool {
             };
         
             try {
-                const result = await GeminiService.generateJsonWithModel(fallbackPrompt, input.model as ModelDefinition, gapAnalysisSchema);
+                const result = await AiService.generateJsonWithModel(fallbackPrompt, input.model as ModelDefinition, gapAnalysisSchema);
                 return result?.report || "Could not complete the research gap analysis.";
             } catch (fallbackError) {
                 console.error("Fallback gap analysis also failed:", fallbackError);
@@ -676,7 +676,7 @@ export class AnalyzeSinglePaperTool extends Tool {
     });
 
     async _call(input: z.infer<typeof this.schema>): Promise<string> {
-        const analysisResult = await GeminiService.analyzeSinglePaper(input.paper as ResearchPaper, input.model as ModelDefinition);
+        const analysisResult = await AiService.analyzeSinglePaper(input.paper as ResearchPaper, input.model as ModelDefinition);
         return JSON.stringify(analysisResult);
     }
 }
@@ -690,7 +690,7 @@ export class ExtractKeyConceptsTool extends Tool {
     });
 
     async _call(input: z.infer<typeof this.schema>): Promise<string> {
-        const concepts = await GeminiService.extractKeyConcepts(input.abstract, input.model as ModelDefinition);
+        const concepts = await AiService.extractKeyConcepts(input.abstract, input.model as ModelDefinition);
         return JSON.stringify(concepts);
     }
 }
@@ -769,7 +769,7 @@ To guide your synthesis, here is a consolidated list of key themes found across 
         };
 
         try {
-            const result = await GeminiService.generateJsonWithModel(prompt, input.model as ModelDefinition, synthesisSchema);
+            const result = await AiService.generateJsonWithModel(prompt, input.model as ModelDefinition, synthesisSchema);
             return JSON.stringify(result || []);
         } catch (error) {
             console.error("Error synthesizing papers:", error);
@@ -795,7 +795,7 @@ export class ExtractCitationMetadataTool extends Tool {
     });
 
     async _call(input: z.infer<typeof this.schema>): Promise<string> {
-        const cslMetadata = await GeminiService.extractCitationMetadata(input.paper as ResearchPaper, input.model as ModelDefinition);
+        const cslMetadata = await AiService.extractCitationMetadata(input.paper as ResearchPaper, input.model as ModelDefinition);
         return JSON.stringify(cslMetadata);
     }
 }
@@ -811,7 +811,7 @@ export class ClassifyStudyDesignTool extends Tool {
     });
 
     async _call(input: z.infer<typeof this.schema>): Promise<string> {
-        return await GeminiService.classifyStudyDesign(input.paper as ResearchPaper, input.model as ModelDefinition);
+        return await AiService.classifyStudyDesign(input.paper as ResearchPaper, input.model as ModelDefinition);
     }
 }
 
@@ -838,7 +838,7 @@ export class RerankForScreeningTool extends Tool {
     });
 
     async _call(input: z.infer<typeof this.schema>): Promise<string> {
-        const result = await GeminiService.rerankByScreeningExample(
+        const result = await AiService.rerankByScreeningExample(
             input.included as ResearchPaper[],
             input.excluded as ResearchPaper[],
             input.paperToRerank as ResearchPaper,
@@ -858,7 +858,7 @@ export class GenerateRAGAnswerTool extends Tool {
     });
 
     async _call(input: z.infer<typeof this.schema>): Promise<string> {
-        return await GeminiService.generateRAGAnswer(input.query, input.context, input.model as ModelDefinition);
+        return await AiService.generateRAGAnswer(input.query, input.context, input.model as ModelDefinition);
     }
 }
 
@@ -874,7 +874,7 @@ export class GeneratePaperBasedSuggestionsTool extends Tool {
     });
 
     async _call(input: z.infer<typeof this.schema>): Promise<string> {
-        const suggestions = await GeminiService.generatePaperBasedSuggestions(input.paper as ResearchPaper, input.model as ModelDefinition);
+        const suggestions = await AiService.generatePaperBasedSuggestions(input.paper as ResearchPaper, input.model as ModelDefinition);
         return JSON.stringify(suggestions);
     }
 }

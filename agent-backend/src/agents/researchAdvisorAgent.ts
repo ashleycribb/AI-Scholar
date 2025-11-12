@@ -25,7 +25,7 @@ import {
 } from "../tools/researchTools.js";
 import { ModelDefinition, AdvancedSearchOptions, SummaryLength, SummaryStyle, ResearchPaper, SearchSourceInfo } from "../types/index.js";
 import { combineArxivAndOpenAlexResults, calculatePaperScores } from "./utils/paperProcessing.js"; 
-import * as GeminiService from "../services/geminiService.js";
+import * as AiService from "../services/aiService.js";
 
 const DEFAULT_AGENT_MODEL: ModelDefinition = { id: 'gemini-2.5-flash', name: 'Gemini Flash', provider: 'gemini' };
 
@@ -118,7 +118,7 @@ class ResearchAdvisorAgent {
                 input,
                 ...options,
             });
-            return GeminiService.safeJsonParse(result.output) || result.output;
+            return AiService.safeJsonParse(result.output) || result.output;
         } catch (error) {
             console.error(`Error running agent for input '${input}':`, error);
             throw new Error(`Agent failed to process your request. Error: ${error instanceof Error ? error.message : "Unknown error"}`);

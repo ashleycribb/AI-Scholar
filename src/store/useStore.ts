@@ -16,10 +16,10 @@ import {
   ChatMessage,
   SearchSourceInfo,
   SuggestionsResult,
-} from '../../types';
-import * as apiService from '../../services/apiService';
-import * as analysisService from '../../services/analysisService';
-import * as ragService from '../../services/ragService';
+} from '../types';
+import * as apiService from '../services/apiService';
+import * as analysisService from '../services/analysisService';
+import * as ragService from '../services/ragService';
 
 interface AppState {
   appMode: AppMode;
@@ -63,6 +63,8 @@ interface AppState {
   suggestionsResult: SuggestionsResult | null;
   isGeneratingSuggestions: boolean;
   suggestionsError: string | null;
+  isUploadingPdf: boolean;
+  pdfUploadError: string | null;
 
   setAppMode: (mode: AppMode) => void;
   setQuery: (query: string) => void;
@@ -103,6 +105,7 @@ interface AppState {
   openDbFinder: () => void;
   closeDbFinder: () => void;
   closeSuggestionsModal: () => void;
+  uploadPdf: (file: File) => Promise<void>;
 }
 
 export const useStore = create<AppState>((set, get) => ({
@@ -147,6 +150,8 @@ export const useStore = create<AppState>((set, get) => ({
   suggestionsResult: null,
   isGeneratingSuggestions: false,
   suggestionsError: null,
+  isUploadingPdf: false,
+  pdfUploadError: null,
 
   setAppMode: (mode) => set({ appMode: mode }),
   setQuery: (query) => set({ query }),
@@ -475,4 +480,18 @@ export const useStore = create<AppState>((set, get) => ({
   openDbFinder: () => set({ isDbFinderOpen: true }),
   closeDbFinder: () => set({ isDbFinderOpen: false }),
   closeSuggestionsModal: () => set({ isSuggestionsModalOpen: false }),
+  uploadPdf: async (file) => {
+    set({ isUploadingPdf: true, pdfUploadError: null });
+    try {
+      const { model } = get();
+      const paper = await apiService.uploadPdf(file, model);
+      set((state) => ({
+        workspacePapers: [...state.workspacePapers, paper],
+      }));
+    } catch (err) {
+      set({ pdfUploadError: err instanceof Error ? err.message : "An unknown error occurred." });
+    } finally {
+      set({ isUploadingPdf: false });
+    }
+  },
 }));

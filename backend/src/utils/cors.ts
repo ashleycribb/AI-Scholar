@@ -3,8 +3,11 @@ import { CorsOptions } from 'cors';
 
 const allowedOrigins = [
   'http://localhost:3000', // Allow local development
-  'https://YOUR_FRONTEND_URL', // Replace with your frontend's domain
 ];
+
+if (process.env.FRONTEND_URL) {
+  allowedOrigins.push(process.env.FRONTEND_URL);
+}
 
 const corsOptions: CorsOptions = {
   origin: (origin, callback) => {

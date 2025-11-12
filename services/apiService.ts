@@ -5,7 +5,25 @@ import * as unpaywallService from './unpaywallService';
 import * as openAlexService from './openalexService';
 
 // Use an environment variable for the backend URL, with a fallback for local development.
-const AGENT_BACKEND_URL = process.env.AGENT_BACKEND_URL || 'http://localhost:3002/api/agents';
+const AGENT_BACKEND_URL = process.env.AGENT_BACKEND_URL || 'http://localhost:3002/api';
+
+export async function uploadPdf(file: File, model: ModelDefinition): Promise<ResearchPaper> {
+    const formData = new FormData();
+    formData.append('pdf', file);
+    formData.append('model', JSON.stringify(model));
+
+    const response = await fetch(`${AGENT_BACKEND_URL}/pdf/upload`, {
+        method: 'POST',
+        body: formData,
+    });
+
+    if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.details || 'Failed to upload PDF.');
+    }
+
+    return response.json();
+}
 
 // Helper for making requests to the new agent backend
 const callAgentBackend = async (intent: string, payload: any): Promise<any> => {

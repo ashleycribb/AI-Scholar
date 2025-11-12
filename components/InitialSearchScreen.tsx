@@ -29,7 +29,7 @@ interface InitialSearchScreenProps {
 }
 
 export const InitialSearchScreen: React.FC<InitialSearchScreenProps> = (props) => {
-  const { onSearch, onOpenDbFinder, searchSources, ...searchFormProps } = props;
+  const { onSearch, onOpenDbFinder, searchSources, children, ...searchFormProps } = props;
 
   const handleSearch = (query: string, options: AdvancedSearchOptions) => {
       props.onSearch(query, options);

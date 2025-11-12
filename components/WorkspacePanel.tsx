@@ -6,6 +6,7 @@ import { LightbulbIcon } from './icons/LightbulbIcon';
 import { SearchIcon } from './icons/SearchIcon';
 import { BibliographyGenerator } from './BibliographyGenerator';
 import { ProjectWorkspace } from './ProjectWorkspace';
+import { PdfUpload } from './PdfUpload';
 
 
 interface RefinedQueriesProps {
@@ -78,6 +79,9 @@ interface WorkspacePanelProps {
     onIndexPaperForRag: (projectId: string, paperId: string) => void;
     projectChats: { [projectId: string]: { history: ChatMessage[], isLoading: boolean } };
     onProjectChat: (projectId: string, message: string) => void;
+    onUpload: (file: File) => Promise<void>;
+    isUploadingPdf: boolean;
+    pdfUploadError: string | null;
 }
 
 const TabButton: React.FC<{
@@ -165,21 +169,27 @@ export const WorkspacePanel: React.FC<WorkspacePanelProps> = (props) => {
                 return <BibliographyGenerator papers={papers} model={model} />;
             case 'workspace':
                 return (
-                    <ProjectWorkspace
-                        workspacePapers={workspacePapers}
-                        projects={projects}
-                        onCreateProject={props.onCreateProject}
-                        onDeleteProject={props.onDeleteProject}
-                        onMovePaperToProject={props.onMovePaperToProject}
-                        onSynthesizeWorkspace={props.onSynthesizeWorkspace}
-                        onAnalyzeGaps={props.onAnalyzeGaps}
-                        onRemovePaperFromWorkspace={props.onToggleWorkspacePaper}
-                        onUpdateProjectColor={props.onUpdateProjectColor}
-                        model={model}
-                        onIndexPaperForRag={props.onIndexPaperForRag}
-                        projectChats={props.projectChats}
-                        onProjectChat={props.onProjectChat}
-                    />
+                    <div>
+                        <div className="mb-4">
+                            <h3 className="text-lg font-semibold text-foreground mb-2">Upload PDF</h3>
+                            <PdfUpload onUpload={props.onUpload} isLoading={props.isUploadingPdf} error={props.pdfUploadError} />
+                        </div>
+                        <ProjectWorkspace
+                            workspacePapers={workspacePapers}
+                            projects={projects}
+                            onCreateProject={props.onCreateProject}
+                            onDeleteProject={props.onDeleteProject}
+                            onMovePaperToProject={props.onMovePaperToProject}
+                            onSynthesizeWorkspace={props.onSynthesizeWorkspace}
+                            onAnalyzeGaps={props.onAnalyzeGaps}
+                            onRemovePaperFromWorkspace={props.onToggleWorkspacePaper}
+                            onUpdateProjectColor={props.onUpdateProjectColor}
+                            model={model}
+                            onIndexPaperForRag={props.onIndexPaperForRag}
+                            projectChats={props.projectChats}
+                            onProjectChat={props.onProjectChat}
+                        />
+                    </div>
                  )
             default:
                 return null;

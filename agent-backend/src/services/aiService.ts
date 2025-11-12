@@ -1,5 +1,7 @@
-// agent-backend/src/services/geminiService.ts (Copy of frontend services/geminiService.ts)
+// agent-backend/src/services/aiService.ts
 import { GoogleGenAI, Type } from "@google/genai";
+import OpenAI from "openai";
+import Anthropic from "@anthropic-ai/sdk";
 import type {
   ChatMessage,
   ConnectedPaper,
@@ -14,7 +16,9 @@ import type {
 } from "../types/index.js";
 import config from '../config.js';
 
-const ai = new GoogleGenAI({ apiKey: config.geminiApiKey });
+const gemini = new GoogleGenAI({ apiKey: config.geminiApiKey });
+const openai = new OpenAI({ apiKey: config.openaiApiKey });
+const anthropic = new Anthropic({ apiKey: config.anthropicApiKey });
 
 // Utility to safely parse JSON from a string
 export const safeJsonParse = (jsonString: string) => {
@@ -28,37 +32,63 @@ export const safeJsonParse = (jsonString: string) => {
   }
 };
 
-// --- MOCK ADAPTER (for non-Gemini models, keep as is for demonstration) ---
-const mockApiAdapter = async (prompt: string, modelId: string, schema: any): Promise<any> => {
-    console.warn(`[MOCK] Adapter called for model ${modelId}. Returning mock data.`);
-    if (schema.properties?.hypothetical_abstract) { return { hypothetical_abstract: `[Mock Response from ${modelId}] This is a mock abstract.` }; }
-    if (schema.properties?.score && schema.properties?.rationale) { return { score: 75, rationale: `[Mock Response] This paper seems like a reasonably good fit.` }; }
-    if (schema.properties?.summary) { return { summary: `[Mock Summary from ${modelId}] This mock summary.` }; }
-    if (schema.properties?.concepts) { return { concepts: ['Mock Concept 1', 'Mock Concept 2'] }; }
-    if (schema.properties?.suggestions) { return { suggestions: [`Mock suggestion from ${modelId}`, 'Another idea'] }; }
-    if (schema.properties?.recipeName) { return { title: '[Mock] Chocolate Chip Cookies', author: [{ family: 'Mock', given: 'Chef' }], issued: { 'date-parts': [[2023]] }, type: 'article-journal' }; }
-    if (schema.properties?.answer) { return { answer: `[Mock RAG Response from ${modelId}] The answer is mocked.` }; }
-    if (schema.properties?.study_design) { return { study_design: 'Observational Study' }; } // Specific for classifyStudyDesign
-    return { mock_response: "This is a generic mock response." };
-};
-
 // --- GEMINI ADAPTER ---
 const geminiApiAdapter = async (prompt: string, modelId: string, schema: any): Promise<any> => {
-    const response = await ai.models.generateContent({
+    const response = await gemini.models.generateContent({
         model: modelId,
-        contents: prompt,
-        config: {
+        contents: [{ role: "user", parts: [{ text: prompt }] }],
+        generationConfig: {
             responseMimeType: "application/json",
             responseSchema: schema,
         },
     });
-    const result = safeJsonParse(response.text ?? '');
+    const result = safeJsonParse(response.response.candidates?.[0]?.content?.parts?.[0]?.text ?? '');
     if (!result) {
         throw new Error("AI model returned invalid JSON.");
     }
     return result;
 };
 
+// --- OPENAI ADAPTER ---
+const openAIApiAdapter = async (prompt: string, modelId: string, schema: any): Promise<any> => {
+    const response = await openai.chat.completions.create({
+        model: modelId,
+        messages: [{ role: "user", content: prompt }],
+        response_format: { type: "json_object" },
+        // Note: OpenAI doesn't enforce the schema as strictly as Gemini.
+        // The prompt should explicitly ask for the JSON structure.
+    });
+    const jsonString = response.choices[0].message.content;
+    const result = safeJsonParse(jsonString ?? '');
+    if (!result) {
+        throw new Error("AI model returned invalid JSON.");
+    }
+    return result;
+};
+
+// --- ANTHROPIC ADAPTER ---
+const anthropicApiAdapter = async (prompt: string, modelId: string, schema: any): Promise<any> => {
+    // Anthropic doesn't have a native JSON mode, so we must instruct it very clearly.
+    const systemPrompt = `You are an AI assistant. Your response MUST be a single, valid JSON object that conforms to the following schema. Do not include any other text, markdown, or explanations before or after the JSON.
+
+    JSON Schema:
+    ${JSON.stringify(schema, null, 2)}`;
+
+    const response = await anthropic.messages.create({
+        model: modelId,
+        max_tokens: 4096,
+        system: systemPrompt,
+        messages: [{ role: "user", content: prompt }],
+    });
+
+    // @ts-ignore
+    const jsonString = response.content[0]?.text ?? '';
+    const result = safeJsonParse(jsonString);
+     if (!result) {
+        throw new Error("AI model returned invalid JSON.");
+    }
+    return result;
+};
 
 // --- UNIFIED GENERATION FUNCTION ---
 export const generateJsonWithModel = async (
@@ -69,10 +99,14 @@ export const generateJsonWithModel = async (
     try {
         switch (model.provider) {
             case 'gemini':
+                if (!config.geminiApiKey) throw new Error("Gemini API key is not configured.");
                 return await geminiApiAdapter(prompt, model.id, schema);
             case 'openai':
+                if (!config.openaiApiKey) throw new Error("OpenAI API key is not configured.");
+                return await openAIApiAdapter(prompt, model.id, schema);
             case 'anthropic':
-                return await mockApiAdapter(prompt, model.id, schema);
+                if (!config.anthropicApiKey) throw new Error("Anthropic API key is not configured.");
+                return await anthropicApiAdapter(prompt, model.id, schema);
             default:
                 throw new Error(`Unsupported model provider: ${model.provider}`);
         }
