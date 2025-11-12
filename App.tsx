@@ -24,7 +24,7 @@ import { HelpButton } from './components/HelpButton';
 import { AboutButton } from './components/AboutButton';
 import { CitationModal } from './components/CitationModal';
 import { DatabaseFinderModal } from './components/DatabaseFinderModal';
-import { AVAILABLE_MODELS } from './utils/constants';
+import { AVAILABLE_MODELS } from './src/utils/constants';
 
 const App: React.FC = () => {
   const {
