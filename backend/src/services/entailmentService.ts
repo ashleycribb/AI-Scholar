@@ -1,4 +1,5 @@
 import { Verdict } from "../types";
+import config from '../config';
 
 /**
  * Calls an entailment/cross-encoder model to check if `passage` supports `claim`.
@@ -6,7 +7,7 @@ import { Verdict } from "../types";
  */
 export async function checkEntailment(claim: string, passage: string): Promise<{ verdict: Verdict; confidence: number }> {
   // If the entailment service URL is not configured, use a mock implementation for development.
-  if (!process.env.ENTAILMENT_URL) {
+  if (!config.entailmentUrl) {
     console.warn("ENTAILMENT_URL not set. Using mock entailment service.");
     const passageLower = passage.toLowerCase();
     // Use a simple check: if the first few words of the claim appear in the passage, consider it supportive.
@@ -19,10 +20,10 @@ export async function checkEntailment(claim: string, passage: string): Promise<{
   }
 
   // Production implementation: call the actual model endpoint.
-  const response = await fetch(process.env.ENTAILMENT_URL!, {
+  const response = await fetch(config.entailmentUrl, {
     method: 'POST',
     headers: {
-        'Authorization': `Bearer ${process.env.MODEL_API_KEY}`,
+        'Authorization': `Bearer ${config.modelApiKey}`,
         'Content-Type': 'application/json',
     },
     body: JSON.stringify({

@@ -1,18 +1,26 @@
 // agent-backend/src/routes/agentRoutes.ts
 import { Router, Request, Response } from 'express';
+import { z } from 'zod';
 import { researchAdvisorAgent } from '../agents/researchAdvisorAgent.js';
 
 const router = Router();
 
-router.post('/', async (req: Request, res: Response) => {
-  const { intent, payload } = req.body;
+const agentRequestSchema = z.object({
+  intent: z.string(),
+  payload: z.any(),
+});
 
-  if (!intent) {
-    return res.status(400).json({ error: 'Missing intent in request body.' });
+router.post('/', async (req: Request, res: Response) => {
+  const validationResult = agentRequestSchema.safeParse(req.body);
+
+  if (!validationResult.success) {
+    return res.status(400).json({ error: 'Invalid request body.', details: validationResult.error.errors });
   }
 
+  const { intent, payload } = validationResult.data;
+
   try {
-    const result = await researchAdvisorAgent.runAgent(intent, payload);
+    const result = await researchAdvisorAgent.run(`Execute the intent '${intent}' with the following payload: ${JSON.stringify(payload)}`);
     res.json(result);
   } catch (error: any) {
     console.error(`Error processing agent request for intent '${intent}':`, error);

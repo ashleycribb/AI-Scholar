@@ -1,5 +1,6 @@
-import express, { Request, Response } from 'express';
-import cors from 'cors';
+// backend/src/controllers/verifyPaperController.ts
+import { Request, Response } from 'express';
+import { z } from 'zod';
 import { fetchMetadataByDOI } from '../services/metadataService';
 import { findSupportingPassages } from '../services/retrievalService';
 import { checkEntailment } from '../services/entailmentService';
@@ -8,20 +9,23 @@ import { computeVACS } from '../services/scoringService';
 import { MIN_EVIDENCE_SPANS_FOR_VERIFIED, MIN_SUPPORT_EVIDENCE_CONFIDENCE } from '../utils/constants';
 import { VerificationResult } from '../types';
 
+const verifyPaperSchema = z.object({
+  doi: z.string(),
+  claimText: z.string().optional(),
+});
 
-const app = express();
-app.use(cors()); 
-// FIX: Replace deprecated body-parser with express.json()
-app.use(express.json());
+export const verifyPaper = async (req: Request, res: Response) => {
+  const validationResult = verifyPaperSchema.safeParse(req.body);
 
-// FIX: Add explicit Request and Response types from the express namespace to avoid global type conflicts.
-app.post('/api/verifyPaper', async (req: Request, res: Response) => {
-  const { doi, claimText } = req.body;
-  if (!doi) return res.status(400).json({ error: 'doi is required' });
+  if (!validationResult.success) {
+    return res.status(400).json({ error: 'Invalid request body.', details: validationResult.error.errors });
+  }
+
+  const { doi, claimText } = validationResult.data;
 
   try {
     const meta = await fetchMetadataByDOI(doi);
-    const claim = claimText.trim() || meta.title || 'Main claim of the paper';
+    const claim = claimText?.trim() || meta.title || 'Main claim of the paper';
     
     const candidatePassages = await findSupportingPassages(doi, claim);
     
@@ -57,6 +61,4 @@ app.post('/api/verifyPaper', async (req: Request, res: Response) => {
     console.error('verifyPaper error', e);
     return res.status(500).json({ error: e.message || 'Unknown error' });
   }
-});
-
-export default app;
+};

@@ -3,6 +3,7 @@ import { ChatPromptTemplate } from "@langchain/core/prompts";
 import { AgentExecutor, createOpenAIToolsAgent } from "langchain/agents";
 import { ChatGoogleGenerativeAI } from "@langchain/google-genai";
 import { Tool } from "@langchain/core/tools";
+import config from '../config.js';
 import {
     OpenAlexSearchTool,
     ArxivSearchTool,
@@ -34,7 +35,7 @@ class ResearchAdvisorAgent {
 
     constructor() {
         const agentLLM = new ChatGoogleGenerativeAI({
-            apiKey: process.env.API_KEY,
+            apiKey: config.geminiApiKey,
             model: DEFAULT_AGENT_MODEL.id,
             temperature: 0.7,
         });
@@ -111,68 +112,16 @@ class ResearchAdvisorAgent {
         return { papers, summary, analysis: null };
     }
 
-    async runAgent(intent: string, payload: any): Promise<any> {
+    async run(input: string, options?: any): Promise<any> {
         try {
-            switch (intent) {
-                case 'search':
-                    return await this.handleSearch(payload);
-                
-                case 'analyzeGaps':
-                    const papersForGaps: ResearchPaper[] = payload.papers;
-                    return GeminiService.safeJsonParse(await new AnalyzeResearchGapsTool()._call({ papers: papersForGaps, model: payload.model }));
-
-                case 'analyzeSinglePaper':
-                    const paperToAnalyze: ResearchPaper = payload.paper;
-                    return GeminiService.safeJsonParse(await new AnalyzeSinglePaperTool()._call({ paper: paperToAnalyze, model: payload.model }));
-
-                case 'extractKeyConcepts':
-                    const abstractToExtract: string = payload.abstract;
-                    return GeminiService.safeJsonParse(await new ExtractKeyConceptsTool()._call({ abstract: abstractToExtract, model: payload.model }));
-
-                case 'extractKnowledgeGraph':
-                    const abstractForGraph: string = payload.abstract;
-                    return GeminiService.safeJsonParse(await new ExtractKnowledgeGraphTool()._call({ abstract: abstractForGraph, model: payload.model }));
-                
-                case 'synthesizePapers':
-                    const papersToSynthesize: ResearchPaper[] = payload.papers;
-                    return GeminiService.safeJsonParse(await new SynthesizePapersTool()._call({ papers: papersToSynthesize, model: payload.model }));
-
-                case 'extractCitationMetadata':
-                    return GeminiService.safeJsonParse(await new ExtractCitationMetadataTool()._call(payload));
-
-                case 'rerankForScreening':
-                    const { included, excluded, unscreened, model } = payload;
-                    return await Promise.all(unscreened.map(async (paper: ResearchPaper) => {
-                        const result = await new RerankForScreeningTool()._call({ included, excluded, paperToRerank: paper, model });
-                        const parsed = GeminiService.safeJsonParse(result);
-                        return {
-                            paperId: paper.id,
-                            score: parsed?.score || 0,
-                            rationale: parsed?.rationale || "AI re-ranking failed.",
-                        };
-                    }));
-                
-                case 'generateSuggestions':
-                    return GeminiService.safeJsonParse(await new GeneratePaperBasedSuggestionsTool()._call(payload));
-                
-                case 'verifyPaper':
-                    return GeminiService.safeJsonParse(await new VerifyClaimTool()._call(payload));
-                
-                case 'chatWithProject':
-                    const { query, projectPapers } = payload;
-                    const contextChunks = projectPapers.map((p: ResearchPaper) => `Title: ${p.title}\nAbstract: ${p.abstract}`);
-                    return await new GenerateRAGAnswerTool()._call({ query, context: contextChunks, model: payload.model });
-
-                default:
-                    // Fallback to general agent executor for simpler, direct tool calls if needed
-                    const result = await this.agentExecutor.invoke({
-                        input: `Execute the intent '${intent}' with the following payload: ${JSON.stringify(payload)}`,
-                    });
-                    return GeminiService.safeJsonParse(result.output) || result.output;
-            }
+            const result = await this.agentExecutor.invoke({
+                input,
+                ...options,
+            });
+            return GeminiService.safeJsonParse(result.output) || result.output;
         } catch (error) {
-            console.error(`Error running agent for intent '${intent}':`, error);
-            throw new Error(`Agent failed to process your request for '${intent}'. Error: ${error instanceof Error ? error.message : "Unknown error"}`);
+            console.error(`Error running agent for input '${input}':`, error);
+            throw new Error(`Agent failed to process your request. Error: ${error instanceof Error ? error.message : "Unknown error"}`);
         }
     }
 }

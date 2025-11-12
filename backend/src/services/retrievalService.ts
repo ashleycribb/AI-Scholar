@@ -1,6 +1,7 @@
 import { embedText } from "../utils/embeddings";
 import { cosineSimilarity } from "../utils/math";
 import { EvidenceSpan } from "../types";
+import config from '../config';
 
 /**
  * For a given DOI and claim, retrieve candidate passage(s) from the paper
@@ -27,8 +28,7 @@ function splitIntoPassages(fullText: string): string[] {
 
 export async function findSupportingPassages(doi: string, claim: string): Promise<EvidenceSpan[]> {
   // 1) Try Unpaywall to get OA PDF or URL
-  const email = 'contact@ai-research-explorer.com';
-  const upUrl = `https://api.unpaywall.org/v2/${doi}?email=${email}`;
+  const upUrl = `https://api.unpaywall.org/v2/${doi}?email=${config.unpaywallEmail}`;
   try {
     const upResp = await fetch(upUrl);
     if (!upResp.ok) throw new Error("Unpaywall responded with an error");

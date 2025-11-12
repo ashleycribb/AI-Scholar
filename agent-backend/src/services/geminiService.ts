@@ -12,8 +12,9 @@ import type {
   GroundingSource,
   ModelDefinition
 } from "../types/index.js";
+import config from '../config.js';
 
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+const ai = new GoogleGenAI({ apiKey: config.geminiApiKey });
 
 // Utility to safely parse JSON from a string
 export const safeJsonParse = (jsonString: string) => {
