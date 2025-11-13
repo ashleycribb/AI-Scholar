@@ -274,7 +274,7 @@ export interface VerificationResult {
 }
 
 // --- Dissertation Study Specific Types ---
-export type AppMode = 'search' | 'dashboard' | 'evaluation';
+export type AppMode = 'search' | 'dashboard' | 'evaluation' | 'review';
 
 export interface GoldStandardPaper {
   paper_id: string; // DOI

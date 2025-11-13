@@ -124,3 +124,27 @@ export const rerankForScreening = async (
 export const generateSuggestions = async (paper: ResearchPaper, model: ModelDefinition): Promise<string[]> => {
     return await callAgentBackend('generateSuggestions', { paper, model });
 };
+
+export const startScreening = async (inclusionCriteria: string, exclusionCriteria: string, papers: ResearchPaper[]): Promise<any> => {
+    const REVIEW_PIPELINE_URL = process.env.REVIEW_PIPELINE_URL || 'http://localhost:3004/api';
+    const response = await fetch(`${REVIEW_PIPELINE_URL}/reviews`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+            criteria: {
+                inclusion: inclusionCriteria,
+                exclusion: exclusionCriteria,
+            },
+            papers,
+        }),
+    });
+
+    if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.details || 'Failed to start screening.');
+    }
+
+    return response.json();
+};

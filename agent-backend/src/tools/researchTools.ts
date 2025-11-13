@@ -663,6 +663,34 @@ export class AnalyzeResearchGapsTool extends Tool {
     }
 }
 
+export class ScreenPapersTool extends Tool {
+    name = "screen_papers";
+    description = "Screens a list of research papers based on inclusion and exclusion criteria, returning a list of papers with a screening status ('include', 'exclude', or 'none') and a rationale for the decision.";
+    schema = z.object({
+        papers: z.array(z.object({
+            id: z.string(),
+            title: z.string(),
+            abstract: z.string(),
+        })).describe("An array of research papers to screen."),
+        inclusionCriteria: z.string().describe("The criteria for including papers."),
+        exclusionCriteria: z.string().describe("The criteria for excluding papers."),
+        model: z.object({ id: z.string(), name: z.string(), provider: z.string() }).optional().default(DEFAULT_MODEL).describe("The AI model to use for generation."),
+    });
+
+    async _call(input: z.infer<typeof this.schema>): Promise<string> {
+        const screeningPromises = input.papers.map(async (paper) => {
+            const result = await AiService.evaluateScreeningFit(paper as ResearchPaper, input.inclusionCriteria, input.exclusionCriteria, input.model as ModelDefinition);
+            return {
+                ...paper,
+                screeningStatus: result.score > 50 ? 'include' : 'exclude',
+                screeningRationale: result.rationale,
+            };
+        });
+        const screenedPapers = await Promise.all(screeningPromises);
+        return JSON.stringify(screenedPapers);
+    }
+}
+
 
 export class AnalyzeSinglePaperTool extends Tool {
     name = "analyze_single_paper";

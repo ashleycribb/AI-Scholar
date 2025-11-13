@@ -21,7 +21,8 @@ import {
     VerifyClaimTool,
     ExtractFactsTool,
     ReasonOverGraphTool,
-    AnalyzeSearchResultsTool
+    AnalyzeSearchResultsTool,
+    ScreenPapersTool
 } from "../tools/researchTools.js";
 import { ModelDefinition, AdvancedSearchOptions, SummaryLength, SummaryStyle, ResearchPaper, SearchSourceInfo } from "../types/index.js";
 import { combineArxivAndOpenAlexResults, calculatePaperScores } from "./utils/paperProcessing.js"; 
@@ -58,6 +59,7 @@ class ResearchAdvisorAgent {
             new ExtractFactsTool(),
             new ReasonOverGraphTool(),
             new AnalyzeSearchResultsTool(),
+            new ScreenPapersTool(),
         ];
 
         const agentPrompt = ChatPromptTemplate.fromMessages([
@@ -112,10 +114,23 @@ class ResearchAdvisorAgent {
         return { papers, summary, analysis: null };
     }
 
+    private async handleScreenPapers(payload: any): Promise<any> {
+        const { papers, inclusionCriteria, exclusionCriteria, model } = payload;
+        return await new ScreenPapersTool()._call({ papers, inclusionCriteria, exclusionCriteria, model });
+    }
+
     async run(input: string, options?: any): Promise<any> {
+        const { intent, payload } = JSON.parse(input.replace(/^Execute the intent '|' with the following payload: /g, ''));
+
+        if (intent === 'search') {
+            return this.handleSearch(payload);
+        } else if (intent === 'screen_papers') {
+            return this.handleScreenPapers(payload);
+        }
+
         try {
             const result = await this.agentExecutor.invoke({
-                input,
+                input: `Execute the intent '${intent}' with the following payload: ${JSON.stringify(payload)}`,
                 ...options,
             });
             return AiService.safeJsonParse(result.output) || result.output;

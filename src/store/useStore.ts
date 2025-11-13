@@ -17,9 +17,9 @@ import {
   SearchSourceInfo,
   SuggestionsResult,
 } from '../types';
-import * as apiService from '../services/apiService';
-import * as analysisService from '../services/analysisService';
-import * as ragService from '../services/ragService';
+import * as apiService from '@/services/apiService';
+import * as analysisService from '@/services/analysisService';
+import * as ragService from '@/services/ragService';
 
 interface AppState {
   appMode: AppMode;

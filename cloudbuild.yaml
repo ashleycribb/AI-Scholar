@@ -28,6 +28,13 @@ steps:
   - name: 'gcr.io/cloud-builders/docker'
     args: ['push', 'us-central1-docker.pkg.dev/$PROJECT_ID/$_ARTIFACT_REGISTRY_REPO/fine-tuning-service:$COMMIT_SHA']
 
+  # Build the review-pipeline-service image
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['build', '-t', 'us-central1-docker.pkg.dev/$PROJECT_ID/$_ARTIFACT_REGISTRY_REPO/review-pipeline-service:$COMMIT_SHA', './review-pipeline-service']
+  # Push the review-pipeline-service image
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['push', 'us-central1-docker.pkg.dev/$PROJECT_ID/$_ARTIFACT_REGISTRY_REPO/review-pipeline-service:$COMMIT_SHA']
+
   # Deploy agent-backend to Cloud Run
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
     entrypoint: gcloud
@@ -79,11 +86,24 @@ steps:
       - '--allow-unauthenticated'
       - '--update-secrets=GCLOUD_PROJECT=GCLOUD_PROJECT:latest,GCLOUD_LOCATION=GCLOUD_LOCATION:latest'
 
+  # Deploy review-pipeline-service to Cloud Run
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: gcloud
+    args:
+      - 'run'
+      - 'deploy'
+      - 'review-pipeline-service'
+      - '--image=us-central1-docker.pkg.dev/$PROJECT_ID/$_ARTIFACT_REGISTRY_REPO/review-pipeline-service:$COMMIT_SHA'
+      - '--region=us-central1'
+      - '--platform=managed'
+      - '--allow-unauthenticated'
+
 images:
   - 'us-central1-docker.pkg.dev/$PROJECT_ID/$_ARTIFACT_REGISTRY_REPO/agent-backend:$COMMIT_SHA'
   - 'us-central1-docker.pkg.dev/$PROJECT_ID/$_ARTIFACT_REGISTRY_REPO/backend:$COMMIT_SHA'
   - 'us-central1-docker.pkg.dev/$PROJECT_ID/$_ARTIFACT_REGISTRY_REPO/frontend:$COMMIT_SHA'
   - 'us-central1-docker.pkg.dev/$PROJECT_ID/$_ARTIFACT_REGISTRY_REPO/fine-tuning-service:$COMMIT_SHA'
+  - 'us-central1-docker.pkg.dev/$PROJECT_ID/$_ARTIFACT_REGISTRY_REPO/review-pipeline-service:$COMMIT_SHA'
 
 options:
   logging: CLOUD_LOGGING_ONLY
