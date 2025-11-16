@@ -43,6 +43,7 @@ export interface ValidationResult {
     title_match: boolean;
     author_match: boolean;
     open_access: boolean;
+    doaj_indexed: boolean;
     source_enriched: boolean;
     has_citations: boolean;
   };

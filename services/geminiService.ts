@@ -1,3 +1,4 @@
+
 // This file now handles all direct AI model interactions, removing the need for a backend.
 
 import { GoogleGenAI, Type } from "@google/genai";

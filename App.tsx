@@ -1,4 +1,5 @@
 
+
 import React, { useState, useEffect, useMemo } from 'react';
 import type { ResearchPaper, SummaryLength, SummaryStyle, AdvancedSearchOptions, AnalysisResult, Project, VerificationResult, PaperAnalysis, SortConfig, SortKey, SynthesisResult, AppMode, GoldStandardPaper, UserStudyData, TestHarnessResult, ModelDefinition, ChatMessage, SearchSourceInfo, SuggestionsResult, ConnectedPaper } from './types';
 import * as apiService from './services/apiService';
@@ -180,6 +181,9 @@ const App: React.FC = () => {
     const handleSearch = async (searchQuery: string, options: AdvancedSearchOptions) => {
         if (!searchQuery.trim()) return;
 
+        const doiRegex = /^10.\d{4,9}\/[-._;()/:A-Z0-9]+$/i;
+        const isDoiSearch = doiRegex.test(searchQuery.trim());
+
         setSearchSuggestions([]);
         setIsGeneratingSearchSuggestions(false);
         setIsLoading(true);
@@ -194,22 +198,40 @@ const App: React.FC = () => {
         setCurrentPage(1);
         setLastUsedOptions(options);
 
-        try {
-            const result = await apiService.search(searchQuery, options, summaryLength, summaryStyle, model, searchSources, 1);
-            
-            // Run bibliometric analysis on the client-side for performance
-            const analysisResult = await analysisService.analyzePapers(result.papers);
-
-            setPapers(result.papers);
-            setAnalysis(analysisResult);
-            setHasMore(result.hasMore);
-            if (result.summary) {
-                setSummary(result.summary);
+        if (isDoiSearch) {
+            try {
+                const doi = searchQuery.trim();
+                const result = await apiService.searchByDoi(doi, model);
+                if (result) {
+                    setPapers([result]);
+                    setHasMore(false);
+                    handleSelectPaper(result); // Automatically select to show details
+                } else {
+                    setError(`No paper found for DOI: ${doi}`);
+                }
+            } catch (err) {
+                setError(err instanceof Error ? err.message : "An unknown error occurred while searching by DOI.");
+            } finally {
+                setIsLoading(false);
             }
-        } catch (err) {
-            setError(err instanceof Error ? err.message : "An unknown error occurred.");
-        } finally {
-            setIsLoading(false);
+        } else {
+            try {
+                const result = await apiService.search(searchQuery, options, summaryLength, summaryStyle, model, searchSources, 1);
+                
+                // Run bibliometric analysis on the client-side for performance
+                const analysisResult = await analysisService.analyzePapers(result.papers);
+    
+                setPapers(result.papers);
+                setAnalysis(analysisResult);
+                setHasMore(result.hasMore);
+                if (result.summary) {
+                    setSummary(result.summary);
+                }
+            } catch (err) {
+                setError(err instanceof Error ? err.message : "An unknown error occurred.");
+            } finally {
+                setIsLoading(false);
+            }
         }
     };
     
@@ -251,6 +273,28 @@ const App: React.FC = () => {
             setSelectedPaper(prev => prev ? { ...prev, ...updates } : null);
         }
     };
+
+    // Asynchronously classify study designs for new papers without blocking the UI
+    useEffect(() => {
+        const papersToClassify = papers.filter(p => p.detectedStudyDesign === undefined);
+
+        if (papersToClassify.length > 0) {
+            // Mark papers as "classification in progress" to avoid re-triggering on re-renders.
+            // This is a simple semaphore; it doesn't have a UI representation.
+            papersToClassify.forEach(p => updatePaperState(p.id, { detectedStudyDesign: '...' as any }));
+
+            papersToClassify.forEach(paper => {
+                apiService.classifyStudyDesign(paper, model)
+                    .then(design => {
+                        updatePaperState(paper.id, { detectedStudyDesign: design });
+                    })
+                    .catch(error => {
+                        console.error(`Failed to classify study design for paper ${paper.id}`, error);
+                        updatePaperState(paper.id, { detectedStudyDesign: 'N/A' });
+                    });
+            });
+        }
+    }, [papers, model]);
 
     const handleSelectPaper = async (paper: ResearchPaper) => {
         setSelectedPaper(paper);

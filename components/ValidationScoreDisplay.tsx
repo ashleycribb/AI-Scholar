@@ -35,6 +35,7 @@ export const ValidationScoreDisplay: React.FC<{ validation: ValidationResult }> 
                     <CheckItem label="Crossref Match" passed={checks.crossref_match} />
                     <CheckItem label="Title Consistency" passed={checks.title_match} />
                     <CheckItem label="Author Match" passed={checks.author_match} />
+                    <CheckItem label="Indexed in DOAJ" passed={checks.doaj_indexed} />
                     <CheckItem label="Open Access Found" passed={checks.open_access} />
                     <CheckItem label="High-Quality Source" passed={checks.source_enriched} />
                 </div>

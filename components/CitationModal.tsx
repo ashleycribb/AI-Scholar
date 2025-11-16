@@ -1,8 +1,4 @@
 
-
-
-
-
 import React, { useState, useEffect, useCallback } from 'react';
 import type { ResearchPaper, CitationStyle, ModelDefinition } from '../types';
 import * as citationService from '../services/citationService';

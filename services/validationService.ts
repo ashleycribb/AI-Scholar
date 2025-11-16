@@ -2,6 +2,7 @@
 import type { ResearchPaper, ValidationResult, CrossrefWork } from '../types';
 import * as crossrefService from './crossrefService';
 import * as unpaywallService from './unpaywallService';
+import * as doajService from './doajService';
 
 // A simple title similarity check.
 const checkTitleSimilarity = (title1: string, title2: string): boolean => {
@@ -33,6 +34,7 @@ export const validatePaper = async (paper: ResearchPaper): Promise<{ validation:
         title_match: false,
         author_match: false,
         open_access: false,
+        doaj_indexed: false,
         source_enriched: paper.enrichmentSource === 'arXiv',
         has_citations: (paper.citations || 0) > 10,
     };
@@ -54,14 +56,14 @@ export const validatePaper = async (paper: ResearchPaper): Promise<{ validation:
 
     // Use Crossref as the primary source of truth for metadata.
     const crossrefData = await crossrefService.fetchPaperFromCrossref(paper);
+    const effectiveDoi = paper.doi || crossrefData?.DOI;
+    updatedPaperData.doi = effectiveDoi;
 
-    if (crossrefData && crossrefData.DOI) {
+    if (crossrefData) {
         checks.crossref_match = true;
-        score += 30; // Reduced from 40 to balance with citation score
+        score += 30;
         log.push(`+30: Found a confident match in Crossref (DOI: ${crossrefData.DOI}).`);
-        updatedPaperData.doi = crossrefData.DOI;
 
-        // Check title similarity against the Crossref record.
         const crossrefTitle = crossrefData.title?.[0] || '';
         if (checkTitleSimilarity(paper.title, crossrefTitle)) {
             checks.title_match = true;
@@ -71,7 +73,6 @@ export const validatePaper = async (paper: ResearchPaper): Promise<{ validation:
             log.push(`Title mismatch: Our title "${paper.title}" vs Crossref "${crossrefTitle}".`);
         }
 
-        // Check author match against the Crossref record.
         if (checkAuthorMatch(paper.authors, crossrefData.author)) {
             checks.author_match = true;
             score += 15;
@@ -79,19 +80,43 @@ export const validatePaper = async (paper: ResearchPaper): Promise<{ validation:
         } else {
             log.push('Author did not match Crossref record.');
         }
-
-        // Check for a legal open-access version using the confirmed DOI via Unpaywall.
-        const openAccessUrl = await unpaywallService.findOpenAccessPdf(crossrefData.DOI);
-        if (openAccessUrl) {
-            checks.open_access = true;
-            score += 15;
-            log.push('+15: Found an open-access PDF via Unpaywall.');
-            updatedPaperData.pdfURL = openAccessUrl;
-        } else {
-            log.push('No open-access PDF found via Unpaywall.');
-        }
     } else {
         log.push('Could not find a confident match in Crossref.');
+    }
+    
+    if (effectiveDoi) {
+        const [openAccessUrl, doajData] = await Promise.all([
+            unpaywallService.findOpenAccessPdf(effectiveDoi),
+            doajService.searchByDoi(effectiveDoi)
+        ]);
+        
+        let oaConfirmed = false;
+
+        if (doajData) {
+            checks.doaj_indexed = true;
+            score += 20; // This is a strong signal of legitimacy and OA status
+            log.push('+20: Paper is indexed in the Directory of Open Access Journals (DOAJ).');
+            oaConfirmed = true;
+        } else {
+            log.push('Paper not found in DOAJ.');
+        }
+        
+        if (openAccessUrl) {
+            updatedPaperData.pdfURL = openAccessUrl;
+            checks.open_access = true; // This check specifically means a direct PDF link was found
+            log.push('Found a direct Open Access PDF link via Unpaywall.');
+            oaConfirmed = true;
+        }
+        
+        // If either service confirms OA status, award points.
+        if (oaConfirmed) {
+            score += 15;
+            log.push('+15: Confirmed as Open Access (via DOAJ or Unpaywall).');
+        } else {
+             log.push('No Open Access version found via Unpaywall or DOAJ.');
+        }
+    } else {
+        log.push('Skipping DOAJ and Unpaywall checks (no DOI).');
     }
 
     const validation: ValidationResult = {

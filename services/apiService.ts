@@ -144,17 +144,10 @@ async function calculatePaperScores(
         });
     }
 
+    // The design classification is now handled asynchronously on the client-side
+    // to improve perceived performance.
+    let papersWithScreening = processedPapers;
 
-    let papersWithStudyDesign = processedPapers;
-    if (options.studyDesign && options.studyDesign !== 'any') {
-        const designClassificationPromises = papersWithStudyDesign.map(async (paper) => {
-            const design = await geminiService.classifyStudyDesign(paper, model);
-            return { ...paper, detectedStudyDesign: design };
-        });
-        papersWithStudyDesign = await Promise.all(designClassificationPromises);
-    }
-
-    let papersWithScreening = papersWithStudyDesign;
     if (options.inclusionCriteria?.trim() || options.exclusionCriteria?.trim()) {
         const screeningPromises = papersWithScreening.map(p => 
             geminiService.evaluateScreeningFit(p, options.inclusionCriteria, options.exclusionCriteria, model)
@@ -303,6 +296,34 @@ export const search = async (
     return { papers: validatedPapers, summary, hasMore };
 };
 
+export const searchByDoi = async (doi: string, model: ModelDefinition): Promise<ResearchPaper | null> => {
+    // 1. Fetch primary metadata from a reliable source like OpenAlex.
+    const paper = await openalexService.searchOpenAlexByDoi(doi);
+
+    if (!paper) {
+        return null;
+    }
+
+    // 2. We have a paper object. Now, enrich and validate it.
+    const { validation, updatedPaperData } = await validationService.validatePaper(paper);
+
+    const validatedPaper: ResearchPaper = {
+        ...paper,
+        ...updatedPaperData,
+        validation,
+    };
+
+    // 3. Semantic scores are not applicable for a direct DOI lookup.
+    // Set a high relevance score to ensure it appears correctly.
+    validatedPaper.combinedScore = 100;
+    validatedPaper.semanticScore = 100;
+    
+    validatedPaper.impactScore = undefined;
+
+    return validatedPaper;
+};
+
+
 export const generateSearchSuggestions = async (query: string, model: ModelDefinition): Promise<string[]> => {
     return await geminiService.generateSearchSuggestions(query, model);
 };
@@ -381,4 +402,8 @@ export const findConnectedPapers = async (paper: ResearchPaper, model: ModelDefi
         // Fallback to Gemini if the new service fails
         return await geminiService.findConnectedPapers(paper, model);
     }
+};
+
+export const classifyStudyDesign = async (paper: ResearchPaper, model: ModelDefinition): Promise<string> => {
+    return await geminiService.classifyStudyDesign(paper, model);
 };
