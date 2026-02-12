@@ -3,6 +3,7 @@ import type { GoldStandardPaper, UserStudyData, ResearchPaper, VerificationResul
 import * as verificationService from '../services/verificationService';
 import { LoadingSpinner } from './LoadingSpinner';
 import { VerificationModal } from './VerificationModal'; // Re-using parts of this for display
+import { createPaperId } from '../utils/idUtils';
 
 interface PaperVerificationAppProps {
     dataset: GoldStandardPaper[];
@@ -22,16 +23,7 @@ const goldStandardToResearchPaper = (gsPaper: GoldStandardPaper): ResearchPaper 
         doi: gsPaper.paper_id,
         journal: gsPaper.source,
     };
-    // Re-use createPaperId logic from extensionService for consistency
-    const createPaperId = (paper: Partial<ResearchPaper>): string => {
-        if (paper.doi) return `doi:${paper.doi}`;
-        if (paper.sourceURL) {
-            const arxivIdMatch = paper.sourceURL.match(/arxiv\.org\/(?:abs|pdf)\/([^/]+)/);
-            if (arxivIdMatch) return `arxiv:${arxivIdMatch[1].replace(/v\d+$/, '')}`;
-            return `url:${paper.sourceURL}`;
-        }
-        return `title:${paper.title?.toLowerCase().replace(/\s+/g, '-') || Math.random().toString()}`;
-    };
+
     return {
         ...paperData,
         id: createPaperId(paperData),

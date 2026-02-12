@@ -1,14 +1,5 @@
 import { firestoreService } from './firestoreService';
 
-// A simple UUID generator for session tracking
-const generateUUID = (): string => {
-    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
-        const r = Math.random() * 16 | 0;
-        const v = c === 'x' ? r : (r & 0x3 | 0x8);
-        return v.toString(16);
-    });
-};
-
 interface AnalyticsEvent {
     eventName: string;
     data: any;
@@ -21,7 +12,7 @@ class AnalyticsService {
     private events: AnalyticsEvent[] = [];
 
     constructor() {
-        this.sessionId = generateUUID();
+        this.sessionId = crypto.randomUUID();
         this.events = this.loadEventsFromStorage();
         console.log(`[ANALYTICS] New session started: ${this.sessionId}`);
         this.logEvent('session_started', {}); // Log a session start event
