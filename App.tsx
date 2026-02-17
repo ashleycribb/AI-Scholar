@@ -29,6 +29,7 @@ import { DatabaseFinderModal } from './components/DatabaseFinderModal';
 import * as analysisService from './services/analysisService';
 import { Header } from './components/Header';
 import { ConnectedPapersModal } from './components/ConnectedPapersModal';
+import { limitConcurrency } from './services/utils';
 
 
 const PROJECT_COLORS = ['sky', 'green', 'yellow', 'red', 'purple', 'pink', 'indigo', 'teal'];
@@ -283,8 +284,8 @@ const App: React.FC = () => {
             // This is a simple semaphore; it doesn't have a UI representation.
             papersToClassify.forEach(p => updatePaperState(p.id, { detectedStudyDesign: '...' as any }));
 
-            papersToClassify.forEach(paper => {
-                apiService.classifyStudyDesign(paper, model)
+            limitConcurrency(papersToClassify, 3, (paper) => {
+                return apiService.classifyStudyDesign(paper, model)
                     .then(design => {
                         updatePaperState(paper.id, { detectedStudyDesign: design });
                     })
