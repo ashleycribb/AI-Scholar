@@ -29,6 +29,8 @@ import { DatabaseFinderModal } from './components/DatabaseFinderModal';
 import * as analysisService from './services/analysisService';
 import { Header } from './components/Header';
 import { ConnectedPapersModal } from './components/ConnectedPapersModal';
+import { ApiKeyModal } from './components/ApiKeyModal';
+import { getApiKey } from './utils/apiKey';
 
 
 const PROJECT_COLORS = ['sky', 'green', 'yellow', 'red', 'purple', 'pink', 'indigo', 'teal'];
@@ -41,6 +43,9 @@ export const AVAILABLE_MODELS: ModelDefinition[] = [
 ];
 
 const App: React.FC = () => {
+    // API Key State
+    const [hasApiKey, setHasApiKey] = useState(!!getApiKey());
+
     // App mode
     const [appMode, setAppMode] = useState<AppMode>('search');
     
@@ -876,6 +881,7 @@ const App: React.FC = () => {
 
     return (
         <div className="min-h-screen bg-background text-foreground flex flex-col">
+            {!hasApiKey && <ApiKeyModal onSave={() => setHasApiKey(true)} />}
             <Header
                 onOpenAbout={() => setIsAboutModalOpen(true)}
                 onOpenHelp={() => setIsOnboardingOpen(true)}

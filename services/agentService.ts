@@ -1,9 +1,8 @@
 
 import { GoogleGenAI, FunctionDeclaration, Type, Chat } from "@google/genai";
+import { getAiClient } from "../utils/apiKey";
 import type { ResearchPaper, ModelDefinition, Project, ChatMessage, ConnectedPaper } from '../types';
 import * as apiService from './apiService';
-
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
 // --- AGENT TOOL DEFINITIONS ---
 
@@ -85,6 +84,7 @@ export async function* runAgentTask(
         },
     };
 
+    const ai = getAiClient();
     const chat: Chat = ai.chats.create({
         model: modelId,
         config: {

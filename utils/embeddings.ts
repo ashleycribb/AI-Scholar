@@ -1,6 +1,6 @@
 import { GoogleGenAI } from "@google/genai";
+import { getAiClient } from "./apiKey";
 
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 // FIX: The model name should not include the "models/" prefix.
 const model = "gemini-2.5-flash-preview-embedder";
 
@@ -15,6 +15,7 @@ export const embedText = async (text: string): Promise<number[]> => {
     // The `embedContent` API requires the content to be structured as a `Content` object
     // with a `parts` array, even for a single text input.
     try {
+        const ai = getAiClient();
         const response = await ai.models.embedContent({ model, content: { parts: [{ text }] } });
         return response.embedding.values;
     } catch (e) {
