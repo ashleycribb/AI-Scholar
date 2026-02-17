@@ -11,7 +11,7 @@ const safeJsonParse = (jsonString: string) => {
     const cleanedString = jsonString.replace(/```json/g, '').replace(/```/g, '').trim();
     return JSON.parse(cleanedString);
   } catch (e) {
-    console.error("Failed to parse JSON:", jsonString, e);
+    console.error("Failed to parse JSON:", e);
     return null;
   }
 };
