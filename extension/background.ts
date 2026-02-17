@@ -1,6 +1,3 @@
-// Fix: Replaced triple-slash directive with a global declaration for 'chrome' to resolve type errors.
-declare const chrome: any;
-
 import { db } from './lib/db';
 import type { LocalPaper } from './lib/types';
 import type { ResearchPaper } from '../types';
