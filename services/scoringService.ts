@@ -15,7 +15,7 @@ export function computeVACS(meta: Metadata, citationStats: CitationStats, eviden
 
   // determine verdict conservatively
   let verdict: VerificationResult['verdict'] = 'Inconclusive';
-  if (E_valid > 0 && vacs >= 75) {
+  if (E_valid > 0 && vacs >= 75 && !meta.isRetracted) {
       verdict = 'Verified';
   } else if (vacs < 40 || meta.isRetracted) {
       verdict = 'Questionable';
