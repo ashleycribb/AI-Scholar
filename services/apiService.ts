@@ -1,5 +1,6 @@
 import type { AdvancedSearchOptions, ResearchPaper, SummaryLength, SummaryStyle, ModelDefinition, SearchSourceInfo, KnowledgeGraph, PaperAnalysis, SynthesisResult, ConnectedPaper } from '../types';
 import * as validationService from './validationService';
+import { limitConcurrency } from './utils';
 import { createPaperId } from './extensionService';
 import * as unpaywallService from './unpaywallService';
 import * as openalexService from './openalexService';
@@ -273,7 +274,7 @@ export const search = async (
 
     papers = await calculatePaperScores(papers, retrievalQuery, hypotheticalAnswer, model, finalOptions);
 
-    const validationPromises = papers.map(async (p) => {
+    let validatedPapers = await limitConcurrency(papers, 5, async (p) => {
         const { validation, updatedPaperData } = await validationService.validatePaper(p);
         return {
             ...p,
@@ -281,8 +282,6 @@ export const search = async (
             validation,
         };
     });
-
-    let validatedPapers = await Promise.all(validationPromises);
     
     // Apply Open Access filter *after* validation, which discovers OA status
     if (finalOptions.isOpenAccess) {
