@@ -1,4 +1,5 @@
 import { GoogleGenAI } from "@google/genai";
+import { limitConcurrency } from "./concurrency";
 
 const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 // FIX: The model name should not include the "models/" prefix.
@@ -33,16 +34,16 @@ export const batchEmbedText = async (texts: string[]): Promise<number[][]> => {
     }
     
     try {
-        // FIX: The `batchEmbedContents` function is not available on `ai.models`.
-        // The correct approach is to call `embedText` for each item in parallel using `Promise.all`.
-        // This ensures functionality while still performing requests concurrently.
-        const embeddingPromises = texts.map(text => embedText(text));
-        const results = await Promise.all(embeddingPromises);
-        return results;
+        // Use a concurrency limit (e.g., 5) to avoid hitting rate limits
+        // while still processing in parallel.
+        // `batchEmbedContents` is not available on `ai.models`, so we use `embedText` concurrently.
+        return await limitConcurrency(texts, 5, async (text) => {
+            return await embedText(text);
+        });
 
     } catch (error) {
         console.error("Error during batch embedding:", error);
-        // In case of a global error with Promise.all, return an empty array for each text.
+        // In case of a global error, return an empty array for each text.
         return texts.map(() => []);
     }
 };
