@@ -32,3 +32,38 @@ export function deinvertAbstract(invertedAbstract: { [key: string]: number[] }):
     }
     return abstractArray.join(' ').trim();
 }
+
+/**
+ * Limits the number of concurrent asynchronous operations.
+ * This is useful for preventing rate limits or browser connection exhaustion when making many API calls.
+ *
+ * @param items The array of items to process.
+ * @param limit The maximum number of concurrent operations.
+ * @param fn The asynchronous function to execute for each item.
+ * @returns A promise that resolves to an array of results in the original order.
+ */
+export async function limitConcurrency<T, R>(
+    items: T[],
+    limit: number,
+    fn: (item: T) => Promise<R>
+): Promise<R[]> {
+    const results: Promise<R>[] = [];
+    const executing = new Set<Promise<void>>();
+
+    for (const item of items) {
+        const p = fn(item);
+        results.push(p);
+
+        if (limit <= items.length) {
+            let e: Promise<void>;
+            const onSettle = () => { executing.delete(e); };
+            e = p.then(onSettle, onSettle);
+            executing.add(e);
+
+            if (executing.size >= limit) {
+                await Promise.race(executing);
+            }
+        }
+    }
+    return Promise.all(results);
+}
