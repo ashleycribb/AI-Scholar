@@ -47,15 +47,17 @@ const ScreeningActions: React.FC<{ paper: ResearchPaper; onScreenPaper: PaperCar
                 onClick={handleIncludeClick}
                 className={`flex items-center gap-1 px-3 h-8 text-xs font-semibold rounded-md transition-colors ${includeClasses}`}
                 title={status === 'include' ? "Clear screening status" : "Include this paper"}
+                aria-label={status === 'include' ? "Remove inclusion for this paper" : "Include this paper"}
             >
-                <CheckIcon className="w-4 h-4" /> {status === 'include' ? 'Included' : 'Include'}
+                <CheckIcon className="w-4 h-4" aria-hidden="true" /> {status === 'include' ? 'Included' : 'Include'}
             </button>
             <button
                 onClick={handleExcludeClick}
                 className={`flex items-center gap-1 px-3 h-8 text-xs font-semibold rounded-md transition-colors ${excludeClasses}`}
                 title={status === 'exclude' ? "Clear screening status" : "Exclude this paper"}
+                aria-label={status === 'exclude' ? "Remove exclusion for this paper" : "Exclude this paper"}
             >
-                <CrossIcon className="w-4 h-4" /> {status === 'exclude' ? 'Excluded' : 'Exclude'}
+                <CrossIcon className="w-4 h-4" aria-hidden="true" /> {status === 'exclude' ? 'Excluded' : 'Exclude'}
             </button>
         </div>
     );
@@ -79,31 +81,48 @@ export const PaperCard: React.FC<PaperCardProps> = ({ paper, isSelected, onSelec
         <div className={containerClasses} onClick={onSelect}>
             <div className="flex justify-between items-start gap-4">
                 <div className="flex-grow">
-                    <h3 className={`text-base font-bold break-words ${isSelected ? 'text-primary' : 'text-card-foreground'}`}>
-                        {paper.title}
+                    <h3 className="text-base font-bold break-words">
+                        <button
+                            onClick={(e) => {
+                                e.stopPropagation();
+                                onSelect();
+                            }}
+                            className={`text-left hover:underline focus:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-primary rounded ${isSelected ? 'text-primary' : 'text-card-foreground'}`}
+                            aria-expanded={isSelected}
+                        >
+                            {paper.title}
+                        </button>
                     </h3>
                      <div className="flex justify-between items-center mt-1 flex-wrap gap-x-4 gap-y-1">
                         <p className="text-sm text-muted-foreground break-words flex-grow pr-2">{paper.authors} ({paper.year})</p>
                         <div className="flex items-center gap-2">
                              {paper.enrichmentSource === 'arXiv' && (
                                 <div className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground" title="Source: arXiv">
-                                    <ArxivIcon className="w-4 h-4" />
+                                    <ArxivIcon className="w-4 h-4" aria-hidden="true" />
                                 </div>
                             )}
                             {paper.detectedStudyDesign && (
                                 <div className="flex items-center gap-1.5 text-xs font-medium bg-muted text-muted-foreground px-2 py-0.5 rounded-full" title="AI-Detected Study Design">
-                                    <TagIcon className="w-3.5 h-3.5" />
+                                    <TagIcon className="w-3.5 h-3.5" aria-hidden="true" />
                                     <span>{paper.detectedStudyDesign}</span>
                                 </div>
                             )}
                             {paper.pdfURL && (
-                                <a href={paper.pdfURL} target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()} title="View PDF" className="flex items-center">
-                                    <PdfIcon className="w-4 h-4 text-muted-foreground hover:text-primary transition-colors" />
+                                <a
+                                    href={paper.pdfURL}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    onClick={(e) => e.stopPropagation()}
+                                    title="View PDF"
+                                    className="flex items-center"
+                                    aria-label="View PDF (opens in new tab)"
+                                >
+                                    <PdfIcon className="w-4 h-4 text-muted-foreground hover:text-primary transition-colors" aria-hidden="true" />
                                 </a>
                             )}
                             {paper.validation?.checks.open_access && (
                                 <div title="Open Access verified by Unpaywall" className="flex items-center">
-                                    <OpenAccessIcon className="w-4 h-4 text-green-600" />
+                                    <OpenAccessIcon className="w-4 h-4 text-green-600" aria-hidden="true" />
                                 </div>
                             )}
                         </div>
