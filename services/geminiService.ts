@@ -17,6 +17,11 @@ import type {
   AdvancedSearchOptions
 } from "../types";
 
+interface StructuredPrompt {
+    system: string;
+    user: string;
+}
+
 const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
 const safeJsonParse = (jsonString: string) => {
@@ -30,8 +35,10 @@ const safeJsonParse = (jsonString: string) => {
   }
 };
 
-const mockApiAdapter = async (prompt: string, modelId: string, schema: any): Promise<any> => {
+const mockApiAdapter = async (prompt: string | StructuredPrompt, modelId: string, schema: any): Promise<any> => {
     console.warn(`[MOCK] Adapter called for model ${modelId}. Returning mock data.`);
+    const promptText = typeof prompt === 'string' ? prompt : prompt.user;
+
     if (schema.properties?.hypothetical_abstract) { return { hypothetical_abstract: `[Mock Response from ${modelId}] This is a mock abstract.` }; }
     if (schema.properties?.score && schema.properties?.rationale) { return { score: 75, rationale: `[Mock Response] This paper seems like a reasonably good fit.` }; }
     if (schema.properties?.summary) { return { summary: `[Mock Summary from ${modelId}] This mock summary.` }; }
@@ -42,18 +49,29 @@ const mockApiAdapter = async (prompt: string, modelId: string, schema: any): Pro
     if (schema.properties?.study_design) { return { study_design: 'Observational Study' }; }
     if (schema.properties?.entities) { return { entities: [{id: 'e1', type: 'Concept', label: 'Mock Concept', description: 'A mock concept'}], relationships: [] }; }
     if (schema.properties?.papers) { return { papers: [ { title: `[Mock Paper from ${modelId}]`, authors: 'Mock Author', year: 2023, abstract: 'A mock abstract.', sourceURL: 'https://mock.url', connection: 'mock connection', summary: 'mock summary' } ] }; }
-    if (schema.properties?.core_search_query) { return { core_search_query: prompt }; }
+    if (schema.properties?.core_search_query) { return { core_search_query: promptText }; }
     return { mock_response: "This is a generic mock response." };
 };
 
-const geminiApiAdapter = async (prompt: string, modelId: string, schema: any, useGoogleSearch: boolean = false): Promise<any> => {
+const geminiApiAdapter = async (prompt: string | StructuredPrompt, modelId: string, schema: any, useGoogleSearch: boolean = false): Promise<any> => {
+    let contents: string;
+    let systemInstruction: string | undefined;
+
+    if (typeof prompt === 'string') {
+        contents = prompt;
+    } else {
+        contents = prompt.user;
+        systemInstruction = prompt.system;
+    }
+
     const response = await ai.models.generateContent({
         model: modelId,
-        contents: prompt,
+        contents: contents,
         tools: useGoogleSearch ? [{googleSearch: {}}] : undefined,
         config: {
             responseMimeType: "application/json",
             responseSchema: schema,
+            systemInstruction: systemInstruction,
         },
     });
     const result = safeJsonParse(response.text ?? '');
@@ -63,7 +81,7 @@ const geminiApiAdapter = async (prompt: string, modelId: string, schema: any, us
     return result;
 };
 
-const generateJsonWithModel = async (prompt: string, model: ModelDefinition, schema: any, useGoogleSearch: boolean = false): Promise<any> => {
+const generateJsonWithModel = async (prompt: string | StructuredPrompt, model: ModelDefinition, schema: any, useGoogleSearch: boolean = false): Promise<any> => {
     try {
         switch (model.provider) {
             case 'gemini':
@@ -99,7 +117,7 @@ const structuredSearchSchema = {
 };
 
 export const parseQueryToStructuredFilters = async (userQuery: string, model: ModelDefinition): Promise<Partial<AdvancedSearchOptions> & { core_search_query: string }> => {
-    const prompt = `You are an expert academic librarian. Your task is to parse a user's natural language research query into a structured JSON object that can be used to query an academic database like OpenAlex.
+    const systemInstruction = `You are an expert academic librarian. Your task is to parse a user's natural language research query into a structured JSON object that can be used to query an academic database like OpenAlex.
 
     **Instructions:**
     1.  Identify the main topic and rephrase it into a 'core_search_query'. This should be a concise and effective search string.
@@ -109,9 +127,12 @@ export const parseQueryToStructuredFilters = async (userQuery: string, model: Mo
     5.  For date ranges, extract 'startYear' and 'endYear'. A query like "since 2020" means startYear is 2020. "before 2019" means endYear is 2018. "in 2021" means both startYear and endYear are 2021.
     6.  For exclusions, combine them into a single 'excludeKeywords' string.
 
-    **User's Query:** "${userQuery}"
-
     Return ONLY the JSON object.`;
+
+    const prompt: StructuredPrompt = {
+        system: systemInstruction,
+        user: `**User's Query:** "${userQuery}"`
+    };
 
     try {
         const result = await generateJsonWithModel(prompt, model, structuredSearchSchema);
