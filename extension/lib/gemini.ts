@@ -4,7 +4,22 @@ import type { PaperAnalysis, ResearchPaper } from '../../types';
 import { findDoiForPaper } from './crossref';
 import { findOpenAccessPdf } from './unpaywall';
 
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+// Helper to get API key from Chrome storage
+const getApiKey = async (): Promise<string | null> => {
+    return new Promise((resolve) => {
+        chrome.storage.local.get(['GEMINI_API_KEY'], (result) => {
+            resolve(result.GEMINI_API_KEY || null);
+        });
+    });
+};
+
+const getAiClient = async () => {
+    const apiKey = await getApiKey();
+    if (!apiKey) {
+        throw new Error("Gemini API Key is missing. Please set it in the extension popup.");
+    }
+    return new GoogleGenAI({ apiKey });
+};
 
 const safeJsonParse = (jsonString: string) => {
   try {
@@ -33,6 +48,7 @@ export const summarizeAbstract = async (paper: ResearchPaper): Promise<string> =
     Return a single JSON object with a "summary" key.`;
     
     try {
+        const ai = await getAiClient();
         const response = await ai.models.generateContent({
             model: "gemini-2.5-flash",
             contents: prompt,
@@ -75,6 +91,7 @@ export const analyzeSinglePaper = async (paper: ResearchPaper): Promise<PaperAna
     Return the result in JSON format.`;
     
     try {
+        const ai = await getAiClient();
         const response = await ai.models.generateContent({
             model: "gemini-2.5-flash",
             contents: prompt,
@@ -127,6 +144,7 @@ export const generatePaperBasedSuggestions = async (paper: ResearchPaper): Promi
     Return your response as a single JSON object with a single key "suggestions", which is an array of strings.`;
 
     try {
+        const ai = await getAiClient();
         const response = await ai.models.generateContent({
             model: "gemini-2.5-flash",
             contents: prompt,

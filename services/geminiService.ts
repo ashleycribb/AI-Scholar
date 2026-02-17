@@ -2,6 +2,7 @@
 // This file now handles all direct AI model interactions, removing the need for a backend.
 
 import { GoogleGenAI, Type } from "@google/genai";
+import { getAiClient } from "../utils/apiKey";
 import type {
   ChatMessage,
   ConnectedPaper,
@@ -16,8 +17,6 @@ import type {
   KnowledgeGraph,
   AdvancedSearchOptions
 } from "../types";
-
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
 const safeJsonParse = (jsonString: string) => {
   try {
@@ -47,6 +46,7 @@ const mockApiAdapter = async (prompt: string, modelId: string, schema: any): Pro
 };
 
 const geminiApiAdapter = async (prompt: string, modelId: string, schema: any, useGoogleSearch: boolean = false): Promise<any> => {
+    const ai = getAiClient();
     const response = await ai.models.generateContent({
         model: modelId,
         contents: prompt,

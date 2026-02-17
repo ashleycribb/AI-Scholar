@@ -10,9 +10,17 @@ const Popup: React.FC = () => {
     const [papers, setPapers] = useState<LocalPaper[]>([]);
     const [loading, setLoading] = useState(true);
     const [isSaving, setIsSaving] = useState(false);
+    const [apiKey, setApiKey] = useState('');
+    const [showSettings, setShowSettings] = useState(false);
 
 
     useEffect(() => {
+        chrome.storage.local.get(['GEMINI_API_KEY'], (result: any) => {
+            if (result.GEMINI_API_KEY) {
+                setApiKey(result.GEMINI_API_KEY);
+            }
+        });
+
         chrome.runtime.sendMessage({ action: 'getSavedPapers' }, (response) => {
             if (response?.success) {
                 setPapers(response.papers);
@@ -77,6 +85,12 @@ const Popup: React.FC = () => {
         chrome.runtime.sendMessage({ action: 'deletePaper', paperId });
     };
 
+    const handleSaveKey = () => {
+        chrome.storage.local.set({ GEMINI_API_KEY: apiKey }, () => {
+            setShowSettings(false);
+        });
+    };
+
     return (
         <div className="p-4">
             <header className="flex items-center justify-between pb-3 border-b border-slate-200">
@@ -84,8 +98,35 @@ const Popup: React.FC = () => {
                     <div className="w-6 h-6 bg-blue-800 rounded-md"></div>
                     <h1 className="text-lg font-bold text-slate-800">AI Research Explorer</h1>
                 </div>
+                <button
+                    onClick={() => setShowSettings(!showSettings)}
+                    className="text-slate-500 hover:text-slate-700"
+                    title="Settings"
+                >
+                    ⚙️
+                </button>
             </header>
             
+            {showSettings && (
+                <div className="mt-4 p-3 bg-slate-50 rounded-md border border-slate-200 mb-4">
+                    <h2 className="text-sm font-semibold text-slate-700 mb-2">Settings</h2>
+                    <label className="block text-xs text-slate-500 mb-1">Gemini API Key</label>
+                    <input
+                        type="password"
+                        value={apiKey}
+                        onChange={(e) => setApiKey(e.target.value)}
+                        className="w-full px-2 py-1 border border-slate-300 rounded-md text-sm mb-2"
+                        placeholder="Enter API Key"
+                    />
+                    <button
+                        onClick={handleSaveKey}
+                        className="w-full px-3 py-1 bg-blue-600 text-white text-sm rounded-md hover:bg-blue-700"
+                    >
+                        Save Key
+                    </button>
+                </div>
+            )}
+
             <div className="mt-4">
                 <button 
                     onClick={handleGenericSave}
