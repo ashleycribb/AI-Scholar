@@ -9,6 +9,7 @@ import * as embeddingService from './embeddingService';
 import { cosineSimilarity } from '../utils/math';
 // FIX: Import batchEmbedText directly as it's not exported from embeddingService.
 import { batchEmbedText } from '../utils/embeddings';
+import { limitConcurrency } from './utils';
 import * as crossrefService from './crossrefService';
 import * as semanticScholarService from './semanticScholarService';
 
@@ -273,7 +274,7 @@ export const search = async (
 
     papers = await calculatePaperScores(papers, retrievalQuery, hypotheticalAnswer, model, finalOptions);
 
-    const validationPromises = papers.map(async (p) => {
+    let validatedPapers = await limitConcurrency(papers, 5, async (p) => {
         const { validation, updatedPaperData } = await validationService.validatePaper(p);
         return {
             ...p,
@@ -281,8 +282,6 @@ export const search = async (
             validation,
         };
     });
-
-    let validatedPapers = await Promise.all(validationPromises);
     
     // Apply Open Access filter *after* validation, which discovers OA status
     if (finalOptions.isOpenAccess) {
