@@ -69,21 +69,12 @@ function combineAndDeduplicateResults(allPapers: ResearchPaper[]): ResearchPaper
     return mergedPapers;
 }
 
-async function calculatePaperScores(
-    papers: ResearchPaper[],
-    query: string,
-    hypotheticalAnswer: string,
-    model: ModelDefinition,
-    options: AdvancedSearchOptions
-): Promise<ResearchPaper[]> {
-    if (papers.length === 0) return [];
+// --- SCORE CALCULATION HELPERS ---
 
-    const semanticallyRankedPapers = await embeddingService.calculateSemanticScores(hypotheticalAnswer, papers);
+async function calculateImpactScores(papers: ResearchPaper[]): Promise<ResearchPaper[]> {
+    const papersWithAbstracts = papers.filter(p => p.abstract && p.abstract.trim().length > 50);
 
-    let processedPapers = semanticallyRankedPapers;
-
-    // --- New Semantic Impact Score Calculation ---
-    const papersWithAbstracts = processedPapers.filter(p => p.abstract && p.abstract.trim().length > 50);
+    let impactScoresMap = new Map<string, number>();
 
     if (papersWithAbstracts.length > 1) {
         const abstracts = papersWithAbstracts.map(p => p.abstract);
@@ -123,7 +114,7 @@ async function calculatePaperScores(
         });
         const maxCitationsPerYear = Math.max(...papersWithCitationsPerYear.map(p => p.citationsPerYear), 1);
 
-        processedPapers = processedPapers.map(paper => {
+        papersWithAbstracts.forEach(paper => {
             const centrality = centralityScores.get(paper.id) || 0;
             const cpyData = papersWithCitationsPerYear.find(p => p.id === paper.id);
             const citationImpact = cpyData ? (cpyData.citationsPerYear / maxCitationsPerYear) * 100 : 0;
@@ -131,39 +122,52 @@ async function calculatePaperScores(
             // New impactScore combines semantic centrality (how representative it is of the topic)
             // with citation velocity (how impactful it has been over time).
             const newImpactScore = (citationImpact * 0.6) + (centrality * 0.4);
-            return { ...paper, impactScore: newImpactScore };
+            impactScoresMap.set(paper.id, newImpactScore);
         });
     } else {
          // Fallback for single result or if no abstracts are available
         const currentYear = new Date().getFullYear();
-        processedPapers = processedPapers.map(paper => {
+        papers.forEach(paper => {
             const age = Math.max(1, currentYear - paper.year);
             const citationsPerYear = (paper.citations || 0) / age;
             const impactScore = citationsPerYear > 0 ? 50 : 0; // Can't normalize with one item, give it a medium score.
-            return { ...paper, impactScore };
+            impactScoresMap.set(paper.id, impactScore);
         });
     }
 
-    // The design classification is now handled asynchronously on the client-side
-    // to improve perceived performance.
-    let papersWithScreening = processedPapers;
+    return papers.map(paper => ({
+        ...paper,
+        impactScore: impactScoresMap.get(paper.id) ?? 0
+    }));
+}
 
-    if (options.inclusionCriteria?.trim() || options.exclusionCriteria?.trim()) {
-        const screeningPromises = papersWithScreening.map(p => 
-            geminiService.evaluateScreeningFit(p, options.inclusionCriteria, options.exclusionCriteria, model)
-        );
-        const screeningResults = await Promise.all(screeningPromises);
-        papersWithScreening = papersWithScreening.map((paper, index) => ({
-            ...paper,
-            screeningFitScore: screeningResults[index].score,
-            screeningRationale: screeningResults[index].rationale,
-        }));
+async function calculateScreeningScores(
+    papers: ResearchPaper[],
+    options: AdvancedSearchOptions,
+    model: ModelDefinition
+): Promise<ResearchPaper[]> {
+    if (!options.inclusionCriteria?.trim() && !options.exclusionCriteria?.trim()) {
+        return papers;
     }
+
+    const screeningPromises = papers.map(p =>
+        geminiService.evaluateScreeningFit(p, options.inclusionCriteria, options.exclusionCriteria, model)
+    );
+    const screeningResults = await Promise.all(screeningPromises);
     
-    const papersWithCombinedScore = papersWithScreening.map(paper => {
+    return papers.map((paper, index) => ({
+        ...paper,
+        screeningFitScore: screeningResults[index].score,
+        screeningRationale: screeningResults[index].rationale,
+    }));
+}
+
+function calculateCombinedScores(papers: ResearchPaper[], query: string): ResearchPaper[] {
+    const currentYear = new Date().getFullYear();
+
+    return papers.map(paper => {
         const semanticScore = paper.semanticScore || 0;
         const impactScore = paper.impactScore || 0;
-        const currentYear = new Date().getFullYear();
         const recencyScore = Math.max(0, 100 - ((currentYear - paper.year) * 5));
         const titleMatchScore = calculateTitleMatchScore(query, paper.title);
 
@@ -171,6 +175,28 @@ async function calculatePaperScores(
         
         return { ...paper, combinedScore };
     });
+}
+
+export async function calculatePaperScores(
+    papers: ResearchPaper[],
+    query: string,
+    hypotheticalAnswer: string,
+    model: ModelDefinition,
+    options: AdvancedSearchOptions
+): Promise<ResearchPaper[]> {
+    if (papers.length === 0) return [];
+
+    // 1. Semantic Scores
+    const semanticallyRankedPapers = await embeddingService.calculateSemanticScores(hypotheticalAnswer, papers);
+
+    // 2. Impact Scores
+    const papersWithImpact = await calculateImpactScores(semanticallyRankedPapers);
+
+    // 3. Screening Scores
+    const papersWithScreening = await calculateScreeningScores(papersWithImpact, options, model);
+
+    // 4. Combined Scores
+    const papersWithCombinedScore = calculateCombinedScores(papersWithScreening, query);
 
     return papersWithCombinedScore.sort((a, b) => (b.combinedScore || 0) - (a.combinedScore || 0));
 }
