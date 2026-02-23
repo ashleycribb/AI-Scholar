@@ -3,6 +3,7 @@ import type { ResearchPaper, SortConfig, SortKey } from '../types';
 import { PaperCard } from './PaperCard';
 import { ChevronDownIcon } from './icons/ChevronDownIcon';
 import { SparklesIcon } from './icons/SparklesIcon';
+import { sortOptions } from './ResultsDisplayConfig';
 
 interface ResultsDisplayProps {
   papers: ResearchPaper[];
@@ -19,14 +20,6 @@ interface ResultsDisplayProps {
   hasMore: boolean;
   isLoadingMore: boolean;
 }
-
-const sortOptions: { key: SortKey; label: string; available: (papers: ResearchPaper[]) => boolean }[] = [
-    { key: 'relevance', label: 'Relevance', available: (papers) => papers.some(p => p.combinedScore !== undefined) },
-    { key: 'year', label: 'Year', available: () => true },
-    { key: 'citations', label: 'Citations', available: (papers) => papers.some(p => p.citations !== undefined) },
-    { key: 'validationScore', label: 'Validation', available: (papers) => papers.some(p => p.validation !== undefined) },
-    { key: 'screeningFitScore', label: 'Screening Fit', available: (papers) => papers.some(p => p.screeningFitScore !== undefined) },
-];
 
 const SortArrow: React.FC<{ direction: 'asc' | 'desc' }> = ({ direction }) => {
     const isAsc = direction === 'asc';
