@@ -3,7 +3,7 @@ import { GoogleGenAI, FunctionDeclaration, Type, Chat } from "@google/genai";
 import type { ResearchPaper, ModelDefinition, Project, ChatMessage, ConnectedPaper } from '../types';
 import * as apiService from './apiService';
 
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+const ai = new GoogleGenAI({ apiKey: (typeof process !== 'undefined' ? process.env.API_KEY : undefined) || (import.meta.env ? import.meta.env.VITE_API_KEY : undefined) });
 
 // --- AGENT TOOL DEFINITIONS ---
 

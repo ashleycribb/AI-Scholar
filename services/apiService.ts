@@ -11,6 +11,7 @@ import { cosineSimilarity } from '../utils/math';
 import { batchEmbedText } from '../utils/embeddings';
 import * as crossrefService from './crossrefService';
 import * as semanticScholarService from './semanticScholarService';
+import * as pubmedService from './pubmedService';
 
 // --- HELPER FUNCTIONS MOVED FROM AGENT BACKEND ---
 
@@ -208,11 +209,27 @@ export const search = async (
 
     const searchPromises: Promise<ResearchPaper[]>[] = [];
     let openAlexHasMore = false; 
+    let pubmedHasMore = false;
+    let s2HasMore = false;
 
     // Add API-based searches
     if (sources.some(s => s.id === 'openalex')) {
         const promise = openalexService.searchOpenAlex(retrievalQuery, finalOptions, page).then(result => {
             openAlexHasMore = result.hasMore;
+            return result.papers;
+        });
+        searchPromises.push(promise);
+    }
+    if (sources.some(s => s.id === 'pubmed')) {
+        const promise = pubmedService.searchPubMed(retrievalQuery, finalOptions, page).then(result => {
+            pubmedHasMore = result.hasMore;
+            return result.papers;
+        });
+        searchPromises.push(promise);
+    }
+    if (sources.some(s => s.id === 'semantic_scholar')) {
+        const promise = semanticScholarService.searchSemanticScholar(retrievalQuery, finalOptions, page).then(result => {
+            s2HasMore = result.hasMore;
             return result.papers;
         });
         searchPromises.push(promise);
@@ -252,8 +269,8 @@ export const search = async (
         throw new Error("No academic papers were found for this query from any source. Please try a different query.");
     }
     
-    // For pagination, we'll rely on the structured source (OpenAlex)
-    const hasMore = openAlexHasMore;
+    // For pagination, we'll check if any source has more results
+    const hasMore = openAlexHasMore || pubmedHasMore || s2HasMore;
     
     let papers = combineAndDeduplicateResults(allPapers);
     
