@@ -2,6 +2,7 @@
 import { GoogleGenAI, FunctionDeclaration, Type, Chat } from "@google/genai";
 import type { ResearchPaper, ModelDefinition, Project, ChatMessage, ConnectedPaper } from '../types';
 import * as apiService from './apiService';
+import * as lightRagService from './lightRagService';
 
 const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
@@ -37,10 +38,23 @@ const findConnectedPapersTool: FunctionDeclaration = {
     }
 };
 
+const queryProjectKnowledgeBaseTool: FunctionDeclaration = {
+    name: "query_project_knowledge_base",
+    description: "Performs a deep, semantic search across all papers in the project using a hybrid of vector search and knowledge graph traversal. Use this for complex questions that require synthesizing information from multiple papers.",
+    parameters: {
+        type: Type.OBJECT,
+        properties: {
+            query: { type: Type.STRING, description: "The specific question or topic to search for within the project papers." }
+        },
+        required: ["query"]
+    }
+};
+
 const availableTools = [
     getPapersInProjectTool,
     getPaperDetailsTool,
     findConnectedPapersTool,
+    queryProjectKnowledgeBaseTool,
 ];
 
 // --- AGENT EXECUTION LOGIC ---
@@ -83,6 +97,13 @@ export async function* runAgentTask(
                 return { error: e instanceof Error ? e.message : "Failed to find connected papers." };
             }
         },
+        query_project_knowledge_base: async (args: { query: string }): Promise<string> => {
+            try {
+                return await lightRagService.queryProject(args.query, projectPapers, modelDef);
+            } catch (e) {
+                return `Error querying knowledge base: ${e instanceof Error ? e.message : "Unknown error"}`;
+            }
+        },
     };
 
     const chat: Chat = ai.chats.create({
@@ -92,6 +113,7 @@ export async function* runAgentTask(
 - You have access to a set of tools to answer questions about the user's current research project.
 - The project is named "${project.name}".
 - First, understand the user's request. Then, devise a plan and use the available tools step-by-step to gather the necessary information.
+- If the user asks a complex question that requires understanding multiple papers or specific concepts within the project, USE the 'query_project_knowledge_base' tool. This tool is much more powerful than simply listing papers.
 - If you need to list papers first to get an ID, do so.
 - When calling a tool, explain your reasoning in the 'thinking' field.
 - Once you have gathered enough information, synthesize it and provide a final, comprehensive answer to the user.
