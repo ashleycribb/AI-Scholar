@@ -30,6 +30,8 @@ import * as analysisService from './services/analysisService';
 import { Header } from './components/Header';
 import { ConnectedPapersModal } from './components/ConnectedPapersModal';
 import * as lightRagService from './services/lightRagService';
+import type { ImplementationPlan } from './services/implementationService';
+import { generateImplementationPlan } from './services/implementationService';
 
 
 const PROJECT_COLORS = ['sky', 'green', 'yellow', 'red', 'purple', 'pink', 'indigo', 'teal'];
@@ -68,6 +70,11 @@ const App: React.FC = () => {
     // Live Search Suggestions
     const [searchSuggestions, setSearchSuggestions] = useState<string[]>([]);
     const [isGeneratingSearchSuggestions, setIsGeneratingSearchSuggestions] = useState(false);
+
+    // Implementation Planning State
+    const [implementationPlan, setImplementationPlan] = useState<ImplementationPlan | undefined>(undefined);
+    const [isGeneratingPlan, setIsGeneratingPlan] = useState(false);
+    const [planError, setPlanError] = useState<string | null>(null);
 
     // Pagination state
     const [summary, setSummary] = useState<string>('');
@@ -395,6 +402,11 @@ const App: React.FC = () => {
         setIsAnalysisModalOpen(true);
         setIsAnalyzingPaper(true);
         setAnalysisError(null);
+        // Reset implementation plan state when opening analysis
+        setImplementationPlan(paper.implementationPlan);
+        setPlanError(null);
+        setIsGeneratingPlan(false);
+
         // Set paper immediately for the modal header, but analysis will be fetched.
         setAnalysisResult({ paper, analysis: paper.savedAnalysis || {} as PaperAnalysis });
 
@@ -406,6 +418,26 @@ const App: React.FC = () => {
             setAnalysisError(message);
         } finally {
             setIsAnalyzingPaper(false);
+        }
+    };
+
+    const handleGenerateImplementationPlan = async (paper: ResearchPaper) => {
+        analyticsService.logEvent('tool_used', { tool: 'generate_implementation_plan', paperId: paper.id });
+        setIsGeneratingPlan(true);
+        setPlanError(null);
+
+        try {
+            const plan = await generateImplementationPlan(paper, model);
+            setImplementationPlan(plan);
+
+            // Save plan to paper state
+            updatePaperState(paper.id, { implementationPlan: plan });
+
+        } catch (err) {
+            const message = err instanceof Error ? err.message : "Failed to generate plan.";
+            setPlanError(message);
+        } finally {
+            setIsGeneratingPlan(false);
         }
     };
 
@@ -911,7 +943,21 @@ const App: React.FC = () => {
             {isAboutModalOpen && <InfoModal isOpen={isAboutModalOpen} onClose={() => setIsAboutModalOpen(false)} title="About AI Research Explorer"> <AboutModalContent /> </InfoModal>}
             <VerificationModal isOpen={isVerificationModalOpen} onClose={() => setIsVerificationModalOpen(false)} paper={paperToVerify} onVerificationComplete={handleVerificationComplete} />
             <ReportModal isOpen={isGapAnalysisModalOpen} onClose={() => setIsGapAnalysisModalOpen(false)} isLoading={isAnalyzingGaps} content={gapAnalysisResult} error={gapAnalysisError} />
-            <PaperAnalysisModal isOpen={isAnalysisModalOpen} onClose={() => setIsAnalysisModalOpen(false)} isLoading={isAnalyzingPaper} error={analysisError} result={analysisResult} onSaveAnalysis={handleSaveAnalysis} isAnalysisSaved={!!analysisResult?.paper.savedAnalysis} />
+            <PaperAnalysisModal
+                isOpen={isAnalysisModalOpen}
+                onClose={() => setIsAnalysisModalOpen(false)}
+                isLoading={isAnalyzingPaper}
+                error={analysisError}
+                result={analysisResult}
+                onSaveAnalysis={handleSaveAnalysis}
+                isAnalysisSaved={!!analysisResult?.paper.savedAnalysis}
+
+                // New props for Implementation Planning
+                onGenerateImplementationPlan={handleGenerateImplementationPlan}
+                isGeneratingPlan={isGeneratingPlan}
+                implementationPlan={implementationPlan}
+                planError={planError}
+            />
             <SynthesisModal isOpen={isSynthesisModalOpen} onClose={() => setIsSynthesisModalOpen(false)} isLoading={isSynthesizing} result={synthesisResult} error={synthesisError} />
             <CitationModal isOpen={isCitationModalOpen} onClose={() => setIsCitationModalOpen(false)} paper={paperForCitation} model={model} />
             <DatabaseFinderModal isOpen={isDbFinderOpen} onClose={() => setIsDbFinderOpen(false)} onAddSource={handleAddSource} existingSources={searchSources} />

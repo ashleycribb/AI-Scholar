@@ -1,4 +1,6 @@
 
+import type { ImplementationPlan } from './services/implementationService';
+
 export type SummaryLength = 'short' | 'medium' | 'detailed';
 export type SummaryStyle = 'paragraph' | 'bullets' | 'qa';
 export type CitationStyle = 'apa' | 'mla' | 'chicago' | 'harvard' | 'ieee' | 'vancouver';
@@ -104,6 +106,7 @@ export interface ResearchPaper {
   savedAnalysis?: PaperAnalysis;
   verificationResult?: VerificationResult;
   journal?: string;
+  implementationPlan?: ImplementationPlan; // New field for code generation plan
 }
 
 export type PublicationYearData = { year: number; count: number }[];
