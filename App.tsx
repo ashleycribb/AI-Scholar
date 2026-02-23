@@ -29,6 +29,7 @@ import { DatabaseFinderModal } from './components/DatabaseFinderModal';
 import * as analysisService from './services/analysisService';
 import { Header } from './components/Header';
 import { ConnectedPapersModal } from './components/ConnectedPapersModal';
+import * as lightRagService from './services/lightRagService';
 
 
 const PROJECT_COLORS = ['sky', 'green', 'yellow', 'red', 'purple', 'pink', 'indigo', 'teal'];
@@ -627,7 +628,7 @@ const App: React.FC = () => {
         }
     };
 
-     const handleIndexPaperForRag = (projectId: string, paperId: string) => {
+     const handleIndexPaperForRag = async (projectId: string, paperId: string) => {
         setProjects(prev => prev.map(p => {
             if (p.id === projectId) {
                 const newStatuses = { ...p.paperStatuses, [paperId]: 'indexing' as const };
@@ -636,16 +637,35 @@ const App: React.FC = () => {
             return p;
         }));
 
-        // Simulate indexing delay
-        setTimeout(() => {
-            setProjects(prev => prev.map(p => {
-                if (p.id === projectId) {
-                    const newStatuses = { ...p.paperStatuses, [paperId]: 'indexed' as const };
-                    return { ...p, paperStatuses: newStatuses };
-                }
-                return p;
-            }));
-        }, 2000 + Math.random() * 1000);
+        const paper = workspacePapers.find(p => p.id === paperId);
+        if (paper) {
+            try {
+                const indexedPaper = await lightRagService.indexPaper(paper, model);
+
+                // Update paper with new KG data so it's available for the agent
+                updatePaperState(paperId, {
+                    knowledgeGraph: indexedPaper.knowledgeGraph,
+                    knowledgeGraphState: 'loaded'
+                });
+
+                setProjects(prev => prev.map(p => {
+                    if (p.id === projectId) {
+                        const newStatuses = { ...p.paperStatuses, [paperId]: 'indexed' as const };
+                        return { ...p, paperStatuses: newStatuses };
+                    }
+                    return p;
+                }));
+            } catch (error) {
+                console.error("Failed to index paper for RAG:", error);
+                setProjects(prev => prev.map(p => {
+                    if (p.id === projectId) {
+                        const newStatuses = { ...p.paperStatuses, [paperId]: 'error' as const };
+                        return { ...p, paperStatuses: newStatuses };
+                    }
+                    return p;
+                }));
+            }
+        }
     };
 
     const handleProjectChat = async (projectId: string, message: string) => {
