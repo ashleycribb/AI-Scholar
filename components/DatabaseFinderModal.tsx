@@ -28,6 +28,11 @@ const findDatabasesForField = async (field: string): Promise<SearchSourceInfo[]>
             description: 'A comprehensive open index of scholarly works, authors, institutions, and more.'
         },
         {
+            id: 'semantic_scholar',
+            name: 'Semantic Scholar',
+            description: 'A free, AI-powered research tool for scientific literature, with over 200 million papers.'
+        },
+        {
             id: 'arxiv',
             name: 'arXiv',
             description: 'An open-access archive for scholarly articles in physics, mathematics, computer science, and related fields.'

@@ -17,7 +17,8 @@ import type {
   AdvancedSearchOptions
 } from "../types";
 
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+const apiKey = (typeof process !== 'undefined' ? process.env.API_KEY : undefined) || (import.meta.env ? import.meta.env.VITE_API_KEY : undefined);
+const ai = new GoogleGenAI({ apiKey });
 
 const safeJsonParse = (jsonString: string) => {
   try {

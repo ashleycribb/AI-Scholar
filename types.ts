@@ -100,7 +100,7 @@ export interface ResearchPaper {
   knowledgeGraphState?: 'idle' | 'loading' | 'loaded' | 'error';
   doi?: string;
   doiState?: 'idle' | 'loading' | 'loaded' | 'error';
-  enrichmentSource?: 'arXiv';
+  enrichmentSource?: 'arXiv' | 'PubMed' | 'Semantic Scholar';
   savedAnalysis?: PaperAnalysis;
   verificationResult?: VerificationResult;
   journal?: string;
