@@ -324,3 +324,6 @@ export interface UserStudyData {
   usefulness: number; // 1-5
   timeToVerify: number; // in milliseconds
 }
+
+// --- Agent Tool Types ---
+export type ToolImplementation = (args: any) => Promise<any> | any;
