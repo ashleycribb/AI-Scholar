@@ -4,7 +4,7 @@ import type { PaperAnalysis, ResearchPaper } from '../../types';
 import { findDoiForPaper } from './crossref';
 import { findOpenAccessPdf } from './unpaywall';
 
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+const ai = new GoogleGenAI({ apiKey: import.meta.env.VITE_GEMINI_API_KEY });
 
 const safeJsonParse = (jsonString: string) => {
   try {
