@@ -1,5 +1,6 @@
 import React from 'react';
 import { ErrorMessage } from './ErrorMessage';
+import { SafeHTML } from './SafeHTML';
 import type { CitationStyle } from '../types';
 
 interface ReferenceListProps {
@@ -60,10 +61,11 @@ export const ReferenceList: React.FC<ReferenceListProps> = ({ citations, isLoadi
             {!isLoading && citations.length > 0 && (
                 <ol className="space-y-3">
                     {citations.map((citation, index) => (
-                        <li 
+                        <SafeHTML
                             key={index} 
+                            as="li"
                             className="text-gray-700 leading-relaxed pl-5 -indent-5"
-                            dangerouslySetInnerHTML={{ __html: citation }}
+                            html={citation}
                         />
                     ))}
                 </ol>
