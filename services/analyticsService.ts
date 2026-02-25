@@ -23,7 +23,6 @@ class AnalyticsService {
     constructor() {
         this.sessionId = generateUUID();
         this.events = this.loadEventsFromStorage();
-        console.log(`[ANALYTICS] New session started: ${this.sessionId}`);
         this.logEvent('session_started', {}); // Log a session start event
     }
 
