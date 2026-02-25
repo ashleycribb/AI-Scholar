@@ -17,7 +17,6 @@ interface DatabaseFinderModalProps {
 // In a real implementation, this would call out to an AI service.
 // For now, it's a mock to demonstrate the UI and architecture.
 const findDatabasesForField = async (field: string): Promise<SearchSourceInfo[]> => {
-    console.log(`Simulating AI search for databases in field: ${field}`);
     await new Promise(resolve => setTimeout(resolve, 1000)); // Simulate network delay
     
     // Hardcoded results for demonstration
