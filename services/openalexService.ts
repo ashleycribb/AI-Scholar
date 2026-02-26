@@ -1,5 +1,6 @@
 import type { ResearchPaper, AdvancedSearchOptions } from '../types';
 import { createPaperId } from './extensionService';
+import { deinvertAbstract } from './utils';
 
 // Client-side cache for OpenAlex results
 interface CacheEntry {
@@ -11,42 +12,6 @@ interface CacheEntry {
 }
 const openAlexCache = new Map<string, CacheEntry>();
 const CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutes
-
-/**
- * Reconstructs a readable abstract string from OpenAlex's inverted index format.
- * @param invertedAbstract - The inverted index object from the OpenAlex API.
- * @returns A string representing the paper's abstract.
- */
-function deinvertAbstract(invertedAbstract: { [key: string]: number[] }): string {
-    if (!invertedAbstract) return '';
-    
-    const abstractArray: string[] = [];
-    let maxIndex = -1;
-
-    // First, determine the size of the array needed
-    for (const word in invertedAbstract) {
-        for (const pos of invertedAbstract[word]) {
-            if (pos > maxIndex) {
-                maxIndex = pos;
-            }
-        }
-    }
-    
-    // Initialize the array with empty strings
-    if(maxIndex > -1){
-        abstractArray.length = maxIndex + 1;
-        abstractArray.fill('');
-    }
-
-    // Populate the array with words at their correct positions
-    for (const word in invertedAbstract) {
-        for (const pos of invertedAbstract[word]) {
-            abstractArray[pos] = word;
-        }
-    }
-    return abstractArray.join(' ').trim();
-}
-
 
 const mapOpenAlexWorkToResearchPaper = (work: any): ResearchPaper | null => {
     const abstract = work.abstract_inverted_index 
