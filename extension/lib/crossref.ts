@@ -1,36 +1,14 @@
 // extension/lib/crossref.ts
-import type { ResearchPaper } from '../../types';
-
-interface CrossrefAuthor {
-  given?: string;
-  family?: string;
-  name?: string; 
-}
-
-interface CrossrefWork {
-  title: string[];
-  author: CrossrefAuthor[];
-  URL: string;
-  DOI: string;
-}
-
-const normalizeString = (str: string) => str.toLowerCase().replace(/[^a-z0-9]/g, '');
-
-const checkAuthorMatch = (paperAuthors: string, crossrefAuthors: CrossrefWork['author']): boolean => {
-    if (!crossrefAuthors || crossrefAuthors.length === 0) return false;
-    
-    const firstPaperAuthorLastName = paperAuthors.split(',')[0].trim().split(' ').pop()?.toLowerCase();
-    if (!firstPaperAuthorLastName) return false;
-
-    return crossrefAuthors.some(author => {
-        const familyName = author.family?.toLowerCase();
-        const fullName = author.name?.toLowerCase();
-        return familyName === firstPaperAuthorLastName || fullName?.includes(firstPaperAuthorLastName);
-    });
-};
+import type { ResearchPaper, CrossrefWork } from '../../types';
+import {
+    normalizeString,
+    checkAuthorMatch,
+    getCrossrefBibliographicUrl,
+    getCrossrefTitleAuthorUrl
+} from '../../services/crossrefUtils';
 
 export const fetchPaperFromCrossref = async (paper: ResearchPaper): Promise<CrossrefWork | null> => {
-    const url = `https://api.crossref.org/works?query.bibliographic=${encodeURIComponent(paper.title)}&rows=3`;
+    const url = getCrossrefBibliographicUrl(paper.title);
 
     try {
         const response = await fetch(url);
@@ -61,7 +39,7 @@ export const findDoiForPaper = async (paper: ResearchPaper): Promise<string | nu
     try {
         const firstAuthorLastName = paper.authors.split(',')[0].trim().split(' ').pop();
         if (firstAuthorLastName) {
-            const url = `https://api.crossref.org/works?query.title=${encodeURIComponent(paper.title)}&query.author=${encodeURIComponent(firstAuthorLastName)}&rows=1&select=DOI,title,author`;
+            const url = getCrossrefTitleAuthorUrl(paper.title, firstAuthorLastName);
             const response = await fetch(url);
             if (response.ok) {
                 const data = await response.json();
