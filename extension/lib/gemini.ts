@@ -2,7 +2,7 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import type { PaperAnalysis, ResearchPaper } from '../../types';
 import { findDoiForPaper } from './crossref';
-import { findOpenAccessPdf } from './unpaywall';
+import { findOpenAccessPdf } from '../../services/unpaywallService';
 
 const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
