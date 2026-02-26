@@ -1,7 +1,29 @@
+import { z } from 'zod';
 import type { ResearchPaper } from '../types';
 
 const CHANNEL_NAME = 'ai_research_explorer_channel';
 let channel: BroadcastChannel | null = null;
+
+const ResearchPaperSchema = z.object({
+    id: z.string(),
+    title: z.string(),
+    authors: z.string(),
+    year: z.number(),
+    abstract: z.string(),
+    sourceURL: z.string().optional(),
+    pdfURL: z.string().optional(),
+}).passthrough();
+
+const ExtensionMessageSchema = z.discriminatedUnion('type', [
+    z.object({
+        type: z.literal('paper_saved_to_workspace'),
+        paper: ResearchPaperSchema,
+    }),
+    z.object({
+        type: z.literal('paper_removed'),
+        paperId: z.string(),
+    }),
+]);
 
 const getChannel = (): BroadcastChannel => {
     if (!channel) {
@@ -16,11 +38,26 @@ export const listenForExtensionMessages = (
 ) => {
     const bc = getChannel();
     bc.onmessage = (event) => {
-        if (event.data.type === 'paper_saved_to_workspace') {
-            onPaperReceived(event.data.paper);
+        // Validate origin - strict check
+        if (event.origin !== '' && event.origin !== window.location.origin) {
+            console.warn('Blocked message from untrusted origin:', event.origin);
+            return;
         }
-        if (event.data.type === 'paper_removed') {
-            onPaperRemoved(event.data.paperId);
+
+        const result = ExtensionMessageSchema.safeParse(event.data);
+
+        if (!result.success) {
+            console.error('Invalid message received on extension channel:', result.error);
+            return;
+        }
+
+        const message = result.data;
+
+        if (message.type === 'paper_saved_to_workspace') {
+            onPaperReceived(message.paper as ResearchPaper);
+        }
+        if (message.type === 'paper_removed') {
+            onPaperRemoved(message.paperId);
         }
     };
     
