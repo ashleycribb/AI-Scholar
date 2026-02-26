@@ -1,5 +1,6 @@
 import type { ResearchPaper, AdvancedSearchOptions } from '../types';
 import { createPaperId } from './extensionService';
+import { stableStringify } from './utils';
 
 // Client-side cache for OpenAlex results
 interface CacheEntry {
@@ -85,7 +86,7 @@ const mapOpenAlexWorkToResearchPaper = (work: any): ResearchPaper | null => {
  */
 export const searchOpenAlex = async (query: string, options: AdvancedSearchOptions, page: number = 1): Promise<{ papers: ResearchPaper[], hasMore: boolean }> => {
     // 1. Create a consistent cache key
-    const cacheKey = JSON.stringify({ query, ...options, page });
+    const cacheKey = stableStringify({ query, ...options, page });
     
     // 2. Check the cache
     const cachedEntry = openAlexCache.get(cacheKey);
