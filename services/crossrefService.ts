@@ -57,7 +57,7 @@ export const fetchPaperFromCrossref = async (paper: ResearchPaper): Promise<Cros
             const normalizedApiTitle = normalizeString(apiTitle);
             
             // A match is considered high-confidence if the titles are very similar AND an author name matches.
-            const titleIsSimilar = normalizedApiTitle.includes(normalizedPaperTitle) || normalizedPaperTitle.includes(normalizedPaperTitle);
+            const titleIsSimilar = normalizedApiTitle.includes(normalizedPaperTitle) || normalizedPaperTitle.includes(normalizedApiTitle);
 
             if (titleIsSimilar && checkAuthorMatch(paper.authors, item.author)) {
                 return item as CrossrefWork; // Found a confident match.
