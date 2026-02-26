@@ -4,7 +4,35 @@ import type { PaperAnalysis, ResearchPaper } from '../../types';
 import { findDoiForPaper } from './crossref';
 import { findOpenAccessPdf } from './unpaywall';
 
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+declare const chrome: any;
+
+const getAI = async (): Promise<GoogleGenAI> => {
+    return new Promise((resolve, reject) => {
+        if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
+            chrome.storage.local.get(['geminiApiKey'], (result: any) => {
+                if (result && result.geminiApiKey) {
+                    resolve(new GoogleGenAI({ apiKey: result.geminiApiKey }));
+                    return;
+                }
+
+                // Fallback to environment variable if available (e.g. during development)
+                if (process.env.API_KEY) {
+                    resolve(new GoogleGenAI({ apiKey: process.env.API_KEY }));
+                    return;
+                }
+
+                reject(new Error("Gemini API Key not configured. Please set it in the extension popup."));
+            });
+        } else {
+            // Non-extension environment (e.g. tests)
+            if (process.env.API_KEY) {
+                resolve(new GoogleGenAI({ apiKey: process.env.API_KEY }));
+            } else {
+                reject(new Error("Gemini API Key not configured."));
+            }
+        }
+    });
+};
 
 const safeJsonParse = (jsonString: string) => {
   try {
@@ -33,6 +61,7 @@ export const summarizeAbstract = async (paper: ResearchPaper): Promise<string> =
     Return a single JSON object with a "summary" key.`;
     
     try {
+        const ai = await getAI();
         const response = await ai.models.generateContent({
             model: "gemini-2.5-flash",
             contents: prompt,
@@ -45,7 +74,7 @@ export const summarizeAbstract = async (paper: ResearchPaper): Promise<string> =
         return result?.summary || "Could not generate summary.";
     } catch (error) {
         console.error("Error summarizing abstract:", error);
-        return "Error generating summary.";
+        return "Error generating summary: " + (error instanceof Error ? error.message : String(error));
     }
 };
 
@@ -75,6 +104,7 @@ export const analyzeSinglePaper = async (paper: ResearchPaper): Promise<PaperAna
     Return the result in JSON format.`;
     
     try {
+        const ai = await getAI();
         const response = await ai.models.generateContent({
             model: "gemini-2.5-flash",
             contents: prompt,
@@ -88,7 +118,7 @@ export const analyzeSinglePaper = async (paper: ResearchPaper): Promise<PaperAna
         return result;
     } catch (error) {
         console.error("Error analyzing paper:", error);
-        throw new Error("Failed to perform structured analysis on the paper.");
+        throw new Error("Failed to perform structured analysis on the paper: " + (error instanceof Error ? error.message : String(error)));
     }
 };
 
@@ -127,6 +157,7 @@ export const generatePaperBasedSuggestions = async (paper: ResearchPaper): Promi
     Return your response as a single JSON object with a single key "suggestions", which is an array of strings.`;
 
     try {
+        const ai = await getAI();
         const response = await ai.models.generateContent({
             model: "gemini-2.5-flash",
             contents: prompt,
@@ -140,6 +171,6 @@ export const generatePaperBasedSuggestions = async (paper: ResearchPaper): Promi
         return result.suggestions;
     } catch (error) {
         console.error("Error generating paper-based suggestions:", error);
-        throw new Error("Failed to generate search suggestions for the selected paper.");
+        throw new Error("Failed to generate search suggestions for the selected paper: " + (error instanceof Error ? error.message : String(error)));
     }
 };
