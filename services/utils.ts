@@ -7,28 +7,18 @@ export function deinvertAbstract(invertedAbstract: { [key: string]: number[] }):
     if (!invertedAbstract) return '';
     
     const abstractArray: string[] = [];
-    let maxIndex = -1;
-
-    // First, determine the size of the array needed
-    for (const word in invertedAbstract) {
-        for (const pos of invertedAbstract[word]) {
-            if (pos > maxIndex) {
-                maxIndex = pos;
-            }
-        }
-    }
-    
-    // Initialize the array with empty strings
-    if(maxIndex > -1){
-        abstractArray.length = maxIndex + 1;
-        abstractArray.fill('');
-    }
 
     // Populate the array with words at their correct positions
+    // This single pass avoids iterating keys twice and manually calculating maxIndex.
+    // JS arrays automatically expand when assigning to an index > length.
     for (const word in invertedAbstract) {
-        for (const pos of invertedAbstract[word]) {
+        const positions = invertedAbstract[word];
+        for (const pos of positions) {
             abstractArray[pos] = word;
         }
     }
+
+    // Join treats empty slots (undefined) as empty strings, which matches the behavior
+    // of filling with '' in the original implementation.
     return abstractArray.join(' ').trim();
 }
