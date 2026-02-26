@@ -32,3 +32,32 @@ export function deinvertAbstract(invertedAbstract: { [key: string]: number[] }):
     }
     return abstractArray.join(' ').trim();
 }
+
+/**
+ * Returns a new object with all keys sorted recursively.
+ * @param obj - The object to stabilize.
+ * @returns A new object with sorted keys.
+ */
+export function getStableObject(obj: any): any {
+    if (obj === null || typeof obj !== 'object') {
+        return obj;
+    }
+    if (Array.isArray(obj)) {
+        return obj.map(getStableObject);
+    }
+    const sortedKeys = Object.keys(obj).sort();
+    const result: any = {};
+    for (const key of sortedKeys) {
+        result[key] = getStableObject(obj[key]);
+    }
+    return result;
+}
+
+/**
+ * Stringifies an object consistently by sorting its keys.
+ * @param obj - The object to stringify.
+ * @returns A JSON string representation of the stabilized object.
+ */
+export function stableStringify(obj: any): string {
+    return JSON.stringify(getStableObject(obj));
+}
