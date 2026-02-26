@@ -69,6 +69,70 @@ function combineAndDeduplicateResults(allPapers: ResearchPaper[]): ResearchPaper
     return mergedPapers;
 }
 
+// Optimized centrality calculation using pre-computed norms and triangular matrix traversal
+export function calculateCentrality(embeddings: number[][]): number[] {
+    const n = embeddings.length;
+    const sums = new Float64Array(n);
+    const counts = new Int32Array(n);
+
+    // Precompute norms
+    const norms = new Float64Array(n);
+    for (let i = 0; i < n; i++) {
+        const vec = embeddings[i];
+        if (vec && vec.length > 0) {
+            let sumSq = 0;
+            for (let k = 0; k < vec.length; k++) {
+                sumSq += vec[k] * vec[k];
+            }
+            norms[i] = Math.sqrt(sumSq);
+        } else {
+            norms[i] = 0;
+        }
+    }
+
+    for (let i = 0; i < n; i++) {
+        const vecA = embeddings[i];
+        const normA = norms[i];
+
+        if (!vecA || vecA.length === 0 || normA === 0) continue;
+
+        for (let j = i + 1; j < n; j++) {
+            const vecB = embeddings[j];
+            const normB = norms[j];
+
+            if (!vecB || vecB.length === 0 || normB === 0) continue;
+
+            // Dot product
+            let dot = 0;
+            const len = vecA.length;
+            for (let k = 0; k < len; k++) {
+                dot += vecA[k] * (vecB[k] || 0);
+            }
+
+            const sim = dot / (normA * normB);
+
+            sums[i] += sim;
+            counts[i]++;
+            sums[j] += sim;
+            counts[j]++;
+        }
+    }
+
+    const result: number[] = [];
+    for (let i = 0; i < n; i++) {
+        const count = counts[i];
+
+        if (norms[i] === 0) {
+            result.push(0);
+        } else {
+            const avgSimilarity = count > 0 ? sums[i] / count : 0;
+            result.push(((avgSimilarity + 1) / 2) * 100);
+        }
+    }
+
+    return result;
+}
+
 async function calculatePaperScores(
     papers: ResearchPaper[],
     query: string,
@@ -95,24 +159,11 @@ async function calculatePaperScores(
             embeddingMap.set(paper.id, allPaperEmbeddings[index]);
         });
 
+        // Use optimized centrality calculation
+        const centralityValues = calculateCentrality(allPaperEmbeddings);
         const centralityScores = new Map<string, number>();
-        papersWithAbstracts.forEach(paperA => {
-            const embeddingA = embeddingMap.get(paperA.id);
-            if (!embeddingA || embeddingA.length === 0) {
-                centralityScores.set(paperA.id, 0); return;
-            }
-            let totalSimilarity = 0;
-            let count = 0;
-            papersWithAbstracts.forEach(paperB => {
-                if (paperA.id === paperB.id) return;
-                const embeddingB = embeddingMap.get(paperB.id);
-                if (embeddingB && embeddingB.length > 0) {
-                    totalSimilarity += cosineSimilarity(embeddingA, embeddingB);
-                    count++;
-                }
-            });
-            const avgSimilarity = count > 0 ? totalSimilarity / count : 0;
-            centralityScores.set(paperA.id, ((avgSimilarity + 1) / 2) * 100); // Normalize to 0-100
+        papersWithAbstracts.forEach((paper, index) => {
+            centralityScores.set(paper.id, centralityValues[index]);
         });
 
         const currentYear = new Date().getFullYear();
