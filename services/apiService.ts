@@ -69,21 +69,8 @@ function combineAndDeduplicateResults(allPapers: ResearchPaper[]): ResearchPaper
     return mergedPapers;
 }
 
-async function calculatePaperScores(
-    papers: ResearchPaper[],
-    query: string,
-    hypotheticalAnswer: string,
-    model: ModelDefinition,
-    options: AdvancedSearchOptions
-): Promise<ResearchPaper[]> {
-    if (papers.length === 0) return [];
-
-    const semanticallyRankedPapers = await embeddingService.calculateSemanticScores(hypotheticalAnswer, papers);
-
-    let processedPapers = semanticallyRankedPapers;
-
-    // --- New Semantic Impact Score Calculation ---
-    const papersWithAbstracts = processedPapers.filter(p => p.abstract && p.abstract.trim().length > 50);
+async function calculateSemanticImpactScore(papers: ResearchPaper[]): Promise<ResearchPaper[]> {
+    const papersWithAbstracts = papers.filter(p => p.abstract && p.abstract.trim().length > 50);
 
     if (papersWithAbstracts.length > 1) {
         const abstracts = papersWithAbstracts.map(p => p.abstract);
@@ -123,7 +110,7 @@ async function calculatePaperScores(
         });
         const maxCitationsPerYear = Math.max(...papersWithCitationsPerYear.map(p => p.citationsPerYear), 1);
 
-        processedPapers = processedPapers.map(paper => {
+        return papers.map(paper => {
             const centrality = centralityScores.get(paper.id) || 0;
             const cpyData = papersWithCitationsPerYear.find(p => p.id === paper.id);
             const citationImpact = cpyData ? (cpyData.citationsPerYear / maxCitationsPerYear) * 100 : 0;
@@ -136,31 +123,36 @@ async function calculatePaperScores(
     } else {
          // Fallback for single result or if no abstracts are available
         const currentYear = new Date().getFullYear();
-        processedPapers = processedPapers.map(paper => {
+        return papers.map(paper => {
             const age = Math.max(1, currentYear - paper.year);
             const citationsPerYear = (paper.citations || 0) / age;
             const impactScore = citationsPerYear > 0 ? 50 : 0; // Can't normalize with one item, give it a medium score.
             return { ...paper, impactScore };
         });
     }
+}
 
-    // The design classification is now handled asynchronously on the client-side
-    // to improve perceived performance.
-    let papersWithScreening = processedPapers;
-
+async function calculateScreeningScores(
+    papers: ResearchPaper[],
+    options: AdvancedSearchOptions,
+    model: ModelDefinition
+): Promise<ResearchPaper[]> {
     if (options.inclusionCriteria?.trim() || options.exclusionCriteria?.trim()) {
-        const screeningPromises = papersWithScreening.map(p => 
+        const screeningPromises = papers.map(p =>
             geminiService.evaluateScreeningFit(p, options.inclusionCriteria, options.exclusionCriteria, model)
         );
         const screeningResults = await Promise.all(screeningPromises);
-        papersWithScreening = papersWithScreening.map((paper, index) => ({
+        return papers.map((paper, index) => ({
             ...paper,
             screeningFitScore: screeningResults[index].score,
             screeningRationale: screeningResults[index].rationale,
         }));
     }
-    
-    const papersWithCombinedScore = papersWithScreening.map(paper => {
+    return papers;
+}
+
+function calculateCombinedScores(papers: ResearchPaper[], query: string): ResearchPaper[] {
+    return papers.map(paper => {
         const semanticScore = paper.semanticScore || 0;
         const impactScore = paper.impactScore || 0;
         const currentYear = new Date().getFullYear();
@@ -171,6 +163,24 @@ async function calculatePaperScores(
         
         return { ...paper, combinedScore };
     });
+}
+
+export async function calculatePaperScores(
+    papers: ResearchPaper[],
+    query: string,
+    hypotheticalAnswer: string,
+    model: ModelDefinition,
+    options: AdvancedSearchOptions
+): Promise<ResearchPaper[]> {
+    if (papers.length === 0) return [];
+
+    const semanticallyRankedPapers = await embeddingService.calculateSemanticScores(hypotheticalAnswer, papers);
+
+    const papersWithImpact = await calculateSemanticImpactScore(semanticallyRankedPapers);
+
+    const papersWithScreening = await calculateScreeningScores(papersWithImpact, options, model);
+
+    const papersWithCombinedScore = calculateCombinedScores(papersWithScreening, query);
 
     return papersWithCombinedScore.sort((a, b) => (b.combinedScore || 0) - (a.combinedScore || 0));
 }
