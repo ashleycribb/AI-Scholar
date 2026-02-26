@@ -52,3 +52,5 @@ export const calculateSemanticScores = async (queryOrHypotheticalAnswer: string,
         return papers.map(p => ({ ...p, semanticScore: 0 }));
     }
 };
+
+export { embedText, batchEmbedText };

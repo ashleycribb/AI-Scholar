@@ -7,8 +7,6 @@ import * as arxivService from './arxivService';
 import * as geminiService from './geminiService';
 import * as embeddingService from './embeddingService';
 import { cosineSimilarity } from '../utils/math';
-// FIX: Import batchEmbedText directly as it's not exported from embeddingService.
-import { batchEmbedText } from '../utils/embeddings';
 import * as crossrefService from './crossrefService';
 import * as semanticScholarService from './semanticScholarService';
 
@@ -87,8 +85,7 @@ async function calculatePaperScores(
 
     if (papersWithAbstracts.length > 1) {
         const abstracts = papersWithAbstracts.map(p => p.abstract);
-        // FIX: Call batchEmbedText directly since it is not exported from embeddingService.
-        const allPaperEmbeddings = await batchEmbedText(abstracts);
+        const allPaperEmbeddings = await embeddingService.batchEmbedText(abstracts);
 
         const embeddingMap = new Map<string, number[]>();
         papersWithAbstracts.forEach((paper, index) => {
