@@ -9,6 +9,7 @@ import * as embeddingService from './embeddingService';
 import { cosineSimilarity } from '../utils/math';
 // FIX: Import batchEmbedText directly as it's not exported from embeddingService.
 import { batchEmbedText } from '../utils/embeddings';
+import { limitConcurrency } from '../utils/concurrency';
 import * as crossrefService from './crossrefService';
 import * as semanticScholarService from './semanticScholarService';
 
@@ -177,6 +178,21 @@ async function calculatePaperScores(
 
 // --- API SERVICE IMPLEMENTATION ---
 
+export const validatePapersWithLimit = async (
+    papers: ResearchPaper[],
+    validateFn: (paper: ResearchPaper) => Promise<{ validation: ValidationResult, updatedPaperData: Partial<ResearchPaper> }>,
+    concurrencyLimit: number = 5
+): Promise<ResearchPaper[]> => {
+    return limitConcurrency(papers, concurrencyLimit, async (p) => {
+        const { validation, updatedPaperData } = await validateFn(p);
+        return {
+            ...p,
+            ...updatedPaperData,
+            validation,
+        };
+    });
+};
+
 export const search = async (
     query: string,
     options: AdvancedSearchOptions,
@@ -273,16 +289,7 @@ export const search = async (
 
     papers = await calculatePaperScores(papers, retrievalQuery, hypotheticalAnswer, model, finalOptions);
 
-    const validationPromises = papers.map(async (p) => {
-        const { validation, updatedPaperData } = await validationService.validatePaper(p);
-        return {
-            ...p,
-            ...updatedPaperData,
-            validation,
-        };
-    });
-
-    let validatedPapers = await Promise.all(validationPromises);
+    let validatedPapers = await validatePapersWithLimit(papers, (p) => validationService.validatePaper(p));
     
     // Apply Open Access filter *after* validation, which discovers OA status
     if (finalOptions.isOpenAccess) {
