@@ -5,10 +5,11 @@
  * @param doi The Digital Object Identifier of the paper.
  * @returns A promise that resolves to the PDF URL string if found, otherwise null.
  */
+import { UNPAYWALL_EMAIL } from './config';
+
 export const findOpenAccessPdf = async (doi: string): Promise<string | null> => {
     // Unpaywall requires an email for their "polite pool" of users.
-    const email = 'contact@ai-research-explorer.com';
-    const url = `https://api.unpaywall.org/v2/${encodeURIComponent(doi)}?email=${email}`;
+    const url = `https://api.unpaywall.org/v2/${encodeURIComponent(doi)}?email=${UNPAYWALL_EMAIL}`;
 
     try {
         const response = await fetch(url);
