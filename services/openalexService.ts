@@ -1,5 +1,6 @@
 import type { ResearchPaper, AdvancedSearchOptions } from '../types';
 import { createPaperId } from './extensionService';
+import { UNPAYWALL_EMAIL } from './config';
 
 // Client-side cache for OpenAlex results
 interface CacheEntry {
@@ -101,7 +102,7 @@ export const searchOpenAlex = async (query: string, options: AdvancedSearchOptio
         'per-page': PER_PAGE.toString(),
         'page': page.toString(),
         // Use a more specific, yet still example, email for the polite pool.
-        mailto: 'contact@ai-research-explorer.com'
+        mailto: UNPAYWALL_EMAIL
     });
 
     // Build the filter string for the OpenAlex API

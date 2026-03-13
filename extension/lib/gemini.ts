@@ -9,6 +9,7 @@ import {
   paperAnalysisSchema,
   analyzeSinglePaperPrompt
 } from "../../services/promptTemplates";
+import { findOpenAccessPdf } from '../../services/unpaywallService';
 
 const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 

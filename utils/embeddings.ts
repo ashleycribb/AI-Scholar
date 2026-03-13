@@ -16,7 +16,7 @@ export const embedText = async (text: string): Promise<number[]> => {
     // with a `parts` array, even for a single text input.
     try {
         const response = await ai.models.embedContent({ model, content: { parts: [{ text }] } });
-        return response.embedding.values;
+        return response.embedding?.values || [];
     } catch (e) {
         console.error(`Error embedding text: "${text.substring(0, 50)}..."`, e);
         // Return empty array on failure for this specific text to not fail the whole batch
@@ -25,7 +25,7 @@ export const embedText = async (text: string): Promise<number[]> => {
 };
 
 /**
- * Generates embeddings for multiple pieces of text by running them in parallel.
+ * Generates embeddings for multiple pieces of text by using the batch API.
  */
 export const batchEmbedText = async (texts: string[]): Promise<number[][]> => {
     if (!texts || texts.length === 0) {
@@ -33,16 +33,26 @@ export const batchEmbedText = async (texts: string[]): Promise<number[][]> => {
     }
     
     try {
-        // FIX: The `batchEmbedContents` function is not available on `ai.models`.
-        // The correct approach is to call `embedText` for each item in parallel using `Promise.all`.
-        // This ensures functionality while still performing requests concurrently.
-        const embeddingPromises = texts.map(text => embedText(text));
-        const results = await Promise.all(embeddingPromises);
-        return results;
+        // Use the native batch support in `embedContent` by passing `contents` array.
+        // This is more efficient than parallel requests.
+        const contents = texts.map(text => ({ parts: [{ text }] }));
+
+        const response = await ai.models.embedContent({
+            model,
+            contents
+        });
+
+        // Map the results to extract the embedding values
+        if (response.embeddings) {
+            return response.embeddings.map(e => e.values || []);
+        }
+
+        // If response.embeddings is missing but no error thrown (unlikely on success)
+        return texts.map(() => []);
 
     } catch (error) {
         console.error("Error during batch embedding:", error);
-        // In case of a global error with Promise.all, return an empty array for each text.
+        // In case of error, return an empty array for each text.
         return texts.map(() => []);
     }
 };

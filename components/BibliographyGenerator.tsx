@@ -5,6 +5,7 @@ import { ErrorMessage } from './ErrorMessage';
 import { CopyIcon } from './icons/CopyIcon';
 import * as citationService from '../services/citationService';
 import { ZoteroIcon } from './icons/ZoteroIcon';
+import { SafeHTML } from './SafeHTML';
 
 interface BibliographyGeneratorProps {
   papers: ResearchPaper[];
@@ -137,7 +138,7 @@ export const BibliographyGenerator: React.FC<BibliographyGeneratorProps> = ({ pa
                 <div className="p-4 bg-muted/50 border border-border rounded-md text-sm text-foreground leading-relaxed max-h-96 overflow-y-auto">
                     <ol className="space-y-3">
                         {citations.map((citation, index) => (
-                            <li key={index} className="pl-5 -indent-5" dangerouslySetInnerHTML={{ __html: citation }} />
+                            <SafeHTML key={index} as="li" className="pl-5 -indent-5" html={citation} />
                         ))}
                     </ol>
                 </div>
