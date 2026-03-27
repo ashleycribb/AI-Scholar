@@ -15,7 +15,6 @@ export const findOpenAccessPdf = async (doi: string): Promise<string | null> => 
         const response = await fetch(url);
         if (!response.ok) {
             // This is expected for DOIs not in their database, so we don't throw an error.
-            console.log(`Unpaywall: No record found for DOI ${doi}. Status: ${response.status}`);
             return null;
         }
         
