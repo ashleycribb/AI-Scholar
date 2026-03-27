@@ -49,7 +49,10 @@ const mockApiAdapter = async (prompt: string, modelId: string, schema: any): Pro
     if (schema.properties?.study_design) { return { study_design: 'Observational Study' }; }
     if (schema.properties?.entities) { return { entities: [{id: 'e1', type: 'Concept', label: 'Mock Concept', description: 'A mock concept'}], relationships: [] }; }
     if (schema.properties?.papers) { return { papers: [ { title: `[Mock Paper from ${modelId}]`, authors: 'Mock Author', year: 2023, abstract: 'A mock abstract.', sourceURL: 'https://mock.url', connection: 'mock connection', summary: 'mock summary' } ] }; }
-    if (schema.properties?.core_search_query) { return { core_search_query: prompt }; }
+    if (schema.properties?.core_search_query) {
+        const match = prompt.match(/\*\*User's Query:\*\* "(.*?)"/);
+        return { core_search_query: match ? match[1] : "test" };
+    }
     return { mock_response: "This is a generic mock response." };
 };
 
