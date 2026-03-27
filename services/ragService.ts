@@ -103,28 +103,43 @@ export async function* runAgentTask(
     let response = await chat.sendMessage({ message: query });
     
     while (response.functionCalls && response.functionCalls.length > 0) {
-        for (const fnCall of response.functionCalls) {
-            
-            const { name, args, id } = fnCall;
-            const thinking = `Calling tool '${name}' to gather information.`;
+        const functionCalls = response.functionCalls;
 
+        // Notify start of all tools
+        for (const fnCall of functionCalls) {
+            const { name, args } = fnCall;
+            const thinking = `Calling tool '${name}' to gather information.`;
             yield { type: 'tool-start', toolCall: { name, args, thinking } };
-            
+        }
+
+        // Execute all tools in parallel
+        const toolPromises = functionCalls.map(async (fnCall) => {
+            const { name, args, id } = fnCall;
             const toolImplementation = (toolImplementations as any)[name];
             if (!toolImplementation) {
                 throw new Error(`Unknown tool called by the model: ${name}`);
             }
+            const result = await Promise.resolve(toolImplementation(args));
+            return { id, name, result };
+        });
 
-            const toolResult = await Promise.resolve(toolImplementation(args));
-            
-            yield { type: 'tool-end', toolResponse: { name, result: toolResult } };
+        const results = await Promise.all(toolPromises);
 
-            response = await chat.sendMessage({
-                message: {
-                    functionResponses: { id, name, response: { result: toolResult } }
-                }
-            });
+        // Notify end of all tools and collect responses
+        const functionResponses = results.map(({ id, name, result }) => {
+            return { id, name, response: { result } };
+        });
+
+        for (const { name, result } of results) {
+            yield { type: 'tool-end', toolResponse: { name, result } };
         }
+
+        // Send all tool outputs back to the model in a single message
+        response = await chat.sendMessage({
+            message: {
+                functionResponses: functionResponses
+            }
+        });
     }
 
     yield { type: 'final-answer', text: response.text };
