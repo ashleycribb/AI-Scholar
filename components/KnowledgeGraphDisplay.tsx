@@ -1,5 +1,4 @@
 import React from 'react';
-// FIX: Import Entity type for casting.
 import type { KnowledgeGraph, EntityType, Entity } from '../types';
 import { LoadingSpinner } from './LoadingSpinner';
 import { ErrorMessage } from './ErrorMessage';
@@ -36,7 +35,7 @@ export const KnowledgeGraphDisplay: React.FC<KnowledgeGraphDisplayProps> = ({ gr
 
     if (!graph) return null;
 
-    const entityMap = new Map(graph.entities.map(e => [e.id, e]));
+    const entityMap = new Map(graph.entities.map(e => [e.id, e] as [string, Entity]));
 
     return (
         <div className="space-y-6">
@@ -60,12 +59,8 @@ export const KnowledgeGraphDisplay: React.FC<KnowledgeGraphDisplayProps> = ({ gr
                             const target = entityMap.get(rel.target);
                             if (!source || !target) return null;
 
-                            // FIX: Assert types for source and target as Entity to resolve a potential type inference issue where they are treated as 'unknown'.
-                            const sourceEntity = source as Entity;
-                            const targetEntity = target as Entity;
-
-                            const sourceStyle = entityColorMap[sourceEntity.type];
-                            const targetStyle = entityColorMap[targetEntity.type];
+                            const sourceStyle = entityColorMap[source.type];
+                            const targetStyle = entityColorMap[target.type];
 
                             if (!sourceStyle || !targetStyle) return null;
 
@@ -73,7 +68,7 @@ export const KnowledgeGraphDisplay: React.FC<KnowledgeGraphDisplayProps> = ({ gr
                                 <div key={index} className="p-3 bg-muted/50 border rounded-lg" title={rel.description}>
                                     <div className="flex items-center justify-between gap-2 flex-wrap">
                                         <span className={`px-2 py-0.5 rounded border text-xs font-semibold ${sourceStyle.bg} ${sourceStyle.text} ${sourceStyle.border}`}>
-                                            {sourceEntity.label}
+                                            {source.label}
                                         </span>
                                         <div className="flex-grow flex items-center gap-2 text-muted-foreground font-mono text-xs px-2">
                                             <div className="flex-grow border-b border-dashed"></div>
@@ -82,7 +77,7 @@ export const KnowledgeGraphDisplay: React.FC<KnowledgeGraphDisplayProps> = ({ gr
                                             <span>&rarr;</span>
                                         </div>
                                         <span className={`px-2 py-0.5 rounded border text-xs font-semibold ${targetStyle.bg} ${targetStyle.text} ${targetStyle.border}`}>
-                                            {targetEntity.label}
+                                            {target.label}
                                         </span>
                                     </div>
                                 </div>
