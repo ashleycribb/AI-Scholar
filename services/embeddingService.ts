@@ -3,6 +3,8 @@ import type { ResearchPaper } from '../types';
 import { cosineSimilarity } from '../utils/math';
 import { embedText, batchEmbedText } from '../utils/embeddings';
 
+export { batchEmbedText };
+
 /**
  * Takes a query (or a hypothetical answer) and a list of papers, calculates semantic scores, and returns the papers with scores.
  */
