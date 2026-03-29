@@ -1,0 +1,3 @@
+## 2025-05-15 - Clickable Card Accessibility Pattern
+**Learning:** Making an entire card clickable by wrapping it in a `<button>` or `<a>` is invalid HTML/ARIA if the card contains other interactive elements (like "Save" buttons or links). This breaks accessibility for keyboard users and screen readers.
+**Action:** For clickable cards with nested actions, keep the container as a `div` (with an optional click handler for mouse users). Wrap the card's primary title in a `<button>` or `<a>` to serve as the main keyboard entry point. Ensure all nested actions are independently focusable and labeled.
