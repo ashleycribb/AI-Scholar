@@ -9,6 +9,7 @@ import * as embeddingService from './embeddingService';
 import { cosineSimilarity } from '../utils/math';
 // FIX: Import batchEmbedText directly as it's not exported from embeddingService.
 import { batchEmbedText } from '../utils/embeddings';
+import { limitConcurrency } from '../utils/concurrency';
 import * as crossrefService from './crossrefService';
 import * as semanticScholarService from './semanticScholarService';
 
@@ -149,10 +150,9 @@ async function calculatePaperScores(
     let papersWithScreening = processedPapers;
 
     if (options.inclusionCriteria?.trim() || options.exclusionCriteria?.trim()) {
-        const screeningPromises = papersWithScreening.map(p => 
+        const screeningResults = await limitConcurrency(papersWithScreening, 5, (p) =>
             geminiService.evaluateScreeningFit(p, options.inclusionCriteria, options.exclusionCriteria, model)
         );
-        const screeningResults = await Promise.all(screeningPromises);
         papersWithScreening = papersWithScreening.map((paper, index) => ({
             ...paper,
             screeningFitScore: screeningResults[index].score,
@@ -273,7 +273,7 @@ export const search = async (
 
     papers = await calculatePaperScores(papers, retrievalQuery, hypotheticalAnswer, model, finalOptions);
 
-    const validationPromises = papers.map(async (p) => {
+    let validatedPapers = await limitConcurrency(papers, 5, async (p) => {
         const { validation, updatedPaperData } = await validationService.validatePaper(p);
         return {
             ...p,
@@ -281,8 +281,6 @@ export const search = async (
             validation,
         };
     });
-
-    let validatedPapers = await Promise.all(validationPromises);
     
     // Apply Open Access filter *after* validation, which discovers OA status
     if (finalOptions.isOpenAccess) {
@@ -368,7 +366,7 @@ export const rerankForScreening = async (
 ): Promise<{ paperId: string, score: number, rationale: string }[]> => {
     if (unscreened.length === 0) return [];
     
-    const rerankingPromises = unscreened.map(async (paper) => {
+    return await limitConcurrency(unscreened, 5, async (paper) => {
         const result = await geminiService.rerankByScreeningExample(included, excluded, paper, model);
         return {
             paperId: paper.id,
@@ -376,8 +374,6 @@ export const rerankForScreening = async (
             rationale: result.rationale,
         };
     });
-
-    return await Promise.all(rerankingPromises);
 };
 
 export const generateSuggestions = async (paper: ResearchPaper, model: ModelDefinition): Promise<string[]> => {
