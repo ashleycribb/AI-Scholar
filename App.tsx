@@ -677,9 +677,22 @@ const App: React.FC = () => {
                         newHistory.push({ role: 'tool', parts: [{ toolCall: update.toolCall }] });
                     } else if (update.type === 'tool-end') {
                         // Find the corresponding tool-start message and add the result
-                        const lastMsgIndex = newHistory.length - 1;
-                        if (newHistory[lastMsgIndex]?.role === 'tool' && newHistory[lastMsgIndex].parts[0].toolCall?.name === update.toolResponse.name) {
-                            newHistory[lastMsgIndex].parts[0].toolResponse = update.toolResponse;
+                        // Search backwards for the matching tool call that doesn't have a response yet
+                        for (let i = newHistory.length - 1; i >= 0; i--) {
+                            const msg = newHistory[i];
+                            if (msg.role === 'tool' &&
+                                msg.parts[0].toolCall?.name === update.toolResponse.name &&
+                                !msg.parts[0].toolResponse) {
+
+                                newHistory[i] = {
+                                    ...msg,
+                                    parts: [{
+                                        ...msg.parts[0],
+                                        toolResponse: update.toolResponse
+                                    }]
+                                };
+                                break;
+                            }
                         }
                     } else if (update.type === 'final-answer') {
                         newHistory.push({ role: 'model', parts: [{ text: update.text }] });

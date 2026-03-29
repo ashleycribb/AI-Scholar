@@ -103,28 +103,41 @@ export async function* runAgentTask(
     let response = await chat.sendMessage({ message: query });
     
     while (response.functionCalls && response.functionCalls.length > 0) {
-        for (const fnCall of response.functionCalls) {
-            
-            const { name, args, id } = fnCall;
-            const thinking = `Calling tool '${name}' to gather information.`;
+        const functionCalls = response.functionCalls;
 
+        // 1. Notify that tools are starting
+        for (const fnCall of functionCalls) {
+            const { name, args } = fnCall;
+            const thinking = `Calling tool '${name}' to gather information.`;
             yield { type: 'tool-start', toolCall: { name, args, thinking } };
-            
+        }
+
+        // 2. Execute all tools in parallel
+        const results = await Promise.all(functionCalls.map(async (fnCall) => {
+            const { name, args, id } = fnCall;
             const toolImplementation = (toolImplementations as any)[name];
             if (!toolImplementation) {
                 throw new Error(`Unknown tool called by the model: ${name}`);
             }
-
             const toolResult = await Promise.resolve(toolImplementation(args));
-            
-            yield { type: 'tool-end', toolResponse: { name, result: toolResult } };
+            return { id, name, result: toolResult };
+        }));
 
-            response = await chat.sendMessage({
-                message: {
-                    functionResponses: { id, name, response: { result: toolResult } }
-                }
-            });
+        // 3. Notify that tools have finished
+        for (const res of results) {
+            yield { type: 'tool-end', toolResponse: { name: res.name, result: res.result } };
         }
+
+        // 4. Send all responses back to the model
+        response = await chat.sendMessage({
+            message: {
+                functionResponses: results.map(res => ({
+                    id: res.id,
+                    name: res.name,
+                    response: { result: res.result }
+                }))
+            }
+        });
     }
 
     yield { type: 'final-answer', text: response.text };
