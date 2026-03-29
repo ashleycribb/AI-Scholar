@@ -76,7 +76,7 @@ export const createPaperId = (paper: Partial<ResearchPaper>): string => {
         if (arxivIdMatch) return `arxiv:${arxivIdMatch[1].replace(/v\d+$/, '')}`;
         return `url:${paper.sourceURL}`;
     }
-    return `title:${paper.title?.toLowerCase().replace(/\s+/g, '-') || Math.random().toString()}`;
+    return `title:${paper.title?.toLowerCase().replace(/\s+/g, '-') || crypto.randomUUID()}`;
 };
 
 export const notifyExtensionFavoriteToggled = (paper: ResearchPaper, isFavorite: boolean) => {
