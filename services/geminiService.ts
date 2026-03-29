@@ -26,13 +26,12 @@ import {
 
 const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
-const safeJsonParse = (jsonString: string) => {
+export const safeJsonParse = (jsonString: string) => {
   try {
     const cleanedString = jsonString.replace(/```json/g, '').replace(/```/g, '').trim();
     return JSON.parse(cleanedString);
   } catch (e) {
     console.error("Failed to parse JSON:", e);
-    console.error("Original string:", jsonString);
     return null;
   }
 };
