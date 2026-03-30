@@ -812,7 +812,7 @@ const App: React.FC = () => {
                                         model={model} 
                                         onModelChange={setModel} 
                                         availableModels={AVAILABLE_MODELS} 
-                                        logAnalyticsEvent={() => {}} 
+                                        logAnalyticsEvent={analyticsService.logEvent}
                                         onOpenDbFinder={() => setIsDbFinderOpen(true)} 
                                         searchSources={searchSources}
                                         suggestions={searchSuggestions}
@@ -835,7 +835,7 @@ const App: React.FC = () => {
                                             model={model} 
                                             onModelChange={setModel} 
                                             availableModels={AVAILABLE_MODELS} 
-                                            logAnalyticsEvent={() => {}}
+                                            logAnalyticsEvent={analyticsService.logEvent}
                                             suggestions={searchSuggestions}
                                             isSuggestionsLoading={isGeneratingSearchSuggestions}
                                             onSuggestionClick={handleSuggestionSearch}
@@ -865,7 +865,7 @@ const App: React.FC = () => {
 
                             {hasSearched && (
                                 <aside className="lg:col-span-2">
-                                <WorkspacePanel papers={papers} selectedPaper={selectedPaper} analysis={analysis} summary={summary} workspacePapers={workspacePapers} projects={projects} sources={[]} onToggleWorkspacePaper={handleToggleWorkspacePaper} onFindConnectedPapers={handleFindConnectedPapers} isFindingConnected={isFindingConnections} onAnalyzePaper={handleAnalyzePaper} onCitePaper={handleOpenCitationModal} isAnalyzingPaper={isAnalyzingPaper} onConceptClick={handleConceptSearch} onFindDoi={handleFindDoi} onGenerateSuggestions={handleGenerateSuggestions} isGeneratingSuggestions={isGeneratingSuggestions} onVerifyPaper={handleOpenVerificationModal} logAnalyticsEvent={() => {}} refinedQueries={refinedQueries} isGeneratingRefined={false} onRefinedQuerySearch={() => {}} onAnalyzeGaps={handleAnalyzeGaps} onSynthesizeWorkspace={handleSynthesizeWorkspace} onCreateProject={handleCreateProject} onDeleteProject={handleDeleteProject} onMovePaperToProject={handleMovePaperToProject} onUpdateProjectColor={handleUpdateProjectColor} model={model} onIndexPaperForRag={handleIndexPaperForRag} projectChats={projectChats} onProjectChat={handleProjectChat} />
+                                <WorkspacePanel papers={papers} selectedPaper={selectedPaper} analysis={analysis} summary={summary} workspacePapers={workspacePapers} projects={projects} sources={[]} onToggleWorkspacePaper={handleToggleWorkspacePaper} onFindConnectedPapers={handleFindConnectedPapers} isFindingConnected={isFindingConnections} onAnalyzePaper={handleAnalyzePaper} onCitePaper={handleOpenCitationModal} isAnalyzingPaper={isAnalyzingPaper} onConceptClick={handleConceptSearch} onFindDoi={handleFindDoi} onGenerateSuggestions={handleGenerateSuggestions} isGeneratingSuggestions={isGeneratingSuggestions} onVerifyPaper={handleOpenVerificationModal} logAnalyticsEvent={analyticsService.logEvent} refinedQueries={refinedQueries} isGeneratingRefined={false} onRefinedQuerySearch={() => {}} onAnalyzeGaps={handleAnalyzeGaps} onSynthesizeWorkspace={handleSynthesizeWorkspace} onCreateProject={handleCreateProject} onDeleteProject={handleDeleteProject} onMovePaperToProject={handleMovePaperToProject} onUpdateProjectColor={handleUpdateProjectColor} model={model} onIndexPaperForRag={handleIndexPaperForRag} projectChats={projectChats} onProjectChat={handleProjectChat} />
                                 </aside>
                             )}
                         </div>
