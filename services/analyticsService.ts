@@ -1,7 +1,23 @@
 import { firestoreService } from './firestoreService';
 
-// A simple UUID generator for session tracking
+// A cryptographically secure UUID generator for session tracking
 const generateUUID = (): string => {
+    // 1. Try crypto.randomUUID (Standard modern API)
+    if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+        return crypto.randomUUID();
+    }
+
+    // 2. Fallback to crypto.getRandomValues
+    if (typeof crypto !== 'undefined' && typeof crypto.getRandomValues === 'function') {
+        return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+            const r = crypto.getRandomValues(new Uint8Array(1))[0] % 16;
+            const v = c === 'x' ? r : (r & 0x3 | 0x8);
+            return v.toString(16);
+        });
+    }
+
+    // 3. Fallback to Math.random (Insecure, last resort)
+    console.warn("[ANALYTICS] Crypto API not available, falling back to Math.random for UUID generation.");
     return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
         const r = Math.random() * 16 | 0;
         const v = c === 'x' ? r : (r & 0x3 | 0x8);
