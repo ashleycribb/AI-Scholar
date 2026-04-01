@@ -1,29 +1,11 @@
-
 import type { ResearchPaper, CrossrefWork } from '../types';
-
-// Helper to normalize strings for comparison by removing case and non-alphanumeric characters.
-const normalizeString = (str: string) => str.toLowerCase().replace(/[^a-z0-9]/g, '');
-
-/**
- * Checks if the first author of the local paper matches any of the authors from the Crossref result.
- * @param paperAuthors The author string from the local ResearchPaper object.
- * @param crossrefAuthors The array of author objects from the Crossref API response.
- * @returns A boolean indicating if a likely match was found.
- */
-const checkAuthorMatch = (paperAuthors: string, crossrefAuthors: CrossrefWork['author']): boolean => {
-    if (!crossrefAuthors || crossrefAuthors.length === 0) return false;
-    
-    // Get the last name of the first author from the local paper data.
-    const firstPaperAuthorLastName = paperAuthors.split(',')[0].trim().split(' ').pop()?.toLowerCase();
-    if (!firstPaperAuthorLastName) return false;
-
-    // Check if any author in the Crossref data has a matching family name or a full name containing the last name.
-    return crossrefAuthors.some(author => {
-        const familyName = author.family?.toLowerCase();
-        const fullName = author.name?.toLowerCase();
-        return familyName === firstPaperAuthorLastName || fullName?.includes(firstPaperAuthorLastName);
-    });
-};
+import {
+    normalizeString,
+    checkAuthorMatch,
+    getCrossrefBibliographicUrl,
+    getCrossrefTitleAuthorUrl,
+    getCrossrefCslUrl
+} from './crossrefUtils';
 
 /**
  * Fetches paper metadata from the Crossref API to find a high-confidence match.
@@ -32,7 +14,7 @@ const checkAuthorMatch = (paperAuthors: string, crossrefAuthors: CrossrefWork['a
  */
 export const fetchPaperFromCrossref = async (paper: ResearchPaper): Promise<CrossrefWork | null> => {
     // Construct the API URL. Querying by title is generally effective. We fetch 3 results to increase our chances of a match.
-    const url = `https://api.crossref.org/works?query.bibliographic=${encodeURIComponent(paper.title)}&rows=3`;
+    const url = getCrossrefBibliographicUrl(paper.title);
 
     try {
         const response = await fetch(url);
@@ -57,7 +39,7 @@ export const fetchPaperFromCrossref = async (paper: ResearchPaper): Promise<Cros
             const normalizedApiTitle = normalizeString(apiTitle);
             
             // A match is considered high-confidence if the titles are very similar AND an author name matches.
-            const titleIsSimilar = normalizedApiTitle.includes(normalizedPaperTitle) || normalizedPaperTitle.includes(normalizedPaperTitle);
+            const titleIsSimilar = normalizedApiTitle.includes(normalizedPaperTitle) || normalizedPaperTitle.includes(normalizedApiTitle);
 
             if (titleIsSimilar && checkAuthorMatch(paper.authors, item.author)) {
                 return item as CrossrefWork; // Found a confident match.
@@ -83,7 +65,7 @@ export const findDoiForPaper = async (paper: ResearchPaper): Promise<string | nu
         const firstAuthorLastName = paper.authors.split(',')[0].trim().split(' ').pop();
 
         if (firstAuthorLastName) {
-            const url = `https://api.crossref.org/works?query.title=${encodeURIComponent(paper.title)}&query.author=${encodeURIComponent(firstAuthorLastName)}&rows=1&select=DOI,title,author`;
+            const url = getCrossrefTitleAuthorUrl(paper.title, firstAuthorLastName);
             
             const response = await fetch(url);
             if (response.ok) {
@@ -126,7 +108,7 @@ export const findDoiForPaper = async (paper: ResearchPaper): Promise<string | nu
  * @returns A promise that resolves to a CSL-JSON object or null if not found.
  */
 export const fetchCslFromCrossref = async (doi: string): Promise<object | null> => {
-    const url = `https://api.crossref.org/works/${encodeURIComponent(doi)}/transform/application/vnd.citationstyles.csl+json`;
+    const url = getCrossrefCslUrl(doi);
     try {
         const response = await fetch(url);
         if (!response.ok) {
