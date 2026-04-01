@@ -1,6 +1,6 @@
 
 import { GoogleGenAI, FunctionDeclaration, Type, Chat } from "@google/genai";
-import type { ResearchPaper, ModelDefinition, Project, ChatMessage, ConnectedPaper } from '../types';
+import type { ResearchPaper, ModelDefinition, Project, ChatMessage, ConnectedPaper, ToolImplementation } from '../types';
 import * as apiService from './apiService';
 
 const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
@@ -60,7 +60,7 @@ export async function* runAgentTask(
 
     const modelId = 'gemini-2.5-pro'; // Use a powerful model for agentic tasks
 
-    const toolImplementations = {
+    const toolImplementations: Record<string, ToolImplementation> = {
         get_papers_in_project: () => projectPapers.map(p => ({ id: p.id, title: p.title, year: p.year })),
         get_paper_details: (args: { paper_id: string }) => {
             const paper = projectPapers.find(p => p.id === args.paper_id);
@@ -110,7 +110,7 @@ export async function* runAgentTask(
 
             yield { type: 'tool-start', toolCall: { name, args, thinking } };
             
-            const toolImplementation = (toolImplementations as any)[name];
+            const toolImplementation = toolImplementations[name];
             if (!toolImplementation) {
                 throw new Error(`Unknown tool called by the model: ${name}`);
             }
