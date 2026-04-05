@@ -113,17 +113,20 @@ export const analyzePapers = async (papers: ResearchPaper[]): Promise<AnalysisRe
     }
 
     // Calculate top authors internally
-    const topAuthors: AuthorFrequencyData = Object.values(
-        papers.flatMap(p => p.authors.split(',').map(a => a.trim())).reduce((acc, author) => {
-            if (author) {
-                acc[author] = acc[author] || { author, count: 0, totalCitations: 0 };
-                acc[author].count++;
-                const paper = papers.find(p => p.authors.includes(author));
-                acc[author].totalCitations += paper?.citations || 0;
+    const authorStats: { [author: string]: { author: string, count: number, totalCitations: number } } = {};
+    for (const paper of papers) {
+        if (!paper.authors) continue;
+        const authors = paper.authors.split(',').map(a => a.trim());
+        for (const author of authors) {
+            if (!author) continue;
+            if (!authorStats[author]) {
+                authorStats[author] = { author, count: 0, totalCitations: 0 };
             }
-            return acc;
-        }, {} as { [author: string]: { author: string, count: number, totalCitations: number } })
-    );
+            authorStats[author].count++;
+            authorStats[author].totalCitations += paper.citations || 0;
+        }
+    }
+    const topAuthors: AuthorFrequencyData = Object.values(authorStats);
 
     // 1. Bibliometrics
     const publicationYears: PublicationYearData = Object.values(
