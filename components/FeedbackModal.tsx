@@ -1,8 +1,15 @@
 import React, { useState } from 'react';
+import { CustomDropdown } from './CustomDropdown';
 
 interface FeedbackFormProps {
   onSubmit: (feedback: { category: string; text: string }) => void;
 }
+
+const feedbackCategories = [
+    { id: 'feature_suggestion', name: 'Feature Suggestion' },
+    { id: 'bug_report', name: 'Bug Report' },
+    { id: 'general_feedback', name: 'General Feedback' },
+];
 
 export const FeedbackForm: React.FC<FeedbackFormProps> = ({ onSubmit }) => {
   const [category, setCategory] = useState('feature_suggestion');
@@ -31,28 +38,26 @@ export const FeedbackForm: React.FC<FeedbackFormProps> = ({ onSubmit }) => {
 
   return (
     <div className="w-full max-w-lg mx-auto">
-        <p className="text-muted-foreground mb-6 text-center">
+        <p className="text-muted-foreground mb-6 text-center text-sm">
           We'd love to hear your thoughts! What can we improve? Is there a feature you're missing?
         </p>
         <form onSubmit={handleSubmit}>
           <div className="space-y-4">
             <div>
-              <label htmlFor="feedback-category" className="block text-sm font-medium text-foreground mb-1">
+              <label htmlFor="feedback-category" className="block text-xs font-black uppercase tracking-widest text-slate-400 mb-1.5 ml-1">
                 Feedback Type
               </label>
-              <select
-                id="feedback-category"
+              <CustomDropdown
                 value={category}
-                onChange={(e) => setCategory(e.target.value)}
-                className="w-full h-10 px-3 py-2 bg-background text-foreground border border-input rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-ring"
-              >
-                <option value="feature_suggestion">Feature Suggestion</option>
-                <option value="bug_report">Bug Report</option>
-                <option value="general_feedback">General Feedback</option>
-              </select>
+                options={feedbackCategories}
+                onChange={(val) => setCategory(val)}
+                formatLabel={(n) => n}
+                className="w-full"
+                triggerClassName="w-full h-11 px-4 bg-background border border-input rounded-xl justify-between"
+              />
             </div>
             <div>
-              <label htmlFor="feedback-text" className="block text-sm font-medium text-foreground mb-1">
+              <label htmlFor="feedback-text" className="block text-xs font-black uppercase tracking-widest text-slate-400 mb-1.5 ml-1">
                 Your Message
               </label>
               <textarea
@@ -60,17 +65,17 @@ export const FeedbackForm: React.FC<FeedbackFormProps> = ({ onSubmit }) => {
                 value={text}
                 onChange={(e) => setText(e.target.value)}
                 rows={5}
-                className="w-full px-3 py-2 bg-background text-foreground border border-input rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                className="w-full px-4 py-3 bg-background text-foreground border border-input rounded-xl shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10 transition-all"
                 placeholder="Please be as detailed as possible..."
                 required
               />
             </div>
           </div>
-          <div className="mt-6 flex justify-end">
+          <div className="mt-8 flex justify-center">
             <button
               type="submit"
               disabled={!text.trim()}
-              className="h-10 px-6 py-2.5 bg-primary text-primary-foreground font-medium rounded-md hover:bg-primary/90 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-ring disabled:opacity-50"
+              className="h-12 px-10 bg-slate-900 text-white text-[12px] font-black uppercase tracking-widest rounded-full hover:bg-slate-800 disabled:opacity-30 transition-all shadow-lg active:scale-95"
             >
               Send Feedback
             </button>

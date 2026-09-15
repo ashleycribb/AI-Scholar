@@ -8,7 +8,7 @@ interface OnboardingModalProps {
 
 const onboardingSteps = [
     {
-        title: "Welcome to the AI Research Explorer!",
+        title: "Welcome to Scholar Explorer!",
         content: "This quick tour will guide you through the key features designed to accelerate your literature review process."
     },
     {

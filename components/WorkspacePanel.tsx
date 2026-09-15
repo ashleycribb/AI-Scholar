@@ -1,11 +1,21 @@
+
 import React, { useState, useEffect } from 'react';
-import type { ResearchPaper, AnalysisResult, Project, SearchSourceInfo, ModelDefinition, RagStatus, ChatMessage } from '../types';
+import type { ResearchPaper, AnalysisResult, Project, SearchSourceInfo, ModelDefinition, ChatMessage, AuthorProfile, SynthesisResult, CitationStyle, UserSettings } from '../types';
+import * as apiService from '../services/apiService';
 import { PaperDetails } from './PaperDetails';
-import { AnalysisDashboard } from './AnalysisDashboard';
+import { SearchResultsAnalysis } from './SearchResultsAnalysis';
 import { LightbulbIcon } from './icons/LightbulbIcon';
 import { SearchIcon } from './icons/SearchIcon';
 import { BibliographyGenerator } from './BibliographyGenerator';
 import { ProjectWorkspace } from './ProjectWorkspace';
+import { WorkspaceAnalysisDashboard } from './WorkspaceAnalysisDashboard';
+import { PaperAnalysisDashboard } from './PaperAnalysisDashboard';
+import { LocalLibraryPanel } from './LocalLibraryPanel';
+import { LocalNanobotPanel } from './LocalNanobotPanel';
+import { Library } from 'lucide-react';
+import { InnovationEngine } from './InnovationEngine';
+import type { InnovationResult } from '../types';
+import { GnoPanel } from './GnoPanel';
 
 
 interface RefinedQueriesProps {
@@ -49,8 +59,8 @@ const RefinedQueries: React.FC<RefinedQueriesProps> = ({ queries, isLoading, onQ
 interface WorkspacePanelProps {
     papers: ResearchPaper[];
     selectedPaper: ResearchPaper | null;
-    analysis: AnalysisResult | null;
-    summary: string;
+    analysis: AnalysisResult | null; 
+    summary: string; 
     workspacePapers: ResearchPaper[];
     projects: Project[];
     sources: SearchSourceInfo[];
@@ -58,7 +68,7 @@ interface WorkspacePanelProps {
     onFindConnectedPapers: (paper: ResearchPaper) => void;
     isFindingConnected: boolean;
     onAnalyzePaper: (paper: ResearchPaper) => void;
-    onCitePaper: (paper: ResearchPaper) => void;
+    onCitePaper: (paper: ResearchPaper, style?: CitationStyle) => void;
     isAnalyzingPaper: boolean;
     onConceptClick: (concept: string) => void;
     onFindDoi: (paper: ResearchPaper) => void;
@@ -71,14 +81,37 @@ interface WorkspacePanelProps {
     onRefinedQuerySearch: (query: string) => void;
     onAnalyzeGaps: (papers: ResearchPaper[], model: ModelDefinition) => void;
     onSynthesizeWorkspace: (papers: ResearchPaper[], model: ModelDefinition) => void;
+    onAnalyzeWorkspace: (papers: ResearchPaper[], model: ModelDefinition) => void;
     onCreateProject: (name: string) => void;
     onDeleteProject: (projectId: string) => void;
     onMovePaperToProject: (paperId: string, projectId: string | null) => void;
     onUpdateProjectColor: (projectId: string, color: string) => void;
     model: ModelDefinition;
     onIndexPaperForRag: (projectId: string, paperId: string) => void;
-    projectChats: { [projectId: string]: { history: ChatMessage[], isLoading: boolean } };
-    onProjectChat: (projectId: string, message: string) => void;
+    isSummaryLoading: boolean; 
+    isAnalysisLoading: boolean;
+    onFindJournals: (paper: ResearchPaper) => void;
+    isFindingJournals: boolean;
+    onAuthorClick: (author: AuthorProfile) => void;
+    onFindSimilar: (paper: ResearchPaper) => void;
+    isFindingSimilar: boolean;
+    userSettings: UserSettings;
+
+    // Workspace Analysis Dashboard Props
+    showWorkspaceAnalysisDrawer: boolean;
+    onCloseWorkspaceAnalysisDrawer: () => void;
+    workspaceAnalysisResult: AnalysisResult | null;
+    workspaceSynthesisSummary: SynthesisResult | null;
+    workspaceGapAnalysisReport: string | null;
+    isWorkspaceAnalysisLoading: boolean;
+    isWorkspaceSynthesisLoading: boolean;
+    isWorkspaceGapAnalysisLoading: boolean;
+    
+    // Workspace Chat Props
+    workspaceChatHistory: ChatMessage[];
+    isWorkspaceChatLoading: boolean;
+    onWorkspaceChat: (message: string) => void;
+    onGenerateLaymanSummary?: (paper: ResearchPaper) => void;
 }
 
 const TabButton: React.FC<{
@@ -105,20 +138,51 @@ const TabButton: React.FC<{
 
 export const WorkspacePanel: React.FC<WorkspacePanelProps> = (props) => {
     const { 
-        papers, selectedPaper, analysis, summary, workspacePapers, projects,
-        refinedQueries, isGeneratingRefined, onRefinedQuerySearch, model
+        papers = [], selectedPaper, analysis, summary, workspacePapers = [], projects = [],
+        refinedQueries = [], isGeneratingRefined, onRefinedQuerySearch, model, isSummaryLoading,
+        isAnalysisLoading,
+        isFindingSimilar,
+        onAnalyzeWorkspace,
+        isWorkspaceAnalysisLoading, isWorkspaceSynthesisLoading, isWorkspaceGapAnalysisLoading,
+        workspaceChatHistory = [], isWorkspaceChatLoading, onWorkspaceChat,
+        showWorkspaceAnalysisDrawer, onCloseWorkspaceAnalysisDrawer,
+        workspaceAnalysisResult, workspaceSynthesisSummary, workspaceGapAnalysisReport,
+        userSettings,
+        onSynthesizeWorkspace, onAnalyzeGaps
     } = props;
-    const [activeTab, setActiveTab] = useState<'details' | 'analysis' | 'workspace' | 'bibliography'>('analysis');
+    const [activeTab, setActiveTab] = useState<'details' | 'analysis' | 'workspace' | 'library' | 'bibliography' | 'innovation' | 'gno' | 'logician'>('analysis');
+    const [showPaperAnalysisDrawer, setShowPaperAnalysisDrawer] = useState(false);
+
+    // Innovation Engine State
+    const [innovationResult, setInnovationResult] = useState<InnovationResult | null>(null);
+    const [isInnovationLoading, setIsInnovationLoading] = useState(false);
 
     useEffect(() => {
         if (selectedPaper) {
             setActiveTab('details');
-        } else if (analysis || refinedQueries.length > 0 || isGeneratingRefined) {
+        } else if (analysis || refinedQueries.length > 0 || isGeneratingRefined || isSummaryLoading || isAnalysisLoading) {
             setActiveTab('analysis');
         } else {
             setActiveTab('workspace');
         }
-    }, [selectedPaper, analysis, refinedQueries, isGeneratingRefined, workspacePapers.length]);
+    }, [selectedPaper, analysis, refinedQueries, isGeneratingRefined, isSummaryLoading, isAnalysisLoading, workspacePapers.length]);
+
+    const handleGenerateInnovation = async () => {
+        if (workspacePapers.length === 0) return;
+        setIsInnovationLoading(true);
+        try {
+            const result = await apiService.generateInnovationInsights(workspacePapers, model);
+            setInnovationResult(result);
+        } catch (e) {
+            console.error("Innovation generation failed", e);
+        } finally {
+            setIsInnovationLoading(false);
+        }
+    };
+
+    const handleOpenPaperAnalysis = (paper: ResearchPaper) => {
+        setShowPaperAnalysisDrawer(true);
+    };
 
     const renderContent = () => {
         switch (activeTab) {
@@ -131,14 +195,14 @@ export const WorkspacePanel: React.FC<WorkspacePanelProps> = (props) => {
                         onConceptClick={props.onConceptClick}
                         onFindDoi={props.onFindDoi}
                         logAnalyticsEvent={props.logAnalyticsEvent}
-                        onFindConnectedPapers={props.onFindConnectedPapers}
-                        isFindingConnected={props.isFindingConnected}
-                        onAnalyzePaper={props.onAnalyzePaper}
-                        isAnalyzingPaper={props.isAnalyzingPaper}
-                        onVerifyPaper={props.onVerifyPaper}
-                        onGenerateSuggestions={props.onGenerateSuggestions}
-                        isGeneratingSuggestions={props.isGeneratingSuggestions}
                         onCitePaper={props.onCitePaper}
+                        onAuthorClick={props.onAuthorClick}
+                        model={model}
+                        onOpenAnalysis={handleOpenPaperAnalysis}
+                        onFindSimilar={props.onFindSimilar}
+                        isFindingSimilar={props.isFindingSimilar}
+                        userSettings={userSettings}
+                        onGenerateLaymanSummary={props.onGenerateLaymanSummary}
                     />
                 ) : (
                     <div className="text-center text-muted-foreground py-16">
@@ -147,14 +211,22 @@ export const WorkspacePanel: React.FC<WorkspacePanelProps> = (props) => {
                     </div>
                 );
             case 'analysis':
-                return (analysis || refinedQueries.length > 0 || isGeneratingRefined) ? (
+                return (analysis || refinedQueries.length > 0 || isGeneratingRefined || isSummaryLoading || isAnalysisLoading) ? (
                     <div className="space-y-6">
                         <RefinedQueries
                             queries={refinedQueries}
                             isLoading={isGeneratingRefined}
                             onQueryClick={onRefinedQuerySearch}
                         />
-                        {analysis && <AnalysisDashboard analysis={analysis} summary={summary} />}
+                        {(analysis || isSummaryLoading || isAnalysisLoading) && (
+                            <SearchResultsAnalysis 
+                                analysis={analysis} 
+                                summary={summary} 
+                                isSummaryLoading={isSummaryLoading} 
+                                isAnalysisLoading={isAnalysisLoading}
+                                papers={papers} 
+                            />
+                        )}
                     </div>
                 ) : (
                     <div className="text-center text-muted-foreground py-16">
@@ -164,6 +236,21 @@ export const WorkspacePanel: React.FC<WorkspacePanelProps> = (props) => {
                 );
             case 'bibliography':
                 return <BibliographyGenerator papers={papers} model={model} />;
+            case 'library':
+                return <LocalLibraryPanel userSettings={userSettings} onUpdateSettings={() => {}} />;
+            case 'logician':
+                return <LocalNanobotPanel />;
+            case 'gno':
+                return <GnoPanel userSettings={userSettings} />;
+            case 'innovation':
+                return (
+                    <InnovationEngine
+                        result={innovationResult}
+                        isLoading={isInnovationLoading}
+                        onGenerate={handleGenerateInnovation}
+                        paperCount={workspacePapers.length}
+                    />
+                );
             case 'workspace':
                 return (
                     <ProjectWorkspace
@@ -172,14 +259,13 @@ export const WorkspacePanel: React.FC<WorkspacePanelProps> = (props) => {
                         onCreateProject={props.onCreateProject}
                         onDeleteProject={props.onDeleteProject}
                         onMovePaperToProject={props.onMovePaperToProject}
-                        onSynthesizeWorkspace={props.onSynthesizeWorkspace}
-                        onAnalyzeGaps={props.onAnalyzeGaps}
+                        onAnalyzeWorkspace={onAnalyzeWorkspace}
                         onRemovePaperFromWorkspace={props.onToggleWorkspacePaper}
                         onUpdateProjectColor={props.onUpdateProjectColor}
                         model={model}
                         onIndexPaperForRag={props.onIndexPaperForRag}
-                        projectChats={props.projectChats}
-                        onProjectChat={props.onProjectChat}
+                        isWorkspaceAnalysisLoading={isWorkspaceAnalysisLoading}
+                        onAddPapersToWorkspace={() => {}} 
                     />
                  )
             default:
@@ -189,25 +275,75 @@ export const WorkspacePanel: React.FC<WorkspacePanelProps> = (props) => {
 
     return (
         <div className="bg-card rounded-lg shadow-sm border sticky top-24">
-            <div className="border-b border-border p-1 flex justify-between items-center">
-                <nav className="flex space-x-1 bg-muted p-1 rounded-md" aria-label="Tabs">
+            <div className="border-b border-border p-1 flex justify-between items-center overflow-x-auto">
+                <nav className="flex space-x-1 bg-muted p-1 rounded-md min-w-max" aria-label="Tabs">
                     <TabButton onClick={() => setActiveTab('details')} isActive={activeTab === 'details'} disabled={!selectedPaper}>
-                        Paper Details
+                        Details
                     </TabButton>
                     <TabButton onClick={() => setActiveTab('analysis')} isActive={activeTab === 'analysis'}>
-                        Search Analysis
-                    </TabButton>
-                    <TabButton onClick={() => setActiveTab('bibliography')} isActive={activeTab === 'bibliography'} disabled={papers.length === 0}>
-                        Bibliography
+                        Analysis
                     </TabButton>
                     <TabButton onClick={() => setActiveTab('workspace')} isActive={activeTab === 'workspace'}>
                        Workspace
+                    </TabButton>
+                    <TabButton onClick={() => setActiveTab('innovation')} isActive={activeTab === 'innovation'}>
+                       Innovation
+                    </TabButton>
+                    <TabButton onClick={() => setActiveTab('library')} isActive={activeTab === 'library'}>
+                       Local Library
+                    </TabButton>
+                    <TabButton onClick={() => setActiveTab('gno')} isActive={activeTab === 'gno'}>
+                       Local GNO
+                    </TabButton>
+                    <TabButton onClick={() => setActiveTab('logician')} isActive={activeTab === 'logician'}>
+                       Logician
+                    </TabButton>
+                    <TabButton onClick={() => setActiveTab('bibliography')} isActive={activeTab === 'bibliography'} disabled={papers.length === 0}>
+                        Cite All
                     </TabButton>
                 </nav>
             </div>
             <div className="p-6 overflow-y-auto max-h-[calc(100vh-12rem)]">
                 {renderContent()}
             </div>
+
+            <WorkspaceAnalysisDashboard
+                isOpen={showWorkspaceAnalysisDrawer}
+                onClose={onCloseWorkspaceAnalysisDrawer}
+                workspacePapers={workspacePapers}
+                analysisResult={workspaceAnalysisResult}
+                synthesisResult={workspaceSynthesisSummary}
+                gapAnalysisReport={workspaceGapAnalysisReport}
+                isAnalysisLoading={isWorkspaceAnalysisLoading}
+                isSynthesisLoading={isWorkspaceSynthesisLoading}
+                isGapAnalysisLoading={isWorkspaceGapAnalysisLoading}
+                chatHistory={workspaceChatHistory}
+                isChatLoading={isWorkspaceChatLoading}
+                onChat={onWorkspaceChat}
+                onSynthesizeWorkspace={() => onSynthesizeWorkspace(workspacePapers, model)}
+                onAnalyzeGaps={() => onAnalyzeGaps(workspacePapers, model)}
+            />
+
+            {selectedPaper && (
+                <PaperAnalysisDashboard
+                    isOpen={showPaperAnalysisDrawer}
+                    onClose={() => setShowPaperAnalysisDrawer(false)}
+                    paper={selectedPaper}
+                    model={model}
+                    onAnalyzePaper={props.onAnalyzePaper}
+                    isAnalyzingPaper={props.isAnalyzingPaper}
+                    onVerifyPaper={props.onVerifyPaper}
+                    onGenerateSuggestions={props.onGenerateSuggestions}
+                    isGeneratingSuggestions={props.isGeneratingSuggestions}
+                    onFindJournals={props.onFindJournals}
+                    isFindingJournals={props.isFindingJournals}
+                    onFindSimilar={props.onFindSimilar}
+                    isFindingSimilar={isFindingSimilar}
+                    onFindConnectedPapers={props.onFindConnectedPapers}
+                    isFindingConnected={props.isFindingConnected}
+                    logAnalyticsEvent={props.logAnalyticsEvent}
+                />
+            )}
         </div>
     );
 };

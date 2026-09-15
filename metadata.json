@@ -1,5 +1,6 @@
 {
-  "name": "AI Research Explorer",
-  "description": "An AI-powered assistant to help doctoral students find and summarize relevant academic papers from Google Scholar, providing concise summaries and source links.",
-  "requestFramePermissions": []
+  "name": "Scholar Explorer",
+  "description": "An AI-powered assistant to help doctoral students and researchers find and summarize relevant academic papers, providing concise summaries and source links.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

@@ -1,45 +1,27 @@
-import type { ResearchPaper, AdvancedSearchOptions } from '../types';
-import { createPaperId } from './extensionService';
-import { UNPAYWALL_EMAIL } from './config';
 
-// Client-side cache for OpenAlex results
-interface CacheEntry {
-    result: {
-        papers: ResearchPaper[];
-        hasMore: boolean;
-    };
-    timestamp: number;
-}
-const openAlexCache = new Map<string, CacheEntry>();
-const CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutes
+import type { ResearchPaper, AdvancedSearchOptions, AuthorProfile } from '../types';
+import { createPaperId } from './extensionService';
+import { getCache, setCache } from '../utils/cache';
+
+const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes for search
+const METADATA_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours for specific DOI lookups
 
 /**
  * Reconstructs a readable abstract string from OpenAlex's inverted index format.
- * @param invertedAbstract - The inverted index object from the OpenAlex API.
- * @returns A string representing the paper's abstract.
  */
 function deinvertAbstract(invertedAbstract: { [key: string]: number[] }): string {
     if (!invertedAbstract) return '';
-    
     const abstractArray: string[] = [];
     let maxIndex = -1;
-
-    // First, determine the size of the array needed
     for (const word in invertedAbstract) {
         for (const pos of invertedAbstract[word]) {
-            if (pos > maxIndex) {
-                maxIndex = pos;
-            }
+            if (pos > maxIndex) maxIndex = pos;
         }
     }
-    
-    // Initialize the array with empty strings
-    if(maxIndex > -1){
+    if (maxIndex > -1) {
         abstractArray.length = maxIndex + 1;
         abstractArray.fill('');
     }
-
-    // Populate the array with words at their correct positions
     for (const word in invertedAbstract) {
         for (const pos of invertedAbstract[word]) {
             abstractArray[pos] = word;
@@ -48,139 +30,99 @@ function deinvertAbstract(invertedAbstract: { [key: string]: number[] }): string
     return abstractArray.join(' ').trim();
 }
 
-
 const mapOpenAlexWorkToResearchPaper = (work: any): ResearchPaper | null => {
     const abstract = work.abstract_inverted_index 
         ? deinvertAbstract(work.abstract_inverted_index) 
         : 'No abstract available for this paper.';
     
-    // Filter out papers with no abstract for better summary quality
-    if (!abstract || abstract.length < 50) {
-        return null;
-    }
+    if (!abstract || abstract.length < 50) return null;
+
+    const authorList: AuthorProfile[] = (work.authorships || []).map((a: any) => ({
+        id: a.author?.id?.replace('https://openalex.org/', '') || undefined,
+        name: a.author?.display_name || 'Unknown Author',
+        orcid: a.author?.orcid?.replace('https://orcid.org/', '') || undefined
+    }));
 
     const doi = work.doi ? work.doi.replace('https://doi.org/', '') : undefined;
+    const journal = work.primary_location?.source?.display_name || undefined;
+
     const paperData: Omit<ResearchPaper, 'id'> = {
         title: work.title || work.display_name,
-        authors: (work.authorships || []).map((a: any) => a.author?.display_name || 'Unknown Author').join(', '),
+        authors: authorList.map(a => a.name).join(', '),
+        authorList,
         year: work.publication_year,
         abstract,
         sourceURL: work.doi ? `https://doi.org/${work.doi.replace('https://doi.org/', '')}` : work.id,
         pdfURL: work.primary_location?.pdf_url || undefined,
         citations: work.cited_by_count,
         doi,
-        journal: work.host_venue?.display_name || undefined,
+        journal,
+        isOpenAccess: work.open_access?.is_oa || false,
+        isInDoaj: work.primary_location?.source?.is_in_doaj || false,
+        isRetracted: work.is_retracted,
     };
 
-    return {
-        ...paperData,
-        id: createPaperId(paperData),
-    };
+    return { ...paperData, id: createPaperId(paperData) };
 };
 
-/**
- * Searches the OpenAlex database for research papers.
- * @param query - The user's search query string.
- * @param options - Advanced search options including year range and authors.
- * @returns A promise that resolves to an object containing an array of ResearchPaper objects and a boolean indicating if more results are available.
- */
 export const searchOpenAlex = async (query: string, options: AdvancedSearchOptions, page: number = 1): Promise<{ papers: ResearchPaper[], hasMore: boolean }> => {
-    // 1. Create a consistent cache key
-    const cacheKey = JSON.stringify({ query, ...options, page });
-    
-    // 2. Check the cache
-    const cachedEntry = openAlexCache.get(cacheKey);
-    if (cachedEntry && (Date.now() - cachedEntry.timestamp < CACHE_TTL_MS)) {
-        console.log("Serving from OpenAlex cache:", cacheKey);
-        return cachedEntry.result;
-    }
+    const cacheKey = `openalex_search_${JSON.stringify({ query, ...options, page })}`;
+    const cached = getCache<{ papers: ResearchPaper[], hasMore: boolean }>(cacheKey);
+    if (cached) return cached;
 
     const PER_PAGE = 15;
-    const BASE_URL = 'https://api.openalex.org/works';
+    const BASE_URL = '/api/openalex/search';
     const params = new URLSearchParams({
         search: query,
         'per-page': PER_PAGE.toString(),
         'page': page.toString(),
-        // Use a more specific, yet still example, email for the polite pool.
-        mailto: UNPAYWALL_EMAIL
+        'select': 'id,doi,title,display_name,publication_year,abstract_inverted_index,authorships,cited_by_count,primary_location,open_access,type,is_retracted',
     });
 
-    // Build the filter string for the OpenAlex API
     const filters: string[] = [];
     if (options.startYear || options.endYear) {
-        const start = options.startYear || '';
-        const end = options.endYear || '';
-        // Only add the filter if at least one year is specified.
-        // OpenAlex API supports open-ended ranges like "2020-" or "-2020".
-        if (start || end) {
-            filters.push(`publication_year:${start}-${end}`);
-        }
+        filters.push(`publication_year:${options.startYear || ''}-${options.endYear || ''}`);
     }
-    if (options.authors) {
-        // Use the .search field to find authors
-        filters.push(`authorships.author.display_name.search:${options.authors}`);
-    }
-    if (options.journal) {
-        filters.push(`host_venue.display_name.search:${options.journal}`);
-    }
-    if (options.minCitations && parseInt(options.minCitations, 10) > 0) {
-        filters.push(`cited_by_count:>${parseInt(options.minCitations, 10)}`);
-    }
+    if (options.authorId) filters.push(`authorships.author.id:${options.authorId}`);
+    else if (options.authors) filters.push(`authorships.author.display_name.search:${options.authors}`);
+    if (options.institutionId) filters.push(`authorships.institutions.ror:${options.institutionId}`);
+    if (options.journal) filters.push(`primary_location.source.display_name.search:${options.journal}`);
+    if (options.minCitations && parseInt(options.minCitations, 10) > 0) filters.push(`cited_by_count:>${options.minCitations}`);
+    if (options.isOpenAccess) filters.push(`open_access.is_oa:true`);
     
-    if (filters.length > 0) {
-        params.append('filter', filters.join(','));
-    }
-
-    const url = `${BASE_URL}?${params.toString()}`;
-    let response: Response | null = null; // To access response in catch block
+    if (filters.length > 0) params.append('filter', filters.join(','));
 
     try {
-        response = await fetch(url);
-        if (!response.ok) {
-            const errorData = await response.json().catch(() => ({ message: `HTTP error! Status: ${response?.status}` }));
-            throw new Error(`OpenAlex API error: ${errorData.message || response.statusText}`);
-        }
+        const response = await fetch(`${BASE_URL}?${params.toString()}`);
+        if (!response.ok) throw new Error(`OpenAlex error: ${response.statusText}`);
         const data = await response.json();
-
         const papers = (data.results || []).map(mapOpenAlexWorkToResearchPaper).filter((p): p is ResearchPaper => p !== null);
-        const totalCount = data.meta?.count || 0;
-        const hasMore = (page * PER_PAGE) < totalCount;
+        const hasMore = (page * PER_PAGE) < (data.meta?.count || 0);
 
-        // 3. Store the result in the cache
-        console.log("Caching OpenAlex result:", cacheKey);
-        openAlexCache.set(cacheKey, { result: { papers, hasMore }, timestamp: Date.now() });
-
-        return { papers, hasMore };
+        const result = { papers, hasMore };
+        setCache(cacheKey, result, CACHE_TTL_MS);
+        return result;
     } catch (error) {
-        console.error("Error searching OpenAlex. Request URL:", url);
-        if (response) {
-            console.error("Response Status:", response.status, response.statusText);
-        }
-        if (error instanceof Error) {
-            console.error("Original Error Message:", error.message);
-        }
-
-        throw new Error("Failed to fetch results from OpenAlex. Please check your network connection and try again later.");
+        console.error("OpenAlex Fetch Error:", error);
+        throw error;
     }
 };
 
-/**
- * Fetches a single paper from OpenAlex using its DOI.
- * @param doi The Digital Object Identifier of the paper.
- * @returns A promise that resolves to a ResearchPaper object or null if not found.
- */
 export const searchOpenAlexByDoi = async (doi: string): Promise<ResearchPaper | null> => {
-    const url = `https://api.openalex.org/works/https://doi.org/${encodeURIComponent(doi)}`;
+    const cacheKey = `single_paper_doi_${doi}`;
+    const cached = getCache<ResearchPaper>(cacheKey);
+    if (cached) return cached;
+
+    const url = `/api/openalex/work/https://doi.org/${encodeURIComponent(doi)}?select=id,doi,title,display_name,publication_year,abstract_inverted_index,authorships,cited_by_count,primary_location,open_access,type,is_retracted`;
     try {
         const response = await fetch(url);
-        if (!response.ok) {
-            if (response.status === 404) return null;
-            throw new Error(`OpenAlex API error! Status: ${response.status}`);
-        }
+        if (!response.ok) return null;
         const work = await response.json();
-        return mapOpenAlexWorkToResearchPaper(work);
+        const result = mapOpenAlexWorkToResearchPaper(work);
+        if (result) setCache(cacheKey, result, METADATA_TTL_MS);
+        return result;
     } catch (error) {
-        console.error(`Error fetching from OpenAlex by DOI (${doi}):`, error);
-        throw new Error(`Failed to fetch metadata for DOI ${doi} from OpenAlex.`);
+        console.error(`DOI Fetch Error (${doi}):`, error);
+        return null;
     }
 };

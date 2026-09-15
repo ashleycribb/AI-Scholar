@@ -3,15 +3,34 @@ import { GoogleGenAI, Type } from "@google/genai";
 import type { PaperAnalysis, ResearchPaper } from '../../types';
 import { findDoiForPaper } from './crossref';
 import { findOpenAccessPdf } from './unpaywall';
-import {
-  paperBasedSuggestionsSchema,
-  generatePaperBasedSuggestionsPrompt,
-  paperAnalysisSchema,
-  analyzeSinglePaperPrompt
-} from "../../services/promptTemplates";
-import { findOpenAccessPdf } from '../../services/unpaywallService';
 
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+const ai = new GoogleGenAI({ 
+  apiKey: process.env.GEMINI_API_KEY,
+});
+
+const wait = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
+async function runWithRetry<T>(fn: () => Promise<T>, retries = 3, delay = 2000): Promise<T> {
+  try {
+    return await fn();
+  } catch (error: any) {
+    const errBody = error?.error || error;
+    const errorCode = errBody?.code || error?.status;
+    const errorMessage = errBody?.message || error?.message || "";
+
+    if (retries > 0 && (
+        errorCode === 429 || 
+        errorMessage.includes('429') || 
+        errorMessage.includes('RESOURCE_EXHAUSTED') ||
+        errorMessage.includes('quota')
+    )) {
+      const jitter = Math.random() * 1000;
+      await wait(delay + jitter);
+      return runWithRetry(fn, retries - 1, delay * 2);
+    }
+    throw error;
+  }
+}
 
 const safeJsonParse = (jsonString: string) => {
   try {
@@ -40,14 +59,14 @@ export const summarizeAbstract = async (paper: ResearchPaper): Promise<string> =
     Return a single JSON object with a "summary" key.`;
     
     try {
-        const response = await ai.models.generateContent({
-            model: "gemini-2.5-flash",
+        const response = await runWithRetry(() => ai.models.generateContent({
+            model: "gemini-3-flash-preview",
             contents: prompt,
             config: {
                 responseMimeType: "application/json",
                 responseSchema: summarySchema,
             },
-        });
+        }));
         const result = safeJsonParse(response.text ?? '');
         return result?.summary || "Could not generate summary.";
     } catch (error) {
@@ -56,18 +75,40 @@ export const summarizeAbstract = async (paper: ResearchPaper): Promise<string> =
     }
 };
 
+const paperAnalysisSchema = {
+    type: Type.OBJECT,
+    properties: {
+        researchQuestion: { type: Type.STRING },
+        methodology: { type: Type.STRING },
+        keyFindings: { type: Type.ARRAY, items: { type: Type.STRING } },
+        limitations: { type: Type.ARRAY, items: { type: Type.STRING } },
+    },
+    required: ["researchQuestion", "methodology", "keyFindings", "limitations"],
+};
+
 export const analyzeSinglePaper = async (paper: ResearchPaper): Promise<PaperAnalysis> => {
-    const prompt = analyzeSinglePaperPrompt(paper);
+    const prompt = `Perform a structured analysis of the following research paper based on its abstract.
+    
+    Title: ${paper.title}
+    Abstract: ${paper.abstract}
+
+    Extract the following information:
+    1.  The primary research question or objective.
+    2.  The methodology used.
+    3.  A bulleted list of key findings.
+    4.  A bulleted list of potential limitations mentioned or implied.
+    
+    Return the result in JSON format.`;
     
     try {
-        const response = await ai.models.generateContent({
-            model: "gemini-2.5-flash",
+        const response = await runWithRetry(() => ai.models.generateContent({
+            model: "gemini-3-flash-preview",
             contents: prompt,
             config: {
                 responseMimeType: "application/json",
                 responseSchema: paperAnalysisSchema,
             },
-        });
+        }));
         const result = safeJsonParse(response.text ?? '');
         if (!result) throw new Error("Could not analyze paper.");
         return result;
@@ -91,18 +132,35 @@ export const findOpenAccessVersion = async (paper: ResearchPaper): Promise<strin
     }
 };
 
+const paperBasedSuggestionsSchema = {
+    type: Type.OBJECT,
+    properties: {
+        suggestions: {
+            type: Type.ARRAY,
+            items: { type: Type.STRING }
+        },
+    },
+    required: ["suggestions"],
+};
+
 export const generatePaperBasedSuggestions = async (paper: ResearchPaper): Promise<string[]> => {
-    const prompt = generatePaperBasedSuggestionsPrompt(paper);
+    const prompt = `You are a research expert. Based on the title and abstract of the following academic paper, generate 5 distinct and insightful search queries that would help a user find related or follow-up research.
+
+    Seed Paper:
+    Title: "${paper.title}"
+    Abstract: "${paper.abstract}"
+
+    Return your response as a single JSON object with a single key "suggestions", which is an array of strings.`;
 
     try {
-        const response = await ai.models.generateContent({
-            model: "gemini-2.5-flash",
+        const response = await runWithRetry(() => ai.models.generateContent({
+            model: "gemini-3-flash-preview",
             contents: prompt,
             config: {
                 responseMimeType: "application/json",
                 responseSchema: paperBasedSuggestionsSchema,
             },
-        });
+        }));
         const result = safeJsonParse(response.text ?? '');
         if (!result || !result.suggestions) return [];
         return result.suggestions;

@@ -1,5 +1,4 @@
 
-
 import React, { useState, useEffect, useMemo } from 'react';
 import type { GoldStandardPaper, UserStudyData, ResearchPaper, VerificationResult } from '../types';
 import * as verificationService from '../services/verificationService';
@@ -70,9 +69,10 @@ export const EvaluationMode: React.FC<EvaluationModeProps> = ({ dataset, onCompl
             const assignedGroup = Math.random() < 0.5 ? 'A' : 'B';
             setGroup(assignedGroup);
             
-            if (assignedGroup === 'B' && task.paper.doi) {
+            if (assignedGroup === 'B') {
                 // Fetch VACS result for the treatment group
-                verificationService.verifyPaper(task.paper.doi, task.claim)
+                // Updated to pass the full task.paper object
+                verificationService.verifyPaper(task.paper, task.claim)
                     .then(setVacsResult)
                     .finally(() => setIsLoading(false));
             } else {

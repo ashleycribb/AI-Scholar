@@ -1,0 +1,38 @@
+{
+  "id": "/xapi/research_traceability_profile.json",
+  "type": "Profile",
+  "name": { "en-US": "Research Traceability xAPI Profile" },
+  "description": { "en-US": "Defines xAPI statements for human researchers and autonomous AI Source Scout agents in Scholar Explorer." },
+  "concepts": [
+    {
+      "id": "/ontologies/agent_traceability.owl#searched",
+      "type": "Verb",
+      "prefLabel": { "en-US": "searched" },
+      "definition": { "en-US": "Queried academic databases or retrieval networks." }
+    },
+    {
+      "id": "/ontologies/agent_traceability.owl#classified",
+      "type": "Verb",
+      "prefLabel": { "en-US": "classified" },
+      "definition": { "en-US": "Categorized literature or research artifacts according to taxonomy." }
+    },
+    {
+      "id": "/ontologies/agent_traceability.owl#extracted",
+      "type": "Verb",
+      "prefLabel": { "en-US": "extracted" },
+      "definition": { "en-US": "Parsed claims, citations, or metadata from paper source texts." }
+    },
+    {
+      "id": "/ontologies/agent_traceability.owl#verified",
+      "type": "Verb",
+      "prefLabel": { "en-US": "verified" },
+      "definition": { "en-US": "Validated scientific claims or doi citations against evidence." }
+    },
+    {
+      "id": "/ontologies/agent_traceability.owl#executed",
+      "type": "Verb",
+      "prefLabel": { "en-US": "executed" },
+      "definition": { "en-US": "Ran an ontological capability or tool action." }
+    }
+  ]
+}

@@ -1,6 +1,6 @@
 {
-  "name": "AI Research Explorer",
-  "short_name": "AI Research",
+  "name": "Scholar Explorer",
+  "short_name": "Scholar Explorer",
   "description": "An AI-powered assistant for academic literature reviews.",
   "start_url": "/",
   "display": "standalone",

@@ -6,14 +6,15 @@ import { ErrorMessage } from './ErrorMessage';
 import { LoadingSpinner } from './LoadingSpinner';
 import { CitationIcon } from './icons/CitationIcon';
 import { CopyIcon } from './icons/CopyIcon';
-import { ZoteroIcon } from './icons/ZoteroIcon';
-import { SafeHTML } from './SafeHTML';
+import { Library } from 'lucide-react';
+import { CustomDropdown } from './CustomDropdown';
 
 interface CitationModalProps {
   isOpen: boolean;
   onClose: () => void;
   paper: ResearchPaper | null;
   model: ModelDefinition;
+  initialStyle?: CitationStyle;
 }
 
 const citationStyles: { id: CitationStyle; name: string }[] = [
@@ -23,13 +24,14 @@ const citationStyles: { id: CitationStyle; name: string }[] = [
     { id: 'harvard', name: 'Harvard' },
     { id: 'ieee', name: 'IEEE' },
     { id: 'vancouver', name: 'Vancouver' },
+    { id: 'bibtex', name: 'BibTeX' },
 ];
 
-export const CitationModal: React.FC<CitationModalProps> = ({ isOpen, onClose, paper, model }) => {
+export const CitationModal: React.FC<CitationModalProps> = ({ isOpen, onClose, paper, model, initialStyle }) => {
   const [isLoading, setIsLoading] = useState(false);
   const [citation, setCitation] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [citationStyle, setCitationStyle] = useState<CitationStyle>('apa');
+  const [citationStyle, setCitationStyle] = useState<CitationStyle>(initialStyle || 'apa');
   const [copied, setCopied] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
 
@@ -48,6 +50,12 @@ export const CitationModal: React.FC<CitationModalProps> = ({ isOpen, onClose, p
       setIsLoading(false);
     }
   }, [paper, model]);
+
+  useEffect(() => {
+    if (isOpen && initialStyle) {
+      setCitationStyle(initialStyle);
+    }
+  }, [isOpen, initialStyle]);
 
   useEffect(() => {
     if (isOpen && paper) {
@@ -79,7 +87,7 @@ export const CitationModal: React.FC<CitationModalProps> = ({ isOpen, onClose, p
         document.body.removeChild(link);
         URL.revokeObjectURL(url);
     } catch (err) {
-        alert("Failed to generate file for Zotero. Please try again.");
+        alert("Failed to generate file for Scholar Bridge. Please try again.");
     } finally {
         setIsExporting(false);
     }
@@ -120,25 +128,24 @@ export const CitationModal: React.FC<CitationModalProps> = ({ isOpen, onClose, p
 
         <main className="p-6 overflow-y-auto">
             <div className="flex flex-col sm:flex-row items-center gap-4 mb-6">
-                <label htmlFor="citation-style-modal" className="text-sm font-medium text-foreground flex-shrink-0">Citation Style</label>
-                <select
-                    id="citation-style-modal"
+                <label className="text-sm font-medium text-foreground flex-shrink-0">Citation Style</label>
+                <CustomDropdown
                     value={citationStyle}
-                    onChange={(e) => setCitationStyle(e.target.value as CitationStyle)}
-                    className="w-full h-10 pl-3 pr-10 text-base text-foreground border-input rounded-md bg-background focus:ring-2 focus:ring-ring"
-                    disabled={isLoading}
-                >
-                    {citationStyles.map(style => <option key={style.id} value={style.id}>{style.name}</option>)}
-                </select>
+                    options={citationStyles.map(s => ({ id: s.id, name: s.name }))}
+                    onChange={(val) => setCitationStyle(val as CitationStyle)}
+                    formatLabel={(n) => n}
+                    className="w-full"
+                    triggerClassName="w-full h-10 px-4 bg-background border border-border rounded-md justify-between"
+                />
             </div>
 
             <div className="min-h-[120px]">
                 {isLoading && <LoadingSpinner message="Generating citation..." />}
                 {error && <ErrorMessage message={error} />}
                 {citation && !isLoading && (
-                    <SafeHTML
+                    <div
                         className="p-4 bg-muted/50 border border-border rounded-md text-sm text-foreground leading-relaxed prose max-w-none"
-                        html={citation}
+                        dangerouslySetInnerHTML={{ __html: citation }}
                     />
                 )}
             </div>
@@ -148,10 +155,10 @@ export const CitationModal: React.FC<CitationModalProps> = ({ isOpen, onClose, p
             <button
                 onClick={handleExportRIS}
                 disabled={isExporting || !citation}
-                title="Export as .ris for Zotero, Mendeley, etc."
+                title="Export as .ris for Scholar Bridge, Mendeley, etc."
                 className="h-9 px-4 text-sm font-semibold rounded-md bg-secondary text-secondary-foreground hover:bg-accent disabled:opacity-50 flex items-center gap-2"
             >
-                <ZoteroIcon className="w-4 h-4" />
+                <Library className="w-4 h-4" />
                 <span>{isExporting ? 'Exporting...' : 'Export .ris'}</span>
             </button>
             <button

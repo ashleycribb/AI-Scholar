@@ -1,0 +1,87 @@
+{
+  "manifest_version": 3,
+  "name": "AI Research Explorer Connector",
+  "version": "1.0.0",
+  "description": "Save papers directly from your browser to AI Research Explorer.",
+  "permissions": [
+    "storage",
+    "activeTab",
+    "scripting"
+  ],
+  "host_permissions": [
+    "*://*.arxiv.org/*",
+    "*://scholar.google.com/*"
+  ],
+  "background": {
+    "service_worker": "service-worker-loader.js",
+    "type": "module"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "content_scripts": [
+    {
+      "js": [
+        "assets/arxiv.js-DJwGuBSc.js"
+      ],
+      "matches": [
+        "*://*.arxiv.org/abs/*",
+        "*://*.arxiv.org/pdf/*"
+      ],
+      "css": [
+        "content-scripts/common.css"
+      ]
+    },
+    {
+      "js": [
+        "assets/google-scholar.js-CzcTR9Xg.js"
+      ],
+      "matches": [
+        "*://scholar.google.com/scholar*"
+      ],
+      "css": [
+        "content-scripts/common.css"
+      ]
+    }
+  ],
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "web_accessible_resources": [
+    {
+      "matches": [
+        "<all_urls>"
+      ],
+      "resources": [
+        "icons/*.png"
+      ],
+      "use_dynamic_url": false
+    },
+    {
+      "matches": [
+        "*://*.arxiv.org/*",
+        "*://*.arxiv.org/*"
+      ],
+      "resources": [
+        "assets/arxiv.js-DJwGuBSc.js"
+      ],
+      "use_dynamic_url": false
+    },
+    {
+      "matches": [
+        "*://scholar.google.com/*"
+      ],
+      "resources": [
+        "assets/google-scholar.js-CzcTR9Xg.js"
+      ],
+      "use_dynamic_url": false
+    }
+  ]
+}

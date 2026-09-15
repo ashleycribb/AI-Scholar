@@ -1,5 +1,4 @@
 
-
 import React from 'react';
 import type { AnalysisResult } from '../types';
 import { PublicationYearChart } from './PublicationYearChart';
@@ -7,15 +6,28 @@ import { TopAuthorsChart } from './TopAuthorsChart';
 import { FormattedSummary } from './FormattedSummary';
 import { SparklesIcon } from './icons/SparklesIcon';
 
-interface AnalysisDashboardProps {
+interface SearchResultsAnalysisProps {
   analysis: AnalysisResult | null;
   summary: string;
+  isSummaryLoading: boolean;
 }
 
-export const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({ analysis, summary }) => {
+export const SearchResultsAnalysis: React.FC<SearchResultsAnalysisProps> = ({ analysis, summary, isSummaryLoading }) => {
   return (
     <div className="space-y-6">
-        {summary && (
+        {isSummaryLoading ? (
+            <div className="bg-accent/50 border-l-4 border-primary/50 p-4 rounded-r-lg shadow-sm animate-pulse">
+                 <div className="flex items-center gap-2 mb-2">
+                     <div className="w-6 h-6 bg-primary/20 rounded-full"></div>
+                     <div className="h-5 bg-primary/20 rounded w-1/3"></div>
+                 </div>
+                 <div className="space-y-2">
+                     <div className="h-4 bg-primary/10 rounded w-full"></div>
+                     <div className="h-4 bg-primary/10 rounded w-5/6"></div>
+                     <div className="h-4 bg-primary/10 rounded w-4/6"></div>
+                 </div>
+            </div>
+        ) : summary && (
             <div className="bg-accent/50 border-l-4 border-primary p-4 rounded-r-lg shadow-sm">
                 <h3 className="text-lg font-semibold text-foreground mb-2 flex items-center gap-2">
                     <SparklesIcon className="w-6 h-6 text-primary" />

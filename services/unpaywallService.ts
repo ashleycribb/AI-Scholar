@@ -1,38 +1,79 @@
 
+import type { ResearchPaper } from '../types';
+
 /**
- * Finds a direct URL to a legal, open-access PDF version of a paper using the Unpaywall API.
- * Unpaywall is an open database of open access content.
- * @param doi The Digital Object Identifier of the paper.
- * @returns A promise that resolves to the PDF URL string if found, otherwise null.
+ * Unpaywall API Service
+ * Endpoint: https://api.unpaywall.org/v2/{doi}?email={email}
  */
-import { UNPAYWALL_EMAIL } from './config';
 
-export const findOpenAccessPdf = async (doi: string): Promise<string | null> => {
-    // Unpaywall requires an email for their "polite pool" of users.
-    const url = `https://api.unpaywall.org/v2/${encodeURIComponent(doi)}?email=${UNPAYWALL_EMAIL}`;
+const EMAIL = 'contact@scholar-explorer.com';
 
+interface UnpaywallResponse {
+    doi: string;
+    is_oa: boolean;
+    best_oa_location?: {
+        url_for_pdf: string;
+        url_for_landing_page: string;
+        version: string;
+        license: string;
+    };
+    oa_locations: Array<{
+        url_for_pdf: string;
+        url_for_landing_page: string;
+        version: string;
+        license: string;
+    }>;
+}
+
+export const fetchOALink = async (doi: string): Promise<string | null> => {
+    if (!doi) return null;
+    
+    // Clean DOI
+    const cleanDoi = doi.startsWith('http') ? doi.split('doi.org/')[1] : doi;
+    
     try {
-        const response = await fetch(url);
-        if (!response.ok) {
-            // This is expected for DOIs not in their database, so we don't throw an error.
-            console.log(`Unpaywall: No record found for DOI ${doi}. Status: ${response.status}`);
-            return null;
+        const response = await fetch(`https://api.unpaywall.org/v2/${encodeURIComponent(cleanDoi)}?email=${EMAIL}`);
+        if (!response.ok) return null;
+        
+        const data: UnpaywallResponse = await response.json();
+        
+        if (data.is_oa && data.best_oa_location?.url_for_pdf) {
+            return data.best_oa_location.url_for_pdf;
         }
         
-        const data = await response.json();
-        
-        // The 'best_oa_location' provides the direct link to the best available Open Access version.
-        // We specifically check for 'application/pdf' to ensure it's a direct PDF link.
-        const pdfLocation = data?.best_oa_location;
-        if (pdfLocation && pdfLocation.url_for_pdf) {
-            return pdfLocation.url_for_pdf;
+        // Fallback to landing page if no PDF
+        if (data.is_oa && data.best_oa_location?.url_for_landing_page) {
+            return data.best_oa_location.url_for_landing_page;
         }
-
-        return null; // Open Access version exists, but not a direct PDF link we can use.
-
+        
+        return null;
     } catch (error) {
-        console.error(`Error querying Unpaywall for DOI ${doi}:`, error);
-        // We don't throw an error here to allow the verification process to continue to other methods.
+        console.error("[Unpaywall] Error fetching DOI:", doi, error);
         return null;
     }
+};
+
+/**
+ * Enriches a list of papers with Unpaywall OA data if they lack PDF links
+ */
+export const enrichWithUnpaywall = async (papers: ResearchPaper[]): Promise<ResearchPaper[]> => {
+    const papersToEnrich = papers.filter(p => p.doi && !p.pdfURL);
+    
+    if (papersToEnrich.length === 0) return papers;
+    
+    const enrichedResults = await Promise.all(
+        papersToEnrich.slice(0, 5).map(async (paper) => {
+            const oaLink = await fetchOALink(paper.doi!);
+            if (oaLink) {
+                return { ...paper, pdfURL: oaLink, isOpenAccess: true };
+            }
+            return paper;
+        })
+    );
+    
+    // Merge back
+    return papers.map(p => {
+        const enriched = enrichedResults.find(ep => ep.id === p.id);
+        return enriched || p;
+    });
 };

@@ -1,0 +1,9 @@
+{
+  "domain": "edtech",
+  "required_methodology": "xAPI",
+  "prohibited_terms": [
+    "untracked learning",
+    "proprietary silo",
+    "black box assessment"
+  ]
+}

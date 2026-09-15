@@ -1,0 +1,43 @@
+<?xml version="1.0"?>
+<rdf:RDF xmlns="http://scholarexplorer.app/ontologies/agent_traceability.owl#"
+     xml:base="/ontologies/agent_traceability.owl"
+     xmlns:owl="http://www.w3.org/2002/07/owl#"
+     xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+     xmlns:xml="http://www.w3.org/XML/1998/namespace"
+     xmlns:xsd="http://www.w3.org/2001/XMLSchema#"
+     xmlns:rdfs="http://www.w3.org/2000/01/rdf-schema#">
+    <owl:Ontology rdf:about="/ontologies/agent_traceability.owl"/>
+
+    <!-- Actor Classes -->
+    <owl:Class rdf:about="/ontologies/agent_traceability.owl#HumanResearcher">
+        <rdfs:label>Human Researcher</rdfs:label>
+        <rdfs:comment>An action or research trace initiated directly by a human user via the UI.</rdfs:comment>
+    </owl:Class>
+
+    <owl:Class rdf:about="/ontologies/agent_traceability.owl#SourceScoutAgent">
+        <rdfs:label>Source Scout Agent</rdfs:label>
+        <rdfs:comment>An autonomous RAG or scouting action performed by the backend agent framework.</rdfs:comment>
+    </owl:Class>
+
+    <!-- Verbs -->
+    <owl:ObjectProperty rdf:about="/ontologies/agent_traceability.owl#searched">
+        <rdfs:label>searched</rdfs:label>
+    </owl:ObjectProperty>
+    <owl:ObjectProperty rdf:about="/ontologies/agent_traceability.owl#classified">
+        <rdfs:label>classified</rdfs:label>
+    </owl:ObjectProperty>
+    <owl:ObjectProperty rdf:about="/ontologies/agent_traceability.owl#extracted">
+        <rdfs:label>extracted</rdfs:label>
+    </owl:ObjectProperty>
+    <owl:ObjectProperty rdf:about="/ontologies/agent_traceability.owl#verified">
+        <rdfs:label>verified</rdfs:label>
+    </owl:ObjectProperty>
+    <owl:ObjectProperty rdf:about="/ontologies/agent_traceability.owl#executed">
+        <rdfs:label>executed</rdfs:label>
+    </owl:ObjectProperty>
+
+    <!-- Properties -->
+    <owl:DatatypeProperty rdf:about="/ontologies/agent_traceability.owl#actorType">
+        <rdfs:label>actorType</rdfs:label>
+    </owl:DatatypeProperty>
+</rdf:RDF>

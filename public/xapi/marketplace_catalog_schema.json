@@ -1,0 +1,6 @@
+{
+  "id": "/xapi/marketplace_catalog_schema.json",
+  "type": "Schema",
+  "name": "scholar-explorer-marketplace-catalog@0.1.0",
+  "description": "Schema for Capability Marketplace catalog and sync payload validation."
+}

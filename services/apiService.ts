@@ -1,409 +1,547 @@
-import type { AdvancedSearchOptions, ResearchPaper, SummaryLength, SummaryStyle, ModelDefinition, SearchSourceInfo, KnowledgeGraph, PaperAnalysis, SynthesisResult, ConnectedPaper } from '../types';
-import * as validationService from './validationService';
-import { createPaperId } from './extensionService';
-import * as unpaywallService from './unpaywallService';
+
+import type { 
+    AdvancedSearchOptions, 
+    ResearchPaper, 
+    SummaryLength, 
+    SummaryStyle, 
+    Metadata, 
+    ModelDefinition, 
+    ConnectedPaper, 
+    LiteratureReviewDraft, 
+    InnovationResult, 
+    SynthesisResult,
+    DataCiteWork,
+    OpenCitationsLink,
+    OpenAireProject,
+    EuropePmcArticle,
+    DblpPublication,
+    UserSettings
+} from '../types';
 import * as openalexService from './openalexService';
-import * as arxivService from './arxivService';
 import * as geminiService from './geminiService';
+import * as analysisService from './analysisService';
 import * as embeddingService from './embeddingService';
-import { cosineSimilarity } from '../utils/math';
-// FIX: Import batchEmbedText directly as it's not exported from embeddingService.
-import { batchEmbedText } from '../utils/embeddings';
-import * as crossrefService from './crossrefService';
+import * as metadataService from './metadataService';
 import * as semanticScholarService from './semanticScholarService';
+import * as deepResearchService from './deepResearchService';
+import * as arxivService from './arxivService';
+import * as googleScholarService from './googleScholarService';
+import * as researchService from './researchService';
+import * as unpaywallService from './unpaywallService';
+import * as huggingfacePapersService from './huggingfacePapersService';
+import * as dataciteService from './dataciteService';
+import * as openCitationsService from './openCitationsService';
+import * as openaireService from './openaireService';
+import * as europePmcService from './europePmcService';
+import * as dblpService from './dblpService';
+import * as crossrefService from './crossrefService';
+import * as zenodoService from './zenodoService';
+import * as pubmedService from './pubmedService';
+import * as biorxivService from './biorxivService';
+import * as dissertationService from './dissertationService';
+import * as doajService from './doajService';
+import * as ericService from './ericService';
+import * as coreService from './coreService';
 
-// --- HELPER FUNCTIONS MOVED FROM AGENT BACKEND ---
+/**
+ * Service Facade
+ */
 
-const stopWords = new Set(['a', 'an', 'the', 'in', 'on', 'at', 'for', 'to', 'of', 'and', 'or', 'but', 'is', 'are', 'was', 'were', 'what', 'when', 'where', 'who', 'how', 'which', 'what', 'is', 'the', 'impact', 'of', 'on']);
-
-const calculateTitleMatchScore = (query: string, title: string): number => {
-    if (!query || !title) return 0;
-    const queryWords = query.toLowerCase().replace(/[^a-z0-9\s]/g, '').split(/\s+/).filter(word => word && !stopWords.has(word));
-    const uniqueQueryWords = new Set(queryWords);
-    if (uniqueQueryWords.size === 0) return 0;
-    const titleLower = title.toLowerCase();
-    let matchCount = 0;
-    uniqueQueryWords.forEach(word => {
-        if (titleLower.includes(word)) {
-            matchCount++;
-        }
-    });
-    return (matchCount / uniqueQueryWords.size) * 100;
+// Heuristic to check if a query is a natural language question likely needing expansion
+const isNaturalLanguageQuestion = (query: string): boolean => {
+    const questionWords = ['what', 'how', 'why', 'when', 'where', 'who', 'which', 'can', 'does', 'do', 'is', 'are'];
+    const lower = query.toLowerCase();
+    return (query.split(' ').length > 4) || questionWords.some(w => lower.startsWith(w));
 };
 
-function combineAndDeduplicateResults(allPapers: ResearchPaper[]): ResearchPaper[] {
-    const paperGroups = new Map<string, ResearchPaper[]>();
+export interface SearchProgressCallbacks {
+    onInitialPapers?: (papers: ResearchPaper[], hasMore: boolean) => void;
+    onFederatedBatch?: (papers: ResearchPaper[], newCount: number) => void;
+    onStatusChange?: (message: string) => void;
+}
 
-    allPapers.forEach(paper => {
-        const id = createPaperId(paper);
-        if (!paperGroups.has(id)) {
-            paperGroups.set(id, []);
-        }
-        paperGroups.get(id)!.push(paper);
-    });
+// Deduplicate and merge research paper lists preserving richest metadata
+export const deduplicatePapers = (papers: ResearchPaper[]): ResearchPaper[] => {
+    const uniquePapers = new Map<string, ResearchPaper>();
+    
+    for (const paper of papers) {
+        const key = paper.doi ? `doi:${paper.doi.toLowerCase()}` : paper.title.toLowerCase().replace(/[^a-z0-9]/g, '');
+        if (!key || key.length < 5) continue;
 
-    const mergedPapers: ResearchPaper[] = [];
-
-    paperGroups.forEach((papers, id) => {
-        // Simple merge strategy: start with the first paper and fill in missing fields from others.
-        // A more sophisticated strategy could prioritize sources (e.g., OpenAlex for citations, arXiv for PDF).
-        const merged = papers.reduce((acc, current) => {
-            return {
-                ...acc,
-                // Prioritize longer abstracts
-                abstract: (current.abstract && current.abstract.length > (acc.abstract?.length || 0) && current.abstract !== 'No abstract available for this paper.') ? current.abstract : acc.abstract,
-                // Prioritize available citations
-                citations: current.citations ?? acc.citations,
-                // Prioritize available PDF URLs
-                pdfURL: current.pdfURL ?? acc.pdfURL,
-                // Prioritize more specific source URLs
-                sourceURL: current.sourceURL?.includes('doi.org') ? current.sourceURL : (acc.sourceURL || current.sourceURL),
-                journal: current.journal ?? acc.journal,
-                enrichmentSource: current.enrichmentSource ?? acc.enrichmentSource,
+        if (uniquePapers.has(key)) {
+            const existing = uniquePapers.get(key)!;
+            const merged: ResearchPaper = { 
+                ...existing,
+                ...paper,
+                id: existing.id 
             };
-        }, { ...papers[0], id }); // Start with the first paper as the base
-        
-        mergedPapers.push(merged);
-    });
 
-    return mergedPapers;
-}
-
-async function calculatePaperScores(
-    papers: ResearchPaper[],
-    query: string,
-    hypotheticalAnswer: string,
-    model: ModelDefinition,
-    options: AdvancedSearchOptions
-): Promise<ResearchPaper[]> {
-    if (papers.length === 0) return [];
-
-    const semanticallyRankedPapers = await embeddingService.calculateSemanticScores(hypotheticalAnswer, papers);
-
-    let processedPapers = semanticallyRankedPapers;
-
-    // --- New Semantic Impact Score Calculation ---
-    const papersWithAbstracts = processedPapers.filter(p => p.abstract && p.abstract.trim().length > 50);
-
-    if (papersWithAbstracts.length > 1) {
-        const abstracts = papersWithAbstracts.map(p => p.abstract);
-        // FIX: Call batchEmbedText directly since it is not exported from embeddingService.
-        const allPaperEmbeddings = await batchEmbedText(abstracts);
-
-        const embeddingMap = new Map<string, number[]>();
-        papersWithAbstracts.forEach((paper, index) => {
-            embeddingMap.set(paper.id, allPaperEmbeddings[index]);
-        });
-
-        const centralityScores = new Map<string, number>();
-        papersWithAbstracts.forEach(paperA => {
-            const embeddingA = embeddingMap.get(paperA.id);
-            if (!embeddingA || embeddingA.length === 0) {
-                centralityScores.set(paperA.id, 0); return;
-            }
-            let totalSimilarity = 0;
-            let count = 0;
-            papersWithAbstracts.forEach(paperB => {
-                if (paperA.id === paperB.id) return;
-                const embeddingB = embeddingMap.get(paperB.id);
-                if (embeddingB && embeddingB.length > 0) {
-                    totalSimilarity += cosineSimilarity(embeddingA, embeddingB);
-                    count++;
-                }
-            });
-            const avgSimilarity = count > 0 ? totalSimilarity / count : 0;
-            centralityScores.set(paperA.id, ((avgSimilarity + 1) / 2) * 100); // Normalize to 0-100
-        });
-
-        const currentYear = new Date().getFullYear();
-        const papersWithCitationsPerYear = papersWithAbstracts.map(paper => {
-            const age = Math.max(1, currentYear - paper.year);
-            const citationsPerYear = (paper.citations || 0) / age;
-            return { id: paper.id, citationsPerYear };
-        });
-        const maxCitationsPerYear = Math.max(...papersWithCitationsPerYear.map(p => p.citationsPerYear), 1);
-
-        processedPapers = processedPapers.map(paper => {
-            const centrality = centralityScores.get(paper.id) || 0;
-            const cpyData = papersWithCitationsPerYear.find(p => p.id === paper.id);
-            const citationImpact = cpyData ? (cpyData.citationsPerYear / maxCitationsPerYear) * 100 : 0;
+            merged.citations = Math.max(existing.citations || 0, paper.citations || 0);
+            merged.pdfURL = existing.pdfURL || paper.pdfURL;
             
-            // New impactScore combines semantic centrality (how representative it is of the topic)
-            // with citation velocity (how impactful it has been over time).
-            const newImpactScore = (citationImpact * 0.6) + (centrality * 0.4);
-            return { ...paper, impactScore: newImpactScore };
-        });
-    } else {
-         // Fallback for single result or if no abstracts are available
-        const currentYear = new Date().getFullYear();
-        processedPapers = processedPapers.map(paper => {
-            const age = Math.max(1, currentYear - paper.year);
-            const citationsPerYear = (paper.citations || 0) / age;
-            const impactScore = citationsPerYear > 0 ? 50 : 0; // Can't normalize with one item, give it a medium score.
-            return { ...paper, impactScore };
-        });
+            const existingAbstractLen = existing.abstract ? existing.abstract.length : 0;
+            const paperAbstractLen = paper.abstract ? paper.abstract.length : 0;
+            
+            merged.abstract = (existingAbstractLen > paperAbstractLen) 
+                ? existing.abstract 
+                : paper.abstract;
+                
+            merged.highlights = [...(existing.highlights || []), ...(paper.highlights || [])]; 
+            
+            uniquePapers.set(key, merged);
+        } else {
+            uniquePapers.set(key, paper);
+        }
+    }
+    return Array.from(uniquePapers.values());
+};
+
+export const searchPapers = async (
+    query: string, 
+    options: AdvancedSearchOptions, 
+    page: number = 1, 
+    userSettings?: UserSettings,
+    callbacks?: SearchProgressCallbacks
+): Promise<{ papers: ResearchPaper[], hasMore: boolean }> => {
+    // 0. Direct DOI Lookup
+    if (options.doi) {
+        callbacks?.onStatusChange?.(`Resolving DOI: ${options.doi}...`);
+        const paper = await openalexService.searchOpenAlexByDoi(options.doi);
+        const res = { papers: paper ? [paper] : [], hasMore: false };
+        if (paper && callbacks?.onInitialPapers) {
+            callbacks.onInitialPapers([paper], false);
+        }
+        return res;
     }
 
-    // The design classification is now handled asynchronously on the client-side
-    // to improve perceived performance.
-    let papersWithScreening = processedPapers;
+    // 1. FAST PRIMARY RETRIEVAL: Query OpenAlex directly (<500ms)
+    // This immediately brings out the initial paper list so the user is never left waiting on a blank screen
+    callbacks?.onStatusChange?.('Querying OpenAlex index for initial literature...');
+    
+    const fastOpenAlexPromise = openalexService.searchOpenAlex(query, options, page)
+        .then(res => {
+            const initialClean = deduplicatePapers(res.papers);
+            if (initialClean.length > 0 && callbacks?.onInitialPapers) {
+                callbacks.onInitialPapers(initialClean, res.hasMore);
+                callbacks?.onStatusChange?.(`Initial ${initialClean.length} articles retrieved from OpenAlex. Ingesting federated repositories...`);
+            }
+            return { papers: initialClean, hasMore: res.hasMore };
+        })
+        .catch(err => {
+            console.warn("[FastRetrieval] Direct OpenAlex fetch error:", err);
+            return { papers: [] as ResearchPaper[], hasMore: false };
+        });
 
-    if (options.inclusionCriteria?.trim() || options.exclusionCriteria?.trim()) {
-        const screeningPromises = papersWithScreening.map(p => 
-            geminiService.evaluateScreeningFit(p, options.inclusionCriteria, options.exclusionCriteria, model)
+    // 2. PARALLEL FEDERATED DISCOVERY WAVE:
+    // Concurrently search ArXiv, Semantic Scholar, Crossref, PubMed, Europe PMC, DataCite, Zenodo, etc.
+    const federatedPromises: Promise<ResearchPaper[]>[] = [];
+
+    // Google Scholar (SerpApi)
+    if (userSettings?.isSerpApiEnabled && userSettings.serpApiKey) {
+        federatedPromises.push(
+            googleScholarService.searchGoogleScholar(query, options, page, userSettings.serpApiKey)
+                .catch(() => [])
         );
-        const screeningResults = await Promise.all(screeningPromises);
-        papersWithScreening = papersWithScreening.map((paper, index) => ({
-            ...paper,
-            screeningFitScore: screeningResults[index].score,
-            screeningRationale: screeningResults[index].rationale,
-        }));
-    }
-    
-    const papersWithCombinedScore = papersWithScreening.map(paper => {
-        const semanticScore = paper.semanticScore || 0;
-        const impactScore = paper.impactScore || 0;
-        const currentYear = new Date().getFullYear();
-        const recencyScore = Math.max(0, 100 - ((currentYear - paper.year) * 5));
-        const titleMatchScore = calculateTitleMatchScore(query, paper.title);
-
-        const combinedScore = (semanticScore * 0.60) + (impactScore * 0.20) + (titleMatchScore * 0.15) + (recencyScore * 0.05);
-        
-        return { ...paper, combinedScore };
-    });
-
-    return papersWithCombinedScore.sort((a, b) => (b.combinedScore || 0) - (a.combinedScore || 0));
-}
-
-// --- API SERVICE IMPLEMENTATION ---
-
-export const search = async (
-    query: string,
-    options: AdvancedSearchOptions,
-    summaryLength: SummaryLength,
-    summaryStyle: SummaryStyle,
-    model: ModelDefinition,
-    sources: SearchSourceInfo[],
-    page: number = 1
-): Promise<{ papers: ResearchPaper[], summary: string, hasMore: boolean }> => {
-    
-    // Neuro-Symbolic Step: Parse the natural language query into structured filters.
-    const parsedFilters = await geminiService.parseQueryToStructuredFilters(query, model);
-
-    // Merge explicitly set options from the UI with the parsed filters. UI options take precedence.
-    const finalOptions: AdvancedSearchOptions = {
-        ...parsedFilters,
-        ...options,
-        startYear: options.startYear || parsedFilters.startYear?.toString() || '',
-        endYear: options.endYear || parsedFilters.endYear?.toString() || '',
-        authors: options.authors || parsedFilters.authors || '',
-        excludeKeywords: options.excludeKeywords || parsedFilters.excludeKeywords || '',
-        journal: options.journal || parsedFilters.journal || '',
-        minCitations: options.minCitations || parsedFilters.minCitations?.toString() || '',
-        isOpenAccess: options.isOpenAccess || parsedFilters.isOpenAccess || false,
-    };
-
-    const retrievalQuery = parsedFilters.core_search_query;
-    const hypotheticalAnswer = await geminiService.generateHypotheticalAnswer(retrievalQuery, model);
-
-    const searchPromises: Promise<ResearchPaper[]>[] = [];
-    let openAlexHasMore = false; 
-
-    // Add API-based searches
-    if (sources.some(s => s.id === 'openalex')) {
-        const promise = openalexService.searchOpenAlex(retrievalQuery, finalOptions, page).then(result => {
-            openAlexHasMore = result.hasMore;
-            return result.papers;
-        });
-        searchPromises.push(promise);
-    }
-    if (sources.some(s => s.id === 'arxiv')) {
-        const promise = arxivService.searchArxiv(retrievalQuery, page).then(result => result.papers);
-        searchPromises.push(promise);
     }
 
-    // Add AI Grounded Search to run in parallel on the first page load.
     if (page === 1) {
-        console.log("Running parallel AI Grounded Search.");
-        const groundedSearchPromise = geminiService.findPapersWithGoogleSearch(query, model).then(foundPapers => 
-            foundPapers.map(p => {
-                const paperData: Omit<ResearchPaper, 'id'> = {
-                    title: p.title,
-                    authors: p.authors,
-                    year: p.year,
-                    abstract: p.abstract,
-                    sourceURL: p.sourceURL,
-                    pdfURL: undefined,
-                    citations: undefined, 
-                };
-                return { ...paperData, id: createPaperId(paperData) };
-            })
-        ).catch(err => {
-            console.warn("AI Grounded search failed, but other sources may succeed.", err);
-            return []; // Return empty array on failure so other sources aren't blocked
-        });
-        searchPromises.push(groundedSearchPromise);
+        // High-precision citation graph
+        federatedPromises.push(
+            semanticScholarService.searchSemanticScholar(query, options)
+                .then(res => res.papers)
+                .catch(() => [])
+        );
+
+        // STEM Pre-Prints
+        federatedPromises.push(
+            arxivService.searchArxiv(query)
+                .then(res => res.papers)
+                .catch(() => [])
+        );
+
+        // Hugging Face AI Papers
+        federatedPromises.push(
+            huggingfacePapersService.searchHuggingFacePapers(query, options, page)
+                .then(res => res.papers)
+                .catch(() => [])
+        );
+
+        // DataCite PID Graph (Datasets & Software)
+        federatedPromises.push(
+            dataciteService.searchDataCiteAsResearchPapers(query, 6)
+                .then(res => res.papers)
+                .catch(() => [])
+        );
+
+        // OpenAIRE EU Research Graph
+        federatedPromises.push(
+            openaireService.searchOpenAirePublications(query, 6)
+                .then(res => res.papers)
+                .catch(() => [])
+        );
+
+        // Europe PMC / PubMed Central (Biomedical)
+        federatedPromises.push(
+            europePmcService.searchEuropePMC(query, 6, 1)
+                .then(res => res.papers)
+                .catch(() => [])
+        );
+
+        // DBLP Computer Science Bibliography
+        federatedPromises.push(
+            dblpService.searchDBLP(query, 6)
+                .then(res => res.papers)
+                .catch(() => [])
+        );
+
+        // Crossref Global DOI Authority
+        federatedPromises.push(
+            crossrefService.searchCrossref(query, 6)
+                .then(res => res.papers)
+                .catch(() => [])
+        );
+
+        // Doctoral Dissertations & PhD Prior Art
+        federatedPromises.push(
+            dissertationService.searchDissertations(query, 6)
+                .then(res => res.papers)
+                .catch(() => [])
+        );
+
+        // PubMed / NCBI Clinical MEDLINE
+        federatedPromises.push(
+            pubmedService.searchPubMed(query, 6)
+                .then(res => res.papers)
+                .catch(() => [])
+        );
+
+        // bioRxiv & medRxiv Life Sciences Preprints
+        federatedPromises.push(
+            biorxivService.searchBioRxiv(query, 6)
+                .then(res => res.papers)
+                .catch(() => [])
+        );
+
+        // CERN Zenodo Datasets & Code
+        federatedPromises.push(
+            zenodoService.searchZenodo(query, 6)
+                .then(res => res.papers)
+                .catch(() => [])
+        );
+
+        // Directory of Open Access Journals (DOAJ)
+        federatedPromises.push(
+            doajService.searchDOAJ(query, 6)
+                .then(res => res.papers)
+                .catch(() => [])
+        );
+
+        // ERIC Education Sciences
+        federatedPromises.push(
+            ericService.searchERIC(query, 6)
+                .then(res => res.papers)
+                .catch(() => [])
+        );
+
+        // CORE Institutional Repositories
+        federatedPromises.push(
+            coreService.searchCORE(query, 6)
+                .then(res => res.papers)
+                .catch(() => [])
+        );
     }
 
-    const allResults = await Promise.all(searchPromises);
-    const allPapers = allResults.flat();
-    
-    if (allPapers.length === 0) {
-        throw new Error("No academic papers were found for this query from any source. Please try a different query.");
-    }
-    
-    // For pagination, we'll rely on the structured source (OpenAlex)
-    const hasMore = openAlexHasMore;
-    
-    let papers = combineAndDeduplicateResults(allPapers);
-    
-    // --- Apply Manticore-inspired pre-filters before scoring ---
-    if (finalOptions.titleKeywords) {
-        const keywords = finalOptions.titleKeywords.split(',').map(k => k.trim().toLowerCase()).filter(Boolean);
-        if (keywords.length > 0) {
-            papers = papers.filter(p => keywords.every(kw => p.title.toLowerCase().includes(kw)));
+    // 3. Await federated sources
+    const federatedSettled = await Promise.allSettled(federatedPromises);
+    const federatedPapers: ResearchPaper[] = [];
+    for (const result of federatedSettled) {
+        if (result.status === 'fulfilled' && Array.isArray(result.value)) {
+            federatedPapers.push(...result.value);
         }
     }
-    if (finalOptions.abstractKeywords) {
-        const keywords = finalOptions.abstractKeywords.split(',').map(k => k.trim().toLowerCase()).filter(Boolean);
-        if (keywords.length > 0) {
-            papers = papers.filter(p => keywords.every(kw => p.abstract.toLowerCase().includes(kw)));
+
+    // 4. Combine with OpenAlex results
+    const openAlexResult = await fastOpenAlexPromise;
+    const initialPapers = openAlexResult.papers;
+
+    const allCombined = [...initialPapers, ...federatedPapers];
+    const uniquePapers = deduplicatePapers(allCombined)
+        .sort((a, b) => (b.citations || 0) - (a.citations || 0));
+
+    // If initial papers were empty (e.g. OpenAlex was slow or returned 0), send all papers now
+    if (initialPapers.length === 0 && uniquePapers.length > 0 && callbacks?.onInitialPapers) {
+        callbacks.onInitialPapers(uniquePapers, openAlexResult.hasMore);
+    } else {
+        const newCount = uniquePapers.length - initialPapers.length;
+        if (newCount > 0 && callbacks?.onFederatedBatch) {
+            callbacks.onFederatedBatch(uniquePapers, newCount);
         }
     }
 
-    papers = await calculatePaperScores(papers, retrievalQuery, hypotheticalAnswer, model, finalOptions);
-
-    const validationPromises = papers.map(async (p) => {
-        const { validation, updatedPaperData } = await validationService.validatePaper(p);
-        return {
-            ...p,
-            ...updatedPaperData,
-            validation,
-        };
-    });
-
-    let validatedPapers = await Promise.all(validationPromises);
-    
-    // Apply Open Access filter *after* validation, which discovers OA status
-    if (finalOptions.isOpenAccess) {
-        validatedPapers = validatedPapers.filter(p => p.validation?.checks.open_access);
+    // 5. Unpaywall Enrichment (Best effort for OA links in background)
+    let enrichedPapers = uniquePapers;
+    if (page === 1 && uniquePapers.length > 0) {
+        try {
+            enrichedPapers = await unpaywallService.enrichWithUnpaywall(uniquePapers);
+        } catch (e) {
+            console.error("Unpaywall enrichment failed", e);
+        }
     }
 
-    const summary = page === 1 && validatedPapers.length > 0
-        ? await geminiService.generateSummaryForPapers(validatedPapers.slice(0, 5), summaryLength, summaryStyle, model)
-        : "";
-
-    return { papers: validatedPapers, summary, hasMore };
+    const hasMore = openAlexResult.hasMore || enrichedPapers.length >= 15;
+    return { papers: enrichedPapers, hasMore };
 };
 
-export const searchByDoi = async (doi: string, model: ModelDefinition): Promise<ResearchPaper | null> => {
-    // 1. Fetch primary metadata from a reliable source like OpenAlex.
-    const paper = await openalexService.searchOpenAlexByDoi(doi);
-
-    if (!paper) {
-        return null;
-    }
-
-    // 2. We have a paper object. Now, enrich and validate it.
-    const { validation, updatedPaperData } = await validationService.validatePaper(paper);
-
-    const validatedPaper: ResearchPaper = {
-        ...paper,
-        ...updatedPaperData,
-        validation,
-    };
-
-    // 3. Semantic scores are not applicable for a direct DOI lookup.
-    // Set a high relevance score to ensure it appears correctly.
-    validatedPaper.combinedScore = 100;
-    validatedPaper.semanticScore = 100;
-    
-    validatedPaper.impactScore = undefined;
-
-    return validatedPaper;
+export const generateSummary = async (papers: ResearchPaper[], length: SummaryLength, style: SummaryStyle) => {
+  return geminiService.generateSummaryForPapers(papers, length, style);
 };
 
-
-export const generateSearchSuggestions = async (query: string, model: ModelDefinition): Promise<string[]> => {
-    return await geminiService.generateSearchSuggestions(query, model);
+export const analyzePapers = async (papers: ResearchPaper[], domain?: string) => {
+  return analysisService.analyzePapers(papers, domain);
 };
 
-export const analyzeGaps = async (papers: ResearchPaper[], model: ModelDefinition): Promise<string> => {
-    return await geminiService.analyzeResearchGaps(papers, model);
+export const generateLaymanSummary = async (paper: ResearchPaper) => {
+  return geminiService.generateLaymanSummary(paper);
 };
 
-export const analyzeSinglePaper = async (paper: ResearchPaper, model: ModelDefinition): Promise<PaperAnalysis> => {
-    return await geminiService.analyzeSinglePaper(paper, model);
+export const calculatePaperScores = async (papers: ResearchPaper[], query: string) => {
+  return embeddingService.calculatePaperScores(papers, query);
 };
 
-export const extractKeyConcepts = async (abstract: string, model: ModelDefinition): Promise<string[]> => {
-    return await geminiService.extractKeyConcepts(abstract, model);
+export const precomputeQueryEmbedding = async (query: string) => {
+    return embeddingService.precomputeQueryEmbedding(query);
 };
 
-export const extractKnowledgeGraph = async (abstract: string, model: ModelDefinition): Promise<KnowledgeGraph> => {
-    return await geminiService.extractKnowledgeGraph(abstract, model);
+export const computeScores = async (papers: ResearchPaper[], queryEmbedding: number[], queryFallback?: string) => {
+    return embeddingService.computeScores(papers, queryEmbedding, queryFallback);
 };
 
-export const synthesizePapers = async (papers: ResearchPaper[], model: ModelDefinition): Promise<SynthesisResult> => {
-    return await geminiService.synthesizePapers(papers, model);
-};
-
-export const findOpenAccessPdf = async (doi: string): Promise<string | null> => {
-    return await unpaywallService.findOpenAccessPdf(doi);
-};
-
-export const fetchMetadataByDOI = async (doi: string): Promise<ResearchPaper | null> => {
-    return await openalexService.searchOpenAlexByDoi(doi);
-};
-
-export const findDoiForPaper = async (paper: ResearchPaper): Promise<string | null> => {
-    return await crossrefService.findDoiForPaper(paper);
-};
-
-export const rerankForScreening = async (
-    included: ResearchPaper[],
-    excluded: ResearchPaper[],
-    unscreened: ResearchPaper[],
-    model: ModelDefinition
-): Promise<{ paperId: string, score: number, rationale: string }[]> => {
-    if (unscreened.length === 0) return [];
-    
-    const rerankingPromises = unscreened.map(async (paper) => {
-        const result = await geminiService.rerankByScreeningExample(included, excluded, paper, model);
-        return {
-            paperId: paper.id,
-            score: result.score,
-            rationale: result.rationale,
-        };
-    });
-
-    return await Promise.all(rerankingPromises);
-};
-
-export const generateSuggestions = async (paper: ResearchPaper, model: ModelDefinition): Promise<string[]> => {
-    return await geminiService.generatePaperBasedSuggestions(paper, model);
+export const fetchMetadataByDOI = async (doi: string): Promise<Metadata> => {
+    return metadataService.fetchMetadataByDOI(doi);
 };
 
 export const findConnectedPapers = async (paper: ResearchPaper, model: ModelDefinition): Promise<ConnectedPaper[]> => {
+    if (paper.doi) {
+        const graphData = await semanticScholarService.getPaperGraphData(paper.doi);
+        if (graphData && graphData.connections) {
+            return graphData.connections;
+        }
+    }
+    return [];
+};
+
+export const handlePdfUpload = async (base64: string): Promise<ResearchPaper> => {
+    return {
+        id: `uploaded_${Date.now()}`,
+        title: "Uploaded PDF Document",
+        authors: "Unknown Author",
+        year: new Date().getFullYear(),
+        abstract: "Content extracted from uploaded PDF.",
+        sourceURL: "",
+        citations: 0
+    };
+};
+
+export const draftLiteratureReview = async (papers: ResearchPaper[], topic: string): Promise<LiteratureReviewDraft> => {
+    const report = await deepResearchService.synthesizeReport(topic, papers, { id: 'gemini-3-pro-preview', name: 'Gemini 3 Pro' });
+    return {
+        title: report.title,
+        sections: report.sections
+    };
+};
+
+export const generateInnovationInsights = async (papers: ResearchPaper[], model: ModelDefinition): Promise<InnovationResult> => {
+    return geminiService.generateInnovationInsights(papers, model);
+};
+
+export const synthesizeWorkspace = async (papers: ResearchPaper[], model: ModelDefinition): Promise<SynthesisResult> => {
+    return geminiService.synthesizeWorkspace(papers, model);
+};
+
+export const analyzeGaps = async (papers: ResearchPaper[], model: ModelDefinition): Promise<string> => {
+    return geminiService.analyzeGaps(papers, model);
+};
+
+export const createWorkspaceChatSession = (papers: ResearchPaper[], modelId: string, history: {role: string, parts: {text: string}[]}[] = []) => {
+    return geminiService.createWorkspaceChatSession(papers, modelId, history);
+};
+
+export const generateProjectReport = async (metrics: {
+    datasetSize: number;
+    testAccuracy: number;
+    studySessions: number;
+    totalEvents: number;
+}) => {
+    return researchService.generateProjectReport(metrics);
+};
+
+// ============================================================================
+// 6. OPEN SCHOLARLY INFRASTRUCTURE & REGISTRY INTEGRATIONS
+// ============================================================================
+
+/**
+ * DataCite GraphQL PID Graph Integration
+ * Enables exploring linked datasets, software, preprints, samples, and creator ORCIDs
+ */
+export const queryDataCiteGraphQL = async (
+    query: string, 
+    limit: number = 10, 
+    resourceType?: string
+): Promise<{ works: DataCiteWork[]; totalCount: number }> => {
+    return dataciteService.queryDataCiteGraphQL(query, limit, resourceType);
+};
+
+export const executeDataCiteGraphQL = async (
+    query?: string, 
+    variables?: Record<string, any>
+): Promise<{ data: any; errors?: any }> => {
+    return dataciteService.executeDataCiteGraphQL(query, variables);
+};
+
+export const searchDataCiteAsResearchPapers = async (
+    query: string, 
+    limit: number = 10
+): Promise<{ papers: ResearchPaper[]; hasMore: boolean }> => {
+    return dataciteService.searchDataCiteAsResearchPapers(query, limit);
+};
+
+export const DEFAULT_DATACITE_GRAPHQL_QUERY = dataciteService.DEFAULT_DATACITE_GRAPHQL_QUERY;
+
+/**
+ * OpenCitations SPARQL & COCI Integration
+ * Enables querying CC0 open citation triplestores and citing/referenced DOI links
+ */
+export const executeOpenCitationsSparql = async (
+    sparqlQuery: string
+): Promise<{ bindings: any[]; headers: string[]; error?: string }> => {
+    return openCitationsService.executeOpenCitationsSparql(sparqlQuery);
+};
+
+export const buildSparqlForDoiCitations = (doi: string, limit: number = 25): string => {
+    return openCitationsService.buildSparqlForDoiCitations(doi, limit);
+};
+
+export const fetchCitationsByDoi = async (doi: string): Promise<OpenCitationsLink[]> => {
+    return openCitationsService.fetchCitationsByDoi(doi);
+};
+
+export const fetchReferencesByDoi = async (doi: string): Promise<OpenCitationsLink[]> => {
+    return openCitationsService.fetchReferencesByDoi(doi);
+};
+
+export const DEFAULT_OPENCITATIONS_SPARQL_QUERY = openCitationsService.DEFAULT_OPENCITATIONS_SPARQL_QUERY;
+
+/**
+ * OpenAIRE Grant & Project Lookup Integration
+ * Enables querying European Commission (Horizon Europe, ERC), NIH, and global funder awards
+ */
+export const searchOpenAireProjects = async (
+    query: string, 
+    limit: number = 10
+): Promise<{ projects: OpenAireProject[]; totalCount: number }> => {
+    return openaireService.searchOpenAireProjects(query, limit);
+};
+
+export const searchOpenAirePublications = async (
+    query: string, 
+    limit: number = 10
+): Promise<{ papers: ResearchPaper[]; totalCount: number }> => {
+    return openaireService.searchOpenAirePublications(query, limit);
+};
+
+/**
+ * Unified Multi-Registry Paper PID Graph & Funder Lookup
+ * Gathers Crossref/DataCite metadata, OpenCitations citation graph, and OpenAIRE grant provenance for any paper DOI
+ */
+export const lookupPaperPIDGraph = async (doi: string): Promise<{
+    dataCiteWorks: DataCiteWork[];
+    citingLinks: OpenCitationsLink[];
+    referencingLinks: OpenCitationsLink[];
+    grantProjects: OpenAireProject[];
+}> => {
+    if (!doi) {
+        return { dataCiteWorks: [], citingLinks: [], referencingLinks: [], grantProjects: [] };
+    }
+
+    const cleanDoi = doi.toLowerCase().replace(/^(https?:\/\/doi\.org\/|doi:)/i, '').trim();
+
+    const [dataCiteRes, citingRes, refRes, grantsRes] = await Promise.allSettled([
+        dataciteService.queryDataCiteGraphQL(cleanDoi, 5),
+        openCitationsService.fetchCitationsByDoi(cleanDoi),
+        openCitationsService.fetchReferencesByDoi(cleanDoi),
+        openaireService.searchOpenAireProjects(cleanDoi, 5)
+    ]);
+
+    return {
+        dataCiteWorks: dataCiteRes.status === 'fulfilled' ? dataCiteRes.value.works : [],
+        citingLinks: citingRes.status === 'fulfilled' ? citingRes.value : [],
+        referencingLinks: refRes.status === 'fulfilled' ? refRes.value : [],
+        grantProjects: grantsRes.status === 'fulfilled' ? grantsRes.value.projects : []
+    };
+};
+
+/**
+ * Comprehensive Multi-Registry Paper Enrichment
+ * Augments a paper with real-time registry citation counts, dataset ties, and Open Access grant badges
+ */
+export const enrichPaperWithOpenRegistries = async (paper: ResearchPaper): Promise<{
+    paper: ResearchPaper;
+    openCitationsCount: number;
+    citingLinks: OpenCitationsLink[];
+    referencedLinks: OpenCitationsLink[];
+    dataCiteWork?: DataCiteWork | null;
+    grantProjects: OpenAireProject[];
+}> => {
     if (!paper.doi) {
-        // Fallback to the original Gemini-based method if there's no DOI
-        console.log("No DOI for connected papers, falling back to AI search.");
-        return await geminiService.findConnectedPapers(paper, model);
+        return {
+            paper,
+            openCitationsCount: 0,
+            citingLinks: [],
+            referencedLinks: [],
+            dataCiteWork: null,
+            grantProjects: []
+        };
     }
 
-    try {
-        const { references, citations } = await semanticScholarService.getCitationGraph(paper.doi);
-        
-        // Combine them into a single list for the modal, the `connection` field will distinguish them
-        return [...citations, ...references];
+    const pidGraph = await lookupPaperPIDGraph(paper.doi);
+    const citingLinks = pidGraph.citingLinks;
+    const referencedLinks = pidGraph.referencingLinks;
+    const grantProjects = pidGraph.grantProjects;
+    const dataCiteWork = pidGraph.dataCiteWorks.length > 0 ? pidGraph.dataCiteWorks[0] : null;
 
-    } catch (error) {
-        console.error("Failed to get citation graph, falling back to AI search.", error);
-        // Fallback to Gemini if the new service fails
-        return await geminiService.findConnectedPapers(paper, model);
-    }
+    const enrichedPaper: ResearchPaper = {
+        ...paper,
+        citations: Math.max(paper.citations || 0, citingLinks.length),
+        isOpenAccess: paper.isOpenAccess || grantProjects.some(g => g.openAccessMandatePublications),
+        highlights: [
+            ...(paper.highlights || []),
+            ...(grantProjects.length > 0 ? [{
+                category: 'Grant Lineage',
+                text: `Supported by ${grantProjects[0].funder} (${grantProjects[0].code}) under ${grantProjects[0].fundingStream || 'Open Science Framework'}`
+            }] : []),
+            ...(dataCiteWork ? [{
+                category: 'PID Graph Artifact',
+                text: `DataCite indexed ${dataCiteWork.resourceTypeGeneral || 'Resource'} (DOI: ${dataCiteWork.doi})`
+            }] : [])
+        ]
+    };
+
+    return {
+        paper: enrichedPaper,
+        openCitationsCount: citingLinks.length,
+        citingLinks,
+        referencedLinks,
+        dataCiteWork,
+        grantProjects
+    };
 };
 
-export const classifyStudyDesign = async (paper: ResearchPaper, model: ModelDefinition): Promise<string> => {
-    return await geminiService.classifyStudyDesign(paper, model);
-};
+// --- New Scholarly Registries & Databases Exports ---
+export const searchCrossref = crossrefService.searchCrossref;
+export const searchZenodo = zenodoService.searchZenodo;
+export const searchPubMed = pubmedService.searchPubMed;
+export const searchBioRxiv = biorxivService.searchBioRxiv;
+export const searchDissertations = dissertationService.searchDissertations;
+export const searchDOAJ = doajService.searchDOAJ;
+export const searchERIC = ericService.searchERIC;
+export const searchCORE = coreService.searchCORE;

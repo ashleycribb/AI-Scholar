@@ -1,4 +1,5 @@
-import { VerificationResult, VerificationBreakdown, Verdict, Metadata, CitationStats, EvidenceSpan } from '../types';
+
+import { VerificationResult, ResearchPaper, EvidenceSpan } from '../types';
 import * as metadataService from './metadataService';
 import * as retrievalService from './retrievalService';
 import * as entailmentService from './entailmentService';
@@ -8,19 +9,24 @@ import { MIN_EVIDENCE_SPANS_FOR_VERIFIED, MIN_SUPPORT_EVIDENCE_CONFIDENCE } from
 
 /**
  * This function orchestrates the entire VACS verification process on the client-side.
+ * It prioritizes using data from the `paper` object (local environment) to reduce latency.
  */
 export async function verifyPaper(
-    doi: string, 
+    paper: ResearchPaper, 
     claimText: string
 ): Promise<VerificationResult> {
   
   try {
-    // 1. Fetch metadata
-    const meta = await metadataService.fetchMetadataByDOI(doi);
+    // 1. Construct metadata from the local paper object (Fast)
+    // If specific fields like citations aren't in the local object, this might be less accurate than a fresh fetch,
+    // but it is significantly faster for the user experience.
+    const meta = metadataService.createMetadataFromPaper(paper);
+    
     const claim = claimText.trim() || meta.title || 'Main claim of the paper';
     
     // 2. Find supporting passages
-    const candidatePassages = await retrievalService.findSupportingPassages(doi, claim);
+    // Pass the local abstract to avoid an API call
+    const candidatePassages = await retrievalService.findSupportingPassages(paper.doi, claim, paper.abstract);
     
     // 3. Check entailment for each passage
     const evidenceResults: EvidenceSpan[] = [];
@@ -42,7 +48,12 @@ export async function verifyPaper(
     }
 
     // 4. Analyze citation context
-    const citationStats = await citationService.analyzeCitations(doi);
+    // This still requires an external call if we want accurate citation sentiment,
+    // as the local object usually only has the count.
+    // We only run this if we have a DOI.
+    const citationStats = paper.doi 
+        ? await citationService.analyzeCitations(paper.doi) 
+        : { total: paper.citations || 0, supportCount: 0, contradictCount: 0, supportRatio: 0.5 };
     
     // 5. Compute the final VACS score and verdict
     const result: VerificationResult = scoringService.computeVACS(meta, citationStats, evidenceResults);

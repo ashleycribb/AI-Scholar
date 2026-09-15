@@ -1,5 +1,4 @@
 
-
 import React, { useState, useEffect } from 'react';
 import type { ResearchPaper, VerificationResult } from '../types';
 import { ErrorMessage } from './ErrorMessage';
@@ -62,17 +61,20 @@ export const VerificationModal: React.FC<VerificationModalProps> = ({ isOpen, on
 
     const handleVerify = async (e: React.FormEvent) => {
         e.preventDefault();
-        if (!paper || !paper.doi) return;
+        if (!paper) return;
 
         setIsLoading(true);
         setError(null);
         setResult(null);
-        setLoadingMessage('Verifying claim on server...');
+        setLoadingMessage('Verifying claim using local environment data...');
 
         try {
-            const verificationResult = await verificationService.verifyPaper(paper.doi, claimText);
+            // Optimized: Pass the full paper object to leverage local data (abstract, metadata)
+            const verificationResult = await verificationService.verifyPaper(paper, claimText);
             setResult(verificationResult);
-            onVerificationComplete(paper.doi, verificationResult);
+            if (paper.doi) {
+                onVerificationComplete(paper.doi, verificationResult);
+            }
         } catch (err) {
             setError(err instanceof Error ? err.message : 'An unknown error occurred.');
         } finally {

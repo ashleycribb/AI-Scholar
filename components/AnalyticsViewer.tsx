@@ -1,45 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { analyticsService } from '../services/analyticsService';
-import { firestoreService } from '../services/firestoreService';
 import { ExportIcon } from './icons/ExportIcon';
-
-const FirestoreStatusIndicator: React.FC = () => {
-    const [statusInfo, setStatusInfo] = useState(firestoreService.getStatus());
-
-    useEffect(() => {
-        // Poll for status changes, as there's no subscription model in the simple service
-        const interval = setInterval(() => {
-            const newStatus = firestoreService.getStatus();
-            if (newStatus.status !== statusInfo.status) {
-                setStatusInfo(newStatus);
-            }
-        }, 3000);
-        return () => clearInterval(interval);
-    }, [statusInfo.status]);
-
-    let color = 'text-muted-foreground';
-    let dotColor = 'bg-slate-400';
-    if (statusInfo.status === 'connected') {
-        color = 'text-green-600';
-        dotColor = 'bg-green-500';
-    } else if (statusInfo.status === 'error') {
-        color = 'text-red-600';
-        dotColor = 'bg-red-500';
-    }
-    
-    return (
-        <div className="flex items-center gap-2 text-xs font-medium" title={statusInfo.message}>
-            <span className="relative flex h-2.5 w-2.5">
-                {statusInfo.status === 'connected' && <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>}
-                <span className={`relative inline-flex rounded-full h-2.5 w-2.5 ${dotColor}`}></span>
-            </span>
-            <span className={color}>
-                {statusInfo.status.charAt(0).toUpperCase() + statusInfo.status.slice(1)}
-            </span>
-        </div>
-    );
-};
-
 
 export const AnalyticsViewer: React.FC = () => {
     const [events, setEvents] = useState<any[]>([]);
@@ -67,10 +28,9 @@ export const AnalyticsViewer: React.FC = () => {
             <div className="flex justify-between items-center">
                 <div>
                     <h3 className="text-lg font-bold text-foreground">Event Log</h3>
-                    <p className="text-sm text-muted-foreground">Events are automatically synced to Firestore. You can export the current session as a local CSV file.</p>
+                    <p className="text-sm text-muted-foreground">Events are logged locally. You can export the current session as a local CSV file.</p>
                 </div>
                 <div className="flex items-center gap-4">
-                    <FirestoreStatusIndicator />
                     <button 
                         onClick={handleExport}
                         className="h-9 px-4 text-sm font-semibold rounded-md bg-secondary text-secondary-foreground hover:bg-accent flex items-center gap-2"

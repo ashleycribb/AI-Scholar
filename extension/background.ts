@@ -149,7 +149,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 });
 
 // Listen for messages from the web app (via the channel)
-channel.onmessage = (event) => {
+channel.onmessage = async (event) => {
     if (event.data.type === 'web_app_favorite_toggled') {
         const { paper, isFavorite } = event.data;
         const id = createPaperId(paper);
@@ -159,6 +159,15 @@ channel.onmessage = (event) => {
             db.addPaper(newPaper);
         } else {
             db.deletePaper(id);
+        }
+    }
+    
+    if (event.data.type === 'request_all_papers') {
+        try {
+            const papers = await db.getAllPapers();
+            channel.postMessage({ type: 'all_papers_response', papers });
+        } catch (error) {
+            console.error('Failed to get all papers:', error);
         }
     }
 };

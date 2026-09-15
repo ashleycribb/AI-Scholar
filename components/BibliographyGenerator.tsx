@@ -4,8 +4,8 @@ import type { ResearchPaper, CitationStyle, ModelDefinition } from '../types';
 import { ErrorMessage } from './ErrorMessage';
 import { CopyIcon } from './icons/CopyIcon';
 import * as citationService from '../services/citationService';
-import { ZoteroIcon } from './icons/ZoteroIcon';
-import { SafeHTML } from './SafeHTML';
+import { Library } from 'lucide-react';
+import { CustomDropdown } from './CustomDropdown';
 
 interface BibliographyGeneratorProps {
   papers: ResearchPaper[];
@@ -73,7 +73,7 @@ export const BibliographyGenerator: React.FC<BibliographyGeneratorProps> = ({ pa
         document.body.removeChild(link);
         URL.revokeObjectURL(url);
     } catch (err) {
-        alert("Failed to generate file for Zotero. Please try again.");
+        alert("Failed to generate file for Scholar Bridge. Please try again.");
     } finally {
         setIsExporting(false);
     }
@@ -96,25 +96,23 @@ export const BibliographyGenerator: React.FC<BibliographyGeneratorProps> = ({ pa
         <p className="text-sm text-muted-foreground mb-4">A formatted reference list for all {papers.length} paper(s) in the current search results.</p>
         <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4 mb-6 p-4 bg-muted/50 rounded-lg border">
             <div className="flex-grow w-full">
-                <label htmlFor="citation-style" className="block text-sm font-medium text-foreground mb-1">Citation Style</label>
-                <select
-                    id="citation-style"
+                <label className="block text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1.5 ml-1">Citation Style</label>
+                <CustomDropdown
                     value={citationStyle}
-                    onChange={(e) => setCitationStyle(e.target.value as CitationStyle)}
-                    className="w-full h-10 pl-3 pr-10 py-2 text-base text-foreground border-input focus:outline-none focus:ring-2 focus:ring-ring sm:text-sm rounded-md bg-background"
-                    disabled={isLoading}
-                >
-                    {citationStyles.map(style => <option key={style.id} value={style.id}>{style.name}</option>)}
-                </select>
+                    options={citationStyles.map(s => ({ id: s.id, name: s.name }))}
+                    onChange={(val) => setCitationStyle(val as CitationStyle)}
+                    formatLabel={(n) => n}
+                    triggerClassName="w-full h-10 px-4 bg-background border border-border rounded-md justify-between"
+                />
             </div>
             <div className="w-full sm:w-auto self-end flex items-center gap-2">
                  <button
                     onClick={handleExportRIS}
                     disabled={isExporting || papers.length === 0}
-                    title="Export as .ris for Zotero, Mendeley, etc."
+                    title="Export as .ris for Scholar Bridge, Mendeley, etc."
                     className="w-full sm:w-auto h-10 px-5 bg-secondary text-secondary-foreground font-semibold rounded-md hover:bg-accent focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-ring disabled:opacity-50 transition-colors duration-200 flex items-center justify-center gap-2"
                 >
-                    <ZoteroIcon className="w-4 h-4" />
+                    <Library className="w-4 h-4" />
                     <span>{isExporting ? 'Exporting...' : 'Export .ris'}</span>
                 </button>
             </div>
@@ -138,7 +136,7 @@ export const BibliographyGenerator: React.FC<BibliographyGeneratorProps> = ({ pa
                 <div className="p-4 bg-muted/50 border border-border rounded-md text-sm text-foreground leading-relaxed max-h-96 overflow-y-auto">
                     <ol className="space-y-3">
                         {citations.map((citation, index) => (
-                            <SafeHTML key={index} as="li" className="pl-5 -indent-5" html={citation} />
+                            <li key={index} className="pl-5 -indent-5" dangerouslySetInnerHTML={{ __html: citation }} />
                         ))}
                     </ol>
                 </div>

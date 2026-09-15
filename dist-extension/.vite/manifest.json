@@ -1,0 +1,42 @@
+{
+  "../../../@crx/manifest": {
+    "file": "assets/crx-manifest.js-BjzoIvaI.js",
+    "name": "crx-manifest.js",
+    "src": "../../../@crx/manifest",
+    "isEntry": true
+  },
+  "__commonjsHelpers-CqkleIqs.js": {
+    "file": "assets/_commonjsHelpers-CqkleIqs.js",
+    "name": "_commonjsHelpers"
+  },
+  "background.ts": {
+    "file": "assets/background.js-BUdPbLx0.js",
+    "name": "background.js",
+    "src": "background.ts",
+    "isEntry": true,
+    "imports": [
+      "__commonjsHelpers-CqkleIqs.js"
+    ]
+  },
+  "content-scripts/arxiv.ts": {
+    "file": "assets/arxiv.js-DJwGuBSc.js",
+    "name": "arxiv.js",
+    "src": "content-scripts/arxiv.ts",
+    "isEntry": true
+  },
+  "content-scripts/google-scholar.ts": {
+    "file": "assets/google-scholar.js-CzcTR9Xg.js",
+    "name": "google-scholar.js",
+    "src": "content-scripts/google-scholar.ts",
+    "isEntry": true
+  },
+  "popup.html": {
+    "file": "assets/popup.html-YPneE4gg.js",
+    "name": "popup.html",
+    "src": "popup.html",
+    "isEntry": true,
+    "imports": [
+      "__commonjsHelpers-CqkleIqs.js"
+    ]
+  }
+}

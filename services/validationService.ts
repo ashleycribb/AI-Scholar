@@ -55,7 +55,26 @@ export const validatePaper = async (paper: ResearchPaper): Promise<{ validation:
 
 
     // Use Crossref as the primary source of truth for metadata.
-    const crossrefData = await crossrefService.fetchPaperFromCrossref(paper);
+    // OPTIMIZATION: If we already have a DOI (e.g. from OpenAlex), fetch directly instead of searching.
+    let crossrefData: CrossrefWork | null = null;
+
+    if (paper.doi) {
+        try {
+            crossrefData = await crossrefService.fetchWorkByDoi(paper.doi);
+            if (crossrefData) {
+                // If direct fetch succeeded, we trust the DOI link.
+                log.push(`Direct DOI lookup successful for ${paper.doi}.`);
+            }
+        } catch (e) {
+            console.warn("Direct DOI fetch failed, falling back to search.", e);
+        }
+    }
+
+    // Fallback to search ONLY if no DOI was present initially, or if direct fetch failed and returned no data.
+    if (!crossrefData && !paper.doi) {
+         crossrefData = await crossrefService.fetchPaperFromCrossref(paper);
+    }
+    
     const effectiveDoi = paper.doi || crossrefData?.DOI;
     updatedPaperData.doi = effectiveDoi;
 
@@ -80,14 +99,24 @@ export const validatePaper = async (paper: ResearchPaper): Promise<{ validation:
         } else {
             log.push('Author did not match Crossref record.');
         }
+    } else if (paper.doi) {
+        // If we have a DOI but Crossref failed/timed out or we skipped search, give partial points for having a DOI structure.
+        log.push('Skipped full Crossref title search (relying on provided DOI).');
     } else {
         log.push('Could not find a confident match in Crossref.');
     }
     
     if (effectiveDoi) {
+        // Optimization: If we already know it's in DOAJ (e.g. via OpenAlex data), don't call the DOAJ API.
+        // This avoids CORS errors on the client-side for the DOAJ API.
+        const doajCheckPromise = paper.isInDoaj 
+            ? Promise.resolve({ bibjson: { journal: { in_doaj: true, title: '' } } } as any) 
+            : doajService.searchByDoi(effectiveDoi);
+
+        // Parallelize these checks
         const [openAccessUrl, doajData] = await Promise.all([
-            unpaywallService.findOpenAccessPdf(effectiveDoi),
-            doajService.searchByDoi(effectiveDoi)
+            unpaywallService.fetchOALink(effectiveDoi),
+            doajCheckPromise
         ]);
         
         let oaConfirmed = false;

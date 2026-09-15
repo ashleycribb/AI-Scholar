@@ -1,4 +1,6 @@
-import { Metadata } from "../types";
+
+import { Metadata, ResearchPaper } from "../types";
+import { searchOpenAlexByDoi } from "./openalexService";
 
 // Very simple temporal scoring: decays linearly over 20 years
 function calculateTemporalScore(year?: number): number {
@@ -21,26 +23,26 @@ function calculateCredibilityScore(citations?: number): number {
 
 export async function fetchMetadataByDOI(doi: string): Promise<Metadata> {
   try {
-    const response = await fetch(`https://api.openalex.org/works/https://doi.org/${encodeURIComponent(doi)}`);
-    if (!response.ok) throw new Error(`OpenAlex fetch failed with status ${response.status}`);
-    
-    const data = await response.json();
+    const paper = await searchOpenAlexByDoi(doi);
+    if (!paper) throw new Error(`Paper not found for DOI ${doi}`);
     
     const meta: Metadata = {
         doi: doi,
-        title: data.title,
-        authors: data.authorships?.map((a: any) => a.author.display_name),
-        journal: data.host_venue?.display_name,
-        year: data.publication_year,
-        citations: data.cited_by_count,
-        isRetracted: data.is_retracted,
-        isOpenAccess: data.open_access?.is_oa,
+        title: paper.title,
+        authors: paper.authorList ? paper.authorList.map(a => a.name) : paper.authors.split(', '),
+        journal: paper.journal,
+        year: paper.year,
+        citations: paper.citations,
+        isRetracted: paper.isRetracted,
+        isOpenAccess: paper.isOpenAccess,
         hasData: undefined, // Not easily available from OpenAlex
         hasCode: undefined, // Not easily available from OpenAlex
-        temporalScore: calculateTemporalScore(data.publication_year),
-        credibilityScore: calculateCredibilityScore(data.cited_by_count),
+        temporalScore: calculateTemporalScore(paper.year),
+        credibilityScore: calculateCredibilityScore(paper.citations),
         // Placeholder as this is hard to determine automatically
         reproducibilityScore: 0.5, 
+        abstract: paper.abstract,
+        pdfURL: paper.pdfURL,
     };
     return meta;
 
@@ -48,4 +50,28 @@ export async function fetchMetadataByDOI(doi: string): Promise<Metadata> {
       console.error(`Failed to fetch metadata for DOI ${doi}:`, error);
       throw new Error(`Could not retrieve metadata for DOI: ${doi}.`);
   }
+}
+
+/**
+ * Creates a Metadata object from an existing ResearchPaper, avoiding external API calls.
+ * This uses the "local researcher's environment" data to speed up verification.
+ */
+export function createMetadataFromPaper(paper: ResearchPaper): Metadata {
+    return {
+        doi: paper.doi,
+        title: paper.title,
+        authors: paper.authors.split(', '),
+        journal: paper.journal,
+        year: paper.year,
+        citations: paper.citations,
+        isRetracted: paper.isRetracted, // Uses local data if available
+        isOpenAccess: !!paper.pdfURL || paper.validation?.checks.open_access,
+        hasData: undefined,
+        hasCode: undefined,
+        temporalScore: calculateTemporalScore(paper.year),
+        credibilityScore: calculateCredibilityScore(paper.citations),
+        reproducibilityScore: 0.5,
+        abstract: paper.abstract,
+        pdfURL: paper.pdfURL,
+    };
 }

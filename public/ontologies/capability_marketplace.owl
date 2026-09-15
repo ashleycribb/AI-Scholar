@@ -1,0 +1,23 @@
+<?xml version="1.0"?>
+<rdf:RDF xmlns="http://scholarexplorer.app/ontologies/capability_marketplace.owl#"
+     xml:base="/ontologies/capability_marketplace.owl"
+     xmlns:owl="http://www.w3.org/2002/07/owl#"
+     xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+     xmlns:xml="http://www.w3.org/XML/1998/namespace"
+     xmlns:xsd="http://www.w3.org/2001/XMLSchema#"
+     xmlns:rdfs="http://www.w3.org/2000/01/rdf-schema#">
+    <owl:Ontology rdf:about="/ontologies/capability_marketplace.owl"/>
+
+    <owl:Class rdf:about="/ontologies/capability_marketplace.owl#CapabilityPack">
+        <rdfs:label>Capability Pack</rdfs:label>
+        <rdfs:comment>An ontological bundle defining a set of executable tools, xAPI profiles, and trust constraints.</rdfs:comment>
+    </owl:Class>
+
+    <owl:Class rdf:about="/ontologies/capability_marketplace.owl#OntologyDefinition">
+        <rdfs:label>Ontology Definition</rdfs:label>
+    </owl:Class>
+
+    <owl:Class rdf:about="/ontologies/capability_marketplace.owl#TrustCard">
+        <rdfs:label>Trust Card</rdfs:label>
+    </owl:Class>
+</rdf:RDF>

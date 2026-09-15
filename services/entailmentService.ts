@@ -1,10 +1,11 @@
-import { Verdict } from "../types";
+
+export type EntailmentVerdict = 'SUPPORT' | 'NEI';
 
 /**
  * Mocks an entailment/cross-encoder model to check if `passage` supports `claim`.
  * This client-side mock provides a reasonable approximation for development purposes.
  */
-export async function checkEntailment(claim: string, passage: string): Promise<{ verdict: Verdict; confidence: number }> {
+export async function checkEntailment(claim: string, passage: string): Promise<{ verdict: EntailmentVerdict; confidence: number }> {
     // In a real application, this would call a deployed model endpoint.
     // For this client-side version, we use a simple heuristic as a mock.
     console.warn("Using mock entailment service.");

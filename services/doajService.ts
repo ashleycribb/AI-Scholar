@@ -1,48 +1,83 @@
+import type { ResearchPaper } from '../types';
+import { getCache, setCache } from '../utils/cache';
 
-export interface DoajArticle {
-    bibjson: {
-        title: string;
-        identifier: { type: string; id: string }[];
-        journal: {
-            in_doaj: boolean;
-            title: string;
-        };
-    };
-}
+const CACHE_TTL_MS = 5 * 60 * 1000;
 
-/**
- * Searches the DOAJ API for an article by its DOI.
- * A successful find indicates the article is published in a vetted open access journal.
- * @param doi The Digital Object Identifier of the paper.
- * @returns A promise that resolves to the DOAJ article object if found, otherwise null.
- */
-export const searchByDoi = async (doi: string): Promise<DoajArticle | null> => {
-    // The DOAJ API is public and doesn't require an API key.
-    const url = `https://doaj.org/api/v4/articles/doi/${encodeURIComponent(doi)}`;
+export const searchDOAJ = async (
+  query: string,
+  limit: number = 10
+): Promise<{ papers: ResearchPaper[]; totalCount: number }> => {
+  const cacheKey = `doaj_${query}_${limit}`;
+  const cached = getCache<{ papers: ResearchPaper[]; totalCount: number }>(cacheKey);
+  if (cached) return cached;
 
-    try {
-        const response = await fetch(url);
-        if (!response.ok) {
-            if (response.status === 404) {
-                // This is expected if the DOI is not in DOAJ.
-                return null;
-            }
-            // For other errors, log it but don't fail the entire validation process.
-            console.warn(`DOAJ API returned status ${response.status} for DOI ${doi}`);
-            return null;
-        }
-        
-        const data = await response.json();
-        
-        // Check if the journal is actually in DOAJ, as a sanity check.
-        if (data?.bibjson?.journal?.in_doaj) {
-            return data as DoajArticle;
-        }
+  try {
+    const url = `/api/registries/doaj/search?query=${encodeURIComponent(query)}&pageSize=${limit}`;
+    const res = await fetch(url);
 
-        return null;
+    if (!res.ok) return { papers: [], totalCount: 0 };
+    const data = await res.json();
+    const results: any[] = data.results || [];
+    const totalCount: number = data.total || results.length;
 
-    } catch (error) {
-        console.error(`Error querying DOAJ for DOI ${doi}:`, error);
-        return null;
+    const papers: ResearchPaper[] = results.map(r => {
+      const bibjson = r.bibjson || {};
+      const title = bibjson.title || 'Untitled Open Access Article';
+      const authors = (bibjson.author || []).map((a: any) => a.name).filter(Boolean).join(', ') || 'DOAJ Open Researcher';
+      const year = parseInt(bibjson.year || `${new Date().getFullYear()}`, 10);
+      const abstract = bibjson.abstract || `Peer-reviewed article indexed in Directory of Open Access Journals (DOAJ).`;
+      
+      const identifierDoi = (bibjson.identifier || []).find((id: any) => id.type === 'doi');
+      const doi = identifierDoi ? identifierDoi.id : undefined;
+
+      const linkFulltext = (bibjson.link || []).find((l: any) => l.type === 'fulltext');
+      const sourceURL = linkFulltext ? linkFulltext.url : (doi ? `https://doi.org/${doi}` : undefined);
+
+      return {
+        id: `doaj:${r.id || doi || Math.random().toString(36).substring(2, 9)}`,
+        title,
+        authors,
+        year: isNaN(year) ? new Date().getFullYear() : year,
+        abstract,
+        doi,
+        sourceURL,
+        journal: bibjson.journal?.title,
+        isOpenAccess: true,
+        citations: 0,
+        enrichmentSource: 'DOAJ (Directory of Open Access Journals)'
+      };
+    });
+
+    const result = { papers, totalCount };
+    setCache(cacheKey, result, CACHE_TTL_MS);
+    return result;
+  } catch (err) {
+    console.warn('[DOAJ Service] Search error:', err);
+    return { papers: [], totalCount: 0 };
+  }
+};
+
+export const searchByDoi = async (doi: string): Promise<any | null> => {
+  const cleanDoi = doi.trim();
+  const cacheKey = `doaj_doi_${cleanDoi}`;
+  const cached = getCache<any>(cacheKey);
+  if (cached) return cached;
+
+  try {
+    const url = `/api/registries/doaj/search?query=doi%3A%22${encodeURIComponent(cleanDoi)}%22&pageSize=1`;
+    const res = await fetch(url).catch(() =>
+      fetch(`https://doaj.org/api/v3/search/articles/doi%3A%22${encodeURIComponent(cleanDoi)}%22?pageSize=1`)
+    );
+    if (!res.ok) return null;
+    const data = await res.json();
+    const result = data.results?.[0] || null;
+    if (result) {
+      setCache(cacheKey, result, CACHE_TTL_MS);
+      return result;
     }
+    return null;
+  } catch (err) {
+    console.warn('[DOAJ Service] searchByDoi error:', err);
+    return null;
+  }
 };

@@ -3,6 +3,7 @@
 
 import React, { useState } from 'react';
 import type { GoldStandardPaper } from '../types';
+import { CustomDropdown } from './CustomDropdown';
 
 interface AnnotationModalProps {
     paper: GoldStandardPaper;
@@ -88,17 +89,19 @@ export const AnnotationModal: React.FC<AnnotationModalProps> = ({ paper, onClose
                                 />
                             </div>
                             <div>
-                                <label htmlFor="label" className="font-semibold text-foreground block mb-1">Overall Label</label>
-                                <select
-                                    id="label"
+                                <label className="font-semibold text-foreground block mb-2">Overall Label</label>
+                                <CustomDropdown
                                     value={localPaper.label}
-                                    onChange={e => handleFieldChange('label', e.target.value as GoldStandardPaper['label'])}
-                                    className="w-full h-10 px-3 bg-background border border-input rounded-md focus:ring-2 focus:ring-ring"
-                                >
-                                    <option value="verified">Verified</option>
-                                    <option value="inconclusive">Inconclusive</option>
-                                    <option value="refuted">Refuted</option>
-                                </select>
+                                    options={[
+                                        { id: 'verified', name: 'Verified' },
+                                        { id: 'inconclusive', name: 'Inconclusive' },
+                                        { id: 'refuted', name: 'Refuted' }
+                                    ]}
+                                    onChange={(val) => handleFieldChange('label', val as GoldStandardPaper['label'])}
+                                    formatLabel={(n) => n}
+                                    className="w-full"
+                                    triggerClassName="w-full h-10 px-3 bg-background border border-input rounded-md justify-between"
+                                />
                             </div>
                         </div>
                     </div>

@@ -1,3 +1,4 @@
+
 import React, { useState } from 'react';
 import type { GoldStandardPaper, TestHarnessResult, UserStudyData } from '../types';
 import * as apiService from '../services/apiService';
@@ -10,6 +11,8 @@ import { AnalyticsIcon } from './icons/AnalyticsIcon';
 import { AnnotationModal } from './AnnotationModal';
 import { LoadingSpinner } from './LoadingSpinner';
 import { AnalyticsViewer } from './AnalyticsViewer';
+import { ProjectReport } from './ProjectReport';
+import { ReportIcon } from './icons/ReportIcon';
 
 interface ResearcherDashboardProps {
     dataset: GoldStandardPaper[];
@@ -62,13 +65,13 @@ const DatasetManager: React.FC<{
             const newPaper: GoldStandardPaper = {
                 paper_id: doi,
                 title: paperMeta.title,
-                abstract: paperMeta.abstract,
-                authors: paperMeta.authors,
+                abstract: paperMeta.abstract || "Abstract not available.",
+                authors: paperMeta.authors.join(', '),
                 year: paperMeta.year,
                 source: paperMeta.journal,
                 crossref_verified: false,
                 peer_reviewed: true, // Default assumption
-                open_access: !!paperMeta.pdfURL,
+                open_access: !!paperMeta.pdfURL || !!paperMeta.isOpenAccess,
                 author_verified: false,
                 factual_accuracy_score: 0,
                 notes: '',
@@ -220,8 +223,22 @@ const UserStudyManager: React.FC<{
 
 
 export const ResearcherDashboard: React.FC<ResearcherDashboardProps> = (props) => {
-    const [activeTab, setActiveTab] = useState<'dataset' | 'harness' | 'study' | 'analytics'>('dataset');
+    const [activeTab, setActiveTab] = useState<'dataset' | 'harness' | 'study' | 'analytics' | 'report'>('dataset');
     const [isTestHarnessLoading, setIsTestHarnessLoading] = useState(false);
+
+    const metrics = React.useMemo(() => {
+        const events = analyticsService.getEvents();
+        const accuracy = props.testResults.length > 0 
+            ? (props.testResults.filter(r => r.isCorrect).length / props.testResults.length) * 100 
+            : 0;
+            
+        return {
+            datasetSize: props.dataset.length,
+            testAccuracy: Math.round(accuracy),
+            studySessions: props.userStudyData.length,
+            totalEvents: events.length
+        };
+    }, [props.dataset, props.testResults, props.userStudyData]);
 
     const handleRunTests = async () => {
         setIsTestHarnessLoading(true);
@@ -252,6 +269,9 @@ export const ResearcherDashboard: React.FC<ResearcherDashboardProps> = (props) =
                     <TabButton isActive={activeTab === 'analytics'} onClick={() => setActiveTab('analytics')}>
                         <AnalyticsIcon className="w-5 h-5" /> Analytics
                     </TabButton>
+                    <TabButton isActive={activeTab === 'report'} onClick={() => setActiveTab('report')}>
+                        <ReportIcon className="w-5 h-5" /> Project Report
+                    </TabButton>
                 </nav>
             </div>
 
@@ -260,6 +280,7 @@ export const ResearcherDashboard: React.FC<ResearcherDashboardProps> = (props) =
                 {activeTab === 'harness' && <TestHarness results={props.testResults} runTestHarness={handleRunTests} isLoading={isTestHarnessLoading} />}
                 {activeTab === 'study' && <UserStudyManager studyData={props.userStudyData} onStart={handleStartUserStudy} />}
                 {activeTab === 'analytics' && <AnalyticsViewer />}
+                {activeTab === 'report' && <ProjectReport metrics={metrics} />}
             </div>
         </div>
     );

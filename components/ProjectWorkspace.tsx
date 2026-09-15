@@ -1,34 +1,13 @@
 
-
-
-import React, { useState, useMemo, useRef, useEffect } from 'react';
-import type { Project, ResearchPaper, ModelDefinition, RagStatus, ChatMessage } from '../types';
+import React, { useState, useRef } from 'react';
+import type { Project, ResearchPaper, ModelDefinition } from '../types';
 import { FolderIcon } from './icons/FolderIcon';
 import { AddIcon } from './icons/AddIcon';
-import { RemoveIcon } from './icons/RemoveIcon';
-import { DotsVerticalIcon } from './icons/DotsVerticalIcon';
-import { ReportIcon } from './icons/ReportIcon';
-import { SynthesisIcon } from './icons/SynthesisIcon';
+import { PdfIcon } from './icons/PdfIcon';
 import { InboxIcon } from './icons/InboxIcon';
-import { ChevronDownIcon } from './icons/ChevronDownIcon';
-import { ChatPanel } from './ChatPanel';
-import { SparklesIcon } from './icons/SparklesIcon';
-import { CheckIcon } from './icons/CheckIcon';
-
-// A map of color names to Tailwind CSS classes. This ensures the full class names are present in the source
-// and are not purged by Tailwind's build process.
-const colorClassMap: { [key: string]: { bg: string; text: string; border: string } } = {
-    sky:    { bg: 'bg-sky-500',    text: 'text-sky-500',    border: 'border-sky-500' },
-    green:  { bg: 'bg-green-500',  text: 'text-green-500',  border: 'border-green-500' },
-    yellow: { bg: 'bg-yellow-500', text: 'text-yellow-500', border: 'border-yellow-500' },
-    red:    { bg: 'bg-red-500',    text: 'text-red-500',    border: 'border-red-500' },
-    purple: { bg: 'bg-purple-500', text: 'text-purple-500', border: 'border-purple-500' },
-    pink:   { bg: 'bg-pink-500',   text: 'text-pink-500',   border: 'border-pink-500' },
-    indigo: { bg: 'bg-indigo-500', text: 'text-indigo-500', border: 'border-indigo-500' },
-    teal:   { bg: 'bg-teal-500',   text: 'text-teal-500',   border: 'border-teal-500' },
-};
-const PROJECT_COLORS = Object.keys(colorClassMap);
-
+import { RemoveIcon } from './icons/RemoveIcon';
+import { LoadingSpinner } from './LoadingSpinner';
+import * as apiService from '../services/apiService';
 
 interface ProjectWorkspaceProps {
     workspacePapers: ResearchPaper[];
@@ -36,219 +15,20 @@ interface ProjectWorkspaceProps {
     onCreateProject: (name: string) => void;
     onDeleteProject: (projectId: string) => void;
     onMovePaperToProject: (paperId: string, projectId: string | null) => void;
-    onSynthesizeWorkspace: (papers: ResearchPaper[], model: ModelDefinition) => void;
-    onAnalyzeGaps: (papers: ResearchPaper[], model: ModelDefinition) => void;
+    onAnalyzeWorkspace: (papers: ResearchPaper[], model: ModelDefinition) => void;
     onRemovePaperFromWorkspace: (paper: ResearchPaper) => void;
     onUpdateProjectColor: (projectId: string, color: string) => void;
+    onAddPapersToWorkspace: (papers: ResearchPaper[]) => void;
     model: ModelDefinition;
     onIndexPaperForRag: (projectId: string, paperId: string) => void;
-    projectChats: { [projectId: string]: { history: ChatMessage[], isLoading: boolean } };
-    onProjectChat: (projectId: string, message: string) => void;
+    isWorkspaceAnalysisLoading: boolean;
 }
 
-const useOutsideClick = (ref: React.RefObject<HTMLDivElement>, callback: () => void) => {
-    useEffect(() => {
-        const handleClickOutside = (event: MouseEvent) => {
-            if (ref.current && !ref.current.contains(event.target as Node)) {
-                callback();
-            }
-        };
-        document.addEventListener("mousedown", handleClickOutside);
-        return () => {
-            document.removeEventListener("mousedown", handleClickOutside);
-        };
-    }, [ref, callback]);
-};
-
-const RagStatusIndicator: React.FC<{ status: RagStatus }> = ({ status }) => {
-    const statusMap = {
-        unindexed: { text: 'Index for RAG', icon: <SparklesIcon className="w-3 h-3" />, color: 'text-primary', hover: 'hover:bg-primary/20' },
-        indexing: { text: 'Indexing...', icon: <svg className="animate-spin h-3 w-3" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>, color: 'text-muted-foreground', hover: '' },
-        indexed: { text: 'Indexed', icon: <CheckIcon className="w-3 h-3" />, color: 'text-green-600', hover: '' },
-        error: { text: 'Error', icon: null, color: 'text-destructive', hover: '' },
-    };
-    const current = statusMap[status];
-    return {
-        button: (onClick: () => void) => (
-            <button
-                onClick={onClick}
-                disabled={status !== 'unindexed'}
-                className={`flex items-center gap-1.5 px-2 py-1 text-xs font-semibold rounded-md bg-primary/10 ${current.color} ${current.hover} disabled:opacity-70 disabled:cursor-not-allowed transition-colors`}
-            >
-                {current.icon}
-                {current.text}
-            </button>
-        )
-    };
-};
-
-
-const PaperListItem: React.FC<{
-    paper: ResearchPaper;
-    allProjects: Project[];
-    currentProjectId: string | null;
-    onMove: (paperId: string, targetProjectId: string | null) => void;
-    onRemove: (paper: ResearchPaper) => void;
-    ragStatus: RagStatus;
-    onIndex: () => void;
-}> = ({ paper, allProjects, currentProjectId, onMove, onRemove, ragStatus, onIndex }) => {
-    const [isMenuOpen, setIsMenuOpen] = useState(false);
-    const menuRef = useRef<HTMLDivElement>(null);
-    useOutsideClick(menuRef, () => setIsMenuOpen(false));
-
-    const handleMove = (targetProjectId: string | null) => {
-        onMove(paper.id, targetProjectId);
-        setIsMenuOpen(false);
-    };
-
-    const project = currentProjectId ? allProjects.find(p => p.id === currentProjectId) : null;
-    const dotColorClass = project ? (colorClassMap[project.color]?.bg || 'bg-primary') : 'bg-slate-400';
-
-    return (
-        <div className="flex items-center justify-between p-2 rounded-md hover:bg-background group transition-colors duration-150">
-            <div className="flex items-center gap-2.5 flex-grow min-w-0 pr-2">
-                <span className={`w-2 h-2 rounded-full flex-shrink-0 ${dotColorClass}`}></span>
-                <p className="text-sm text-muted-foreground group-hover:text-foreground transition-colors duration-150 truncate" title={paper.title}>{paper.title}</p>
-            </div>
-            <div className="flex items-center gap-2">
-                 {currentProjectId && RagStatusIndicator({ status: ragStatus }).button(onIndex)}
-                <div className="relative" ref={menuRef}>
-                    <button
-                        onClick={() => setIsMenuOpen(prev => !prev)}
-                        className="p-1.5 rounded-full text-muted-foreground hover:bg-accent opacity-50 group-hover:opacity-100 transition-opacity"
-                        title="More options"
-                    >
-                        <DotsVerticalIcon className="w-4 h-4" />
-                    </button>
-                    {isMenuOpen && (
-                        <div className="absolute right-0 top-full mt-1 w-48 bg-card border rounded-md shadow-lg z-20 p-1">
-                            <div className="px-2 py-1 text-xs font-semibold text-muted-foreground">Move to...</div>
-                            {currentProjectId !== null && (
-                                <button onClick={() => handleMove(null)} className="w-full text-left text-sm px-2 py-1.5 hover:bg-muted rounded-sm flex items-center gap-2">
-                                    <InboxIcon className="w-4 h-4" /> Unsorted
-                                </button>
-                            )}
-                            {allProjects.filter(p => p.id !== currentProjectId).map(p => (
-                                <button key={p.id} onClick={() => handleMove(p.id)} className="w-full text-left text-sm px-2 py-1.5 hover:bg-muted rounded-sm flex items-center gap-2">
-                                    <FolderIcon className={`w-4 h-4 ${colorClassMap[p.color]?.text || 'text-primary'}`} /> {p.name}
-                                </button>
-                            ))}
-                             <div className="my-1 h-px bg-border" />
-                             <button onClick={() => onRemove(paper)} className="w-full text-left text-sm px-2 py-1.5 hover:bg-destructive/10 text-destructive rounded-sm flex items-center gap-2">
-                                <RemoveIcon className="w-4 h-4" /> Remove from Workspace
-                             </button>
-                        </div>
-                    )}
-                </div>
-            </div>
-        </div>
-    );
-};
-
-const ColorPickerTrigger: React.FC<{
-    project: Project;
-    onUpdateColor: (projectId: string, color: string) => void;
-}> = ({ project, onUpdateColor }) => {
-    const [isPickerOpen, setIsPickerOpen] = useState(false);
-    const pickerRef = useRef<HTMLDivElement>(null);
-    useOutsideClick(pickerRef, () => setIsPickerOpen(false));
-    
-    const colorBgClass = colorClassMap[project.color]?.bg || 'bg-primary';
-
-    return (
-        <div className="relative" ref={pickerRef}>
-            <button 
-                onClick={(e) => { e.stopPropagation(); setIsPickerOpen(p => !p); }}
-                className={`w-5 h-5 rounded-full ${colorBgClass} border-2 border-white ring-1 ring-border transition-transform hover:scale-110`}
-                title="Change project color"
-            />
-            {isPickerOpen && (
-                <div className="absolute right-0 top-full mt-2 w-40 bg-card p-2 rounded-md shadow-lg border z-20">
-                    <div className="grid grid-cols-4 gap-2">
-                        {PROJECT_COLORS.map(color => (
-                            <button
-                                key={color}
-                                onClick={(e) => {
-                                    e.stopPropagation();
-                                    onUpdateColor(project.id, color);
-                                    setIsPickerOpen(false);
-                                }}
-                                className={`w-7 h-7 rounded-full ${colorClassMap[color].bg} border-2 transition-all ${project.color === color ? 'border-primary ring-2 ring-ring ring-offset-1' : 'border-card hover:border-border'}`}
-                                aria-label={`Select ${color} color`}
-                            />
-                        ))}
-                    </div>
-                </div>
-            )}
-        </div>
-    );
-};
-
-const CollapsibleSection: React.FC<{
-    title: string;
-    icon: React.ReactNode;
-    count: number;
-    children: React.ReactNode;
-    actions?: React.ReactNode;
-    defaultExpanded?: boolean;
-    color?: string;
-    project?: Project;
-    chatHistory?: ChatMessage[];
-    isChatLoading?: boolean;
-    onChat?: (message: string) => void;
-}> = ({ title, icon, count, children, actions, defaultExpanded = true, color, project, chatHistory, isChatLoading, onChat }) => {
-    const [isExpanded, setIsExpanded] = useState(defaultExpanded);
-    const borderColorClass = color ? (colorClassMap[color]?.border || 'border-border') : 'border-border';
-
-    const indexedCount = project?.paperIds.filter(id => project.paperStatuses?.[id] === 'indexed').length || 0;
-
-    return (
-        <div className={`bg-muted/50 border rounded-lg border-l-4 ${borderColorClass}`}>
-            <header 
-                className="flex items-center justify-between p-3 cursor-pointer hover:bg-accent/50 transition-colors"
-                onClick={() => setIsExpanded(!isExpanded)}
-            >
-                <div className="flex items-center gap-3">
-                    {icon}
-                    <h4 className="font-bold text-foreground">{title}</h4>
-                    <span className="text-xs font-mono bg-primary/10 text-primary px-2 py-0.5 rounded-full">{count}</span>
-                </div>
-                <div className="flex items-center gap-2">
-                    <div onClick={e => e.stopPropagation()}>{actions}</div>
-                    <ChevronDownIcon className={`w-5 h-5 text-muted-foreground transition-transform ${isExpanded ? 'rotate-180' : ''}`} />
-                </div>
-            </header>
-            {isExpanded && (
-                <>
-                    <div className="border-t border-border p-2 space-y-1">
-                        {children}
-                    </div>
-                    {project && onChat && (
-                        <div className="border-t border-border p-3">
-                            <h4 className="text-sm font-semibold text-foreground mb-2">Chat with this Project</h4>
-                            {indexedCount < 1 ? (
-                                <p className="text-xs text-muted-foreground text-center p-4 bg-background rounded-md">Index at least one paper to start chatting with this project.</p>
-                            ) : (
-                                <div className="h-96">
-                                    <ChatPanel history={chatHistory || []} isLoading={isChatLoading || false} error={null} onSendMessage={onChat} />
-                                </div>
-                            )}
-                        </div>
-                    )}
-                </>
-            )}
-        </div>
-    );
-};
-
 export const ProjectWorkspace: React.FC<ProjectWorkspaceProps> = (props) => {
-    const { workspacePapers, projects, onCreateProject, onSynthesizeWorkspace, onAnalyzeGaps, onRemovePaperFromWorkspace, onUpdateProjectColor, model, onIndexPaperForRag, projectChats, onProjectChat } = props;
+    const { workspacePapers, projects, onCreateProject, onDeleteProject, onAnalyzeWorkspace, onAddPapersToWorkspace, isWorkspaceAnalysisLoading, model, onRemovePaperFromWorkspace } = props;
     const [newProjectName, setNewProjectName] = useState('');
-    const [projectToDelete, setProjectToDelete] = useState<Project | null>(null);
-
-    const paperMap = useMemo(() => new Map(workspacePapers.map(p => [p.id, p])), [workspacePapers]);
-    const allProjectPaperIds = useMemo(() => new Set(projects.flatMap(p => p.paperIds)), [projects]);
-    const unsortedPapers = useMemo(() => workspacePapers.filter(p => !allProjectPaperIds.has(p.id)), [workspacePapers, allProjectPaperIds]);
+    const [isUploading, setIsUploading] = useState(false);
+    const fileInputRef = useRef<HTMLInputElement>(null);
 
     const handleCreateProject = (e: React.FormEvent) => {
         e.preventDefault();
@@ -257,135 +37,130 @@ export const ProjectWorkspace: React.FC<ProjectWorkspaceProps> = (props) => {
             setNewProjectName('');
         }
     };
-    
-    const confirmDeleteProject = () => {
-        if (projectToDelete) {
-            props.onDeleteProject(projectToDelete.id);
-            setProjectToDelete(null);
+
+    const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
+        if (!file || file.type !== 'application/pdf') return;
+
+        setIsUploading(true);
+        try {
+            const reader = new FileReader();
+            reader.readAsDataURL(file);
+            reader.onload = async () => {
+                const base64 = (reader.result as string).split(',')[1];
+                const extractedPaper = await apiService.handlePdfUpload(base64);
+                onAddPapersToWorkspace([extractedPaper]);
+                setIsUploading(false);
+            };
+        } catch (error) {
+            console.error("Upload failed", error);
+            setIsUploading(false);
+            alert("Failed to parse PDF.");
         }
     };
 
     return (
         <div className="space-y-6">
-            <div className="p-4 bg-muted/50 rounded-lg border space-y-3">
-              <h3 className="text-lg font-bold text-foreground">Workspace Tools</h3>
-              <p className="text-sm text-muted-foreground">Run analysis on all {workspacePapers.length} paper(s) in your workspace.</p>
-              <div className="flex gap-2">
-                 <button 
-                  onClick={() => onSynthesizeWorkspace(workspacePapers, model)}
-                  disabled={workspacePapers.length < 2}
-                  title="Synthesize Literature in Workspace"
-                  className="h-9 px-4 text-sm font-semibold rounded-md bg-secondary text-secondary-foreground hover:bg-accent disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-2">
-                    <SynthesisIcon className="w-4 h-4"/>
-                    <span>Synthesize</span>
-                </button>
+            <div className="bg-primary/5 rounded-lg border border-primary/20 p-5 text-center space-y-4">
+                <h3 className="text-xl font-bold text-foreground">Workspace Analysis</h3>
                 <button 
-                  onClick={() => onAnalyzeGaps(workspacePapers, model)}
-                  disabled={workspacePapers.length < 2}
-                  title="Find Research Gaps in Workspace"
-                   className="h-9 px-4 text-sm font-semibold rounded-md bg-secondary text-secondary-foreground hover:bg-accent disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-2">
-                    <ReportIcon className="w-4 h-4"/>
-                    <span>Analyze Gaps</span>
+                    onClick={() => onAnalyzeWorkspace(workspacePapers, model)}
+                    disabled={workspacePapers.length === 0 || isWorkspaceAnalysisLoading}
+                    className="w-full h-12 px-6 font-bold rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50 flex items-center justify-center gap-3 transition-all shadow-md"
+                >
+                    <span>{isWorkspaceAnalysisLoading ? 'Preparing Dashboard...' : 'Open Analysis Dashboard'}</span>
                 </button>
-              </div>
             </div>
 
-            <div>
-                <h3 className="text-lg font-bold text-foreground mb-3">Projects</h3>
-                <form onSubmit={handleCreateProject} className="flex items-center gap-2 mb-6">
+            <div className="grid grid-cols-1 gap-4">
+                <div className="flex flex-col gap-2">
+                    <h3 className="text-sm font-bold text-muted-foreground uppercase tracking-wider">Actions</h3>
+                    <div className="flex gap-2">
+                        <button 
+                            onClick={() => fileInputRef.current?.click()}
+                            disabled={isUploading}
+                            className="flex-grow flex items-center justify-center gap-2 h-10 bg-secondary text-secondary-foreground font-semibold rounded-md hover:bg-accent border border-border"
+                        >
+                            {isUploading ? <LoadingSpinner message="" /> : <PdfIcon className="w-4 h-4"/>}
+                            <span>Upload Research PDF</span>
+                        </button>
+                        <input 
+                            type="file" 
+                            ref={fileInputRef} 
+                            onChange={handleFileUpload} 
+                            accept=".pdf" 
+                            className="hidden" 
+                        />
+                    </div>
+                </div>
+
+                <form onSubmit={handleCreateProject} className="flex items-center gap-2">
                     <input 
                         type="text"
                         value={newProjectName}
                         onChange={(e) => setNewProjectName(e.target.value)}
-                        placeholder="Name your new project..."
+                        placeholder="New project name..."
                         className="w-full h-10 px-3 bg-background border border-input rounded-md focus:ring-2 focus:ring-ring"
                     />
-                    <button type="submit" className="h-10 px-4 bg-primary text-primary-foreground font-semibold rounded-md hover:bg-primary/90 disabled:opacity-50 flex items-center gap-2" disabled={!newProjectName.trim()}>
-                        <AddIcon className="w-4 h-4"/> Create
+                    <button type="submit" className="h-10 px-4 bg-primary text-primary-foreground font-semibold rounded-md hover:bg-primary/90 disabled:opacity-50" disabled={!newProjectName.trim()}>
+                        <AddIcon className="w-4 h-4"/>
                     </button>
                 </form>
             </div>
-
+            
             <div className="space-y-4">
-                {projects.sort((a,b) => b.createdAt - a.createdAt).map(project => (
-                    <CollapsibleSection
-                        key={project.id}
-                        title={project.name}
-                        icon={<FolderIcon className={`w-5 h-5 ${colorClassMap[project.color]?.text || 'text-primary'}`} />}
-                        count={project.paperIds.length}
-                        color={project.color}
-                        project={project}
-                        chatHistory={projectChats[project.id]?.history}
-                        isChatLoading={projectChats[project.id]?.isLoading}
-                        onChat={(message) => onProjectChat(project.id, message)}
-                        actions={
-                            <div className="flex items-center gap-2">
-                                <ColorPickerTrigger project={project} onUpdateColor={onUpdateProjectColor} />
-                                <button 
-                                    onClick={() => setProjectToDelete(project)} 
-                                    className="p-1.5 text-destructive/80 hover:bg-destructive/10 rounded-full"
-                                    title={`Delete project "${project.name}"`}
-                                >
+                <h3 className="text-sm font-bold text-muted-foreground uppercase tracking-wider">Projects</h3>
+                <div className="grid grid-cols-1 gap-2">
+                    {projects.map(project => (
+                        <div key={project.id} className="flex items-center justify-between p-3 bg-muted/30 rounded-lg border border-transparent hover:border-border group">
+                            <div className="flex items-center gap-3">
+                                <FolderIcon className="w-5 h-5 text-blue-500" />
+                                <span className="text-sm font-medium">{project.name}</span>
+                            </div>
+                            {project.id !== 'default' && (
+                                <button onClick={() => onDeleteProject(project.id)} className="p-1 text-muted-foreground hover:text-destructive opacity-0 group-hover:opacity-100 transition-opacity" title="Delete Project">
                                     <RemoveIcon className="w-4 h-4" />
                                 </button>
-                            </div>
-                        }
-                    >
-                        {project.paperIds.length > 0 ? project.paperIds.map(id => paperMap.get(id)).filter((p): p is ResearchPaper => !!p).map(paper => (
-                           <PaperListItem
-                                key={paper.id}
-                                paper={paper}
-                                allProjects={projects}
-                                currentProjectId={project.id}
-                                onMove={props.onMovePaperToProject}
-                                onRemove={onRemovePaperFromWorkspace}
-                                ragStatus={project.paperStatuses?.[paper.id] || 'unindexed'}
-                                onIndex={() => onIndexPaperForRag(project.id, paper.id)}
-                           />
-                        )) : <p className="text-sm text-muted-foreground italic text-center p-4">This project is empty.</p>}
-                    </CollapsibleSection>
-                ))}
-                
-                <CollapsibleSection
-                    title="Unsorted Papers"
-                    icon={<InboxIcon className="w-5 h-5 text-primary" />}
-                    count={unsortedPapers.length}
-                    defaultExpanded={unsortedPapers.length > 0 || projects.length === 0}
-                >
-                    {unsortedPapers.length > 0 ? unsortedPapers.map(paper => (
-                        <PaperListItem
-                           key={paper.id}
-                           paper={paper}
-                           allProjects={projects}
-                           currentProjectId={null}
-                           onMove={props.onMovePaperToProject}
-                           onRemove={onRemovePaperFromWorkspace}
-                           ragStatus="unindexed"
-                           onIndex={() => {}} // No indexing in unsorted
-                        />
-                    )) : <p className="text-sm text-muted-foreground italic text-center p-4">Add papers to your workspace to see them here.</p>}
-                </CollapsibleSection>
-            </div>
-            
-            {projectToDelete && (
-                 <div className="fixed inset-0 bg-background/80 backdrop-blur-sm flex items-center justify-center z-50">
-                    <div className="bg-card p-6 rounded-lg shadow-lg border max-w-sm w-full">
-                        <h4 className="text-lg font-bold text-foreground">Confirm Deletion</h4>
-                        <p className="text-sm text-muted-foreground mt-2">
-                            Are you sure you want to delete the project "<strong>{projectToDelete.name}</strong>"? 
-                            All papers within this project will be moved to "Unsorted". This action cannot be undone.
-                        </p>
-                        <div className="flex justify-end gap-2 mt-6">
-                            <button onClick={() => setProjectToDelete(null)} className="h-9 px-4 text-sm font-semibold rounded-md bg-secondary text-secondary-foreground hover:bg-accent">
-                                Cancel
-                            </button>
-                            <button onClick={confirmDeleteProject} className="h-9 px-4 text-sm font-semibold rounded-md bg-destructive text-destructive-foreground hover:bg-destructive/90">
-                                Delete Project
-                            </button>
+                            )}
                         </div>
-                    </div>
+                    ))}
                 </div>
-            )}
+            </div>
+
+            <div className="space-y-4">
+                <h3 className="text-sm font-bold text-muted-foreground uppercase tracking-wider">Saved Papers ({workspacePapers.length})</h3>
+                {workspacePapers.length === 0 ? (
+                    <div className="text-center py-10 opacity-50 border-t border-dashed">
+                        <InboxIcon className="w-8 h-8 mx-auto mb-2" />
+                        <p className="text-sm">Papers you save or upload will appear here.</p>
+                    </div>
+                ) : (
+                    <div className="grid grid-cols-1 gap-2">
+                        {workspacePapers.map(paper => (
+                            <div key={paper.id} className="p-3 bg-white border border-border rounded-lg shadow-sm hover:shadow-md transition-all">
+                                <div className="flex justify-between items-start gap-2">
+                                    <h4 className="text-sm font-bold text-foreground line-clamp-2">{paper.title}</h4>
+                                    <div className="flex items-center gap-1">
+                                        <a 
+                                            href={paper.sourceURL || (paper.doi ? `https://doi.org/${paper.doi}` : `https://scholar.google.com/scholar?q=${encodeURIComponent(paper.title)}`)}
+                                            target="_blank"
+                                            rel="noopener noreferrer"
+                                            className="text-muted-foreground hover:text-blue-600 p-1"
+                                            title="View Source"
+                                        >
+                                            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" /></svg>
+                                        </a>
+                                        <button onClick={() => onRemovePaperFromWorkspace(paper)} className="text-muted-foreground hover:text-destructive p-1" title="Remove from Workspace">
+                                            <RemoveIcon className="w-4 h-4" />
+                                        </button>
+                                    </div>
+                                </div>
+                                <p className="text-xs text-muted-foreground mt-1">{paper.authors.substring(0, 50)}{paper.authors.length > 50 ? '...' : ''} ({paper.year})</p>
+                            </div>
+                        ))}
+                    </div>
+                )}
+            </div>
         </div>
     );
 };

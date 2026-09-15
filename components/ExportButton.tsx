@@ -6,7 +6,7 @@ interface ExportButtonProps {
   filename?: string;
 }
 
-export const ExportButton: React.FC<ExportButtonProps> = ({ data, filename = 'research_analysis.json' }) => {
+export const ExportButton: React.FC<ExportButtonProps> = ({ data, filename = 'openharness_snapshot.json' }) => {
   const handleExportClick = () => {
     try {
       const jsonString = JSON.stringify(data, null, 2);

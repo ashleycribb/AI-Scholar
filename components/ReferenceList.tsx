@@ -1,7 +1,7 @@
 import React from 'react';
 import { ErrorMessage } from './ErrorMessage';
-import { SafeHTML } from './SafeHTML';
 import type { CitationStyle } from '../types';
+import { CustomDropdown } from './CustomDropdown';
 
 interface ReferenceListProps {
     citations: string[];
@@ -26,20 +26,16 @@ export const ReferenceList: React.FC<ReferenceListProps> = ({ citations, isLoadi
     return (
         <div className="mt-10 pt-6 border-t border-gray-200">
             <div className="flex justify-between items-center mb-4">
-                <h3 className="text-xl font-semibold text-gray-800">References</h3>
-                <div>
-                    <label htmlFor="citation-style" className="sr-only">Citation Style</label>
-                    <select
-                        id="citation-style"
+                <h3 className="text-xl font-bold text-gray-800">References</h3>
+                <div className="flex items-center gap-3">
+                    <span className="text-[10px] uppercase font-black tracking-widest text-slate-400">Style</span>
+                    <CustomDropdown
                         value={citationStyle}
-                        onChange={(e) => onStyleChange(e.target.value as CitationStyle)}
-                        className="block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm rounded-md bg-white"
-                        disabled={isLoading}
-                    >
-                        {citationStyles.map(style => (
-                            <option key={style.id} value={style.id}>{style.name}</option>
-                        ))}
-                    </select>
+                        options={citationStyles.map(s => ({ id: s.id, name: s.name }))}
+                        onChange={(val) => onStyleChange(val as CitationStyle)}
+                        formatLabel={(n) => n}
+                        triggerClassName="bg-white border border-slate-200"
+                    />
                 </div>
             </div>
 
@@ -61,11 +57,10 @@ export const ReferenceList: React.FC<ReferenceListProps> = ({ citations, isLoadi
             {!isLoading && citations.length > 0 && (
                 <ol className="space-y-3">
                     {citations.map((citation, index) => (
-                        <SafeHTML
-                            key={index}
-                            as="li"
+                        <li 
+                            key={index} 
                             className="text-gray-700 leading-relaxed pl-5 -indent-5"
-                            html={citation}
+                            dangerouslySetInnerHTML={{ __html: citation }}
                         />
                     ))}
                 </ol>

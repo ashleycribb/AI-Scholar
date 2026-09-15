@@ -9,7 +9,7 @@ export const ExtensionPromo: React.FC = () => {
             <div className="p-4 bg-muted/50 rounded-lg border">
                 <h3 className="text-lg font-semibold text-foreground">Supercharge Your Research</h3>
                 <p className="mt-1 text-sm text-muted-foreground">
-                    Install the AI Research Explorer browser extension to save and analyze papers directly from Google Scholar or arXiv.
+                    Install the Scholar Explorer browser extension to save and analyze papers directly from Google Scholar or arXiv.
                 </p>
                 <button 
                     disabled

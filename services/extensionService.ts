@@ -1,29 +1,7 @@
-import { z } from 'zod';
 import type { ResearchPaper } from '../types';
 
 const CHANNEL_NAME = 'ai_research_explorer_channel';
 let channel: BroadcastChannel | null = null;
-
-const ResearchPaperSchema = z.object({
-    id: z.string(),
-    title: z.string(),
-    authors: z.string(),
-    year: z.number(),
-    abstract: z.string(),
-    sourceURL: z.string().optional(),
-    pdfURL: z.string().optional(),
-}).passthrough();
-
-const ExtensionMessageSchema = z.discriminatedUnion('type', [
-    z.object({
-        type: z.literal('paper_saved_to_workspace'),
-        paper: ResearchPaperSchema,
-    }),
-    z.object({
-        type: z.literal('paper_removed'),
-        paperId: z.string(),
-    }),
-]);
 
 const getChannel = (): BroadcastChannel => {
     if (!channel) {
@@ -34,30 +12,19 @@ const getChannel = (): BroadcastChannel => {
 
 export const listenForExtensionMessages = (
     onPaperReceived: (paper: ResearchPaper) => void,
-    onPaperRemoved: (paperId: string) => void
+    onPaperRemoved: (paperId: string) => void,
+    onAllPapersReceived?: (papers: ResearchPaper[]) => void
 ) => {
     const bc = getChannel();
     bc.onmessage = (event) => {
-        // Validate origin - strict check
-        if (event.origin !== '' && event.origin !== window.location.origin) {
-            console.warn('Blocked message from untrusted origin:', event.origin);
-            return;
+        if (event.data.type === 'paper_saved_to_workspace') {
+            onPaperReceived(event.data.paper);
         }
-
-        const result = ExtensionMessageSchema.safeParse(event.data);
-
-        if (!result.success) {
-            console.error('Invalid message received on extension channel:', result.error);
-            return;
+        if (event.data.type === 'paper_removed') {
+            onPaperRemoved(event.data.paperId);
         }
-
-        const message = result.data;
-
-        if (message.type === 'paper_saved_to_workspace') {
-            onPaperReceived(message.paper as ResearchPaper);
-        }
-        if (message.type === 'paper_removed') {
-            onPaperRemoved(message.paperId);
+        if (event.data.type === 'all_papers_response' && onAllPapersReceived) {
+            onAllPapersReceived(event.data.papers);
         }
     };
     
@@ -66,6 +33,10 @@ export const listenForExtensionMessages = (
         bc.close();
         channel = null;
     };
+};
+
+export const requestAllPapers = () => {
+    getChannel().postMessage({ type: 'request_all_papers' });
 };
 
 // Function to create a stable ID for a paper, must be identical to the one in background.ts

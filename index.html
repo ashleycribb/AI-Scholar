@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="en">
   <head>
@@ -5,7 +6,7 @@
     <link rel="icon" type="image/svg+xml" href="/vite.svg" />
     <link rel="manifest" href="/manifest.json" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Google Scholar Research Assistant</title>
+    <title>Scholar Explorer</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
   <script type="importmap">
@@ -19,9 +20,6 @@
     "express": "https://aistudiocdn.com/express@^5.1.0",
     "body-parser": "https://aistudiocdn.com/body-parser@^2.2.0",
     "axios": "https://aistudiocdn.com/axios@^1.13.1",
-    "firebase/app": "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js",
-    "firebase/firestore": "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js",
-    "firebase/": "https://aistudiocdn.com/firebase@^12.5.0/",
     "zod": "https://aistudiocdn.com/zod@^4.1.12",
     "@langchain/core/": "https://aistudiocdn.com/@langchain/core@^1.0.2/",
     "@langchain/openai": "https://aistudiocdn.com/@langchain/openai@^1.0.0",
@@ -30,116 +28,59 @@
   }
 }
 </script>
-<style>
-    :root {
-      --background: 0 0% 100%;
-      --foreground: 222.2 84% 4.9%;
-      --card: 0 0% 100%;
-      --card-foreground: 222.2 84% 4.9%;
-      --popover: 0 0% 100%;
-      --popover-foreground: 222.2 84% 4.9%;
-      --primary: 222.2 47.4% 11.2%;
-      --primary-foreground: 210 40% 98%;
-      --secondary: 210 40% 96.1%;
-      --secondary-foreground: 222.2 47.4% 11.2%;
-      --muted: 210 40% 96.1%;
-      --muted-foreground: 215.4 16.3% 46.9%;
-      --accent: 210 40% 96.1%;
-      --accent-foreground: 222.2 47.4% 11.2%;
-      --destructive: 0 84.2% 60.2%;
-      --destructive-foreground: 210 40% 98%;
-      --border: 214.3 31.8% 91.4%;
-      --input: 214.3 31.8% 91.4%;
-      --ring: 222.2 84% 4.9%;
-      --radius: 0.5rem;
-    }
-
-    /* Custom Scrollbar Styles for a more modern look */
-
-    /* For Firefox */
-    html {
-      scrollbar-width: thin;
-      scrollbar-color: #94a3b8 #f1f5f9; /* thumb color, track color */
-    }
-    
-    /* For Webkit-based browsers (Chrome, Safari, Edge) */
-    ::-webkit-scrollbar {
-      width: 10px;
-      height: 10px;
-    }
-
-    ::-webkit-scrollbar-track {
-      background: #f1f5f9; /* slate-100 */
-    }
-
-    ::-webkit-scrollbar-thumb {
-      background-color: #94a3b8; /* slate-400 */
-      border-radius: 10px;
-      border: 2px solid #f1f5f9; /* creates a padding effect */
-    }
-
-    ::-webkit-scrollbar-thumb:hover {
-      background-color: #64748b; /* slate-500 */
-    }
-
-    /* Simple fade-in animation for tab content */
-    @keyframes fadeIn {
-      from { opacity: 0; transform: translateY(5px); }
-      to { opacity: 1; transform: translateY(0); }
-    }
-    .animate-fade-in {
-      animation: fadeIn 0.3s ease-out forwards;
-    }
-</style>
-<script>
-    tailwind.config = {
-      theme: {
-        extend: {
-          colors: {
-            border: 'hsl(var(--border))',
-            input: 'hsl(var(--input))',
-            ring: 'hsl(var(--ring))',
-            background: 'hsl(var(--background))',
-            foreground: 'hsl(var(--foreground))',
-            primary: {
-              DEFAULT: 'hsl(var(--primary))',
-              foreground: 'hsl(var(--primary-foreground))',
+    <style>
+      /* Keep only critical layout styles if necessary, or move all to index.css */
+    </style>
+    <script>
+      tailwind.config = {
+        theme: {
+          extend: {
+            colors: {
+              border: 'hsl(var(--border))',
+              input: 'hsl(var(--input))',
+              ring: 'hsl(var(--ring))',
+              background: 'hsl(var(--background))',
+              foreground: 'hsl(var(--foreground))',
+              primary: {
+                DEFAULT: 'hsl(var(--primary))',
+                foreground: 'hsl(var(--primary-foreground))',
+              },
+              secondary: {
+                DEFAULT: 'hsl(var(--secondary))',
+                foreground: 'hsl(var(--secondary-foreground))',
+              },
+              destructive: {
+                DEFAULT: 'hsl(var(--destructive))',
+                foreground: 'hsl(var(--destructive-foreground))',
+              },
+              muted: {
+                DEFAULT: 'hsl(var(--muted))',
+                foreground: 'hsl(var(--muted-foreground))',
+              },
+              accent: {
+                DEFAULT: 'hsl(var(--accent))',
+                foreground: 'hsl(var(--accent-foreground))',
+              },
+              popover: {
+                DEFAULT: 'hsl(var(--popover))',
+                foreground: 'hsl(var(--popover-foreground))',
+              },
+              card: {
+                DEFAULT: 'hsl(var(--card))',
+                foreground: 'hsl(var(--card-foreground))',
+              },
             },
-            secondary: {
-              DEFAULT: 'hsl(var(--secondary))',
-              foreground: 'hsl(var(--secondary-foreground))',
+            borderRadius: {
+              lg: `var(--radius)`,
+              md: `calc(var(--radius) - 2px)`,
+              sm: 'calc(var(--radius) - 4px)',
             },
-            destructive: {
-              DEFAULT: 'hsl(var(--destructive))',
-              foreground: 'hsl(var(--destructive-foreground))',
-            },
-            muted: {
-              DEFAULT: 'hsl(var(--muted))',
-              foreground: 'hsl(var(--muted-foreground))',
-            },
-            accent: {
-              DEFAULT: 'hsl(var(--accent))',
-              foreground: 'hsl(var(--accent-foreground))',
-            },
-            popover: {
-              DEFAULT: 'hsl(var(--popover))',
-              foreground: 'hsl(var(--popover-foreground))',
-            },
-            card: {
-              DEFAULT: 'hsl(var(--card))',
-              foreground: 'hsl(var(--card-foreground))',
-            },
-          },
-          borderRadius: {
-            lg: `var(--radius)`,
-            md: `calc(var(--radius) - 2px)`,
-            sm: 'calc(var(--radius) - 4px)',
           },
         },
-      },
-    }
-  </script>
-</head>
+      }
+    </script>
+    <link rel="stylesheet" href="/index.css">
+  </head>
   <body class="bg-background text-foreground">
     <div id="root"></div>
     <script src="https://cdn.jsdelivr.net/npm/@citation-js/core@0.7.8/dist/core.min.js"></script>

@@ -10,6 +10,7 @@ interface ChatPanelProps {
     isLoading: boolean;
     error: string | null;
     onSendMessage: (message: string) => void;
+    messagesEndRef?: React.RefObject<HTMLDivElement>; // Optional prop for external control
 }
 
 const ChatBlinkingCursor: React.FC = () => (
@@ -34,12 +35,13 @@ const FormattedMessage: React.FC<{ text: string }> = ({ text }) => {
     );
 };
 
-export const ChatPanel: React.FC<ChatPanelProps> = ({ history, isLoading, error, onSendMessage }) => {
+export const ChatPanel: React.FC<ChatPanelProps> = ({ history, isLoading, error, onSendMessage, messagesEndRef }) => {
     const [inputValue, setInputValue] = useState('');
-    const messagesEndRef = useRef<HTMLDivElement>(null);
+    const internalEndRef = useRef<HTMLDivElement>(null);
+    const endRef = messagesEndRef || internalEndRef;
 
     const scrollToBottom = () => {
-        messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+        endRef.current?.scrollIntoView({ behavior: 'smooth' });
     };
 
     useEffect(() => {
@@ -87,7 +89,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({ history, isLoading, error,
                     );
                 })}
                 {/* Invisible element to scroll to */}
-                <div ref={messagesEndRef} />
+                <div ref={endRef} />
             </div>
             {error && <div className="text-destructive text-sm mt-2 flex-shrink-0">{error}</div>}
             <div className="mt-4 pt-4 border-t border-border flex-shrink-0">

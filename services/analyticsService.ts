@@ -1,4 +1,4 @@
-import { firestoreService } from './firestoreService';
+// Removed firestoreService import
 
 // A simple UUID generator for session tracking
 const generateUUID = (): string => {
@@ -65,7 +65,7 @@ class AnalyticsService {
         this.saveEventsToStorage();
 
         // 3. Log to Firestore for persistent, server-side storage
-        firestoreService.logAnalyticsEvent(eventName, eventData);
+        // firestoreService.logAnalyticsEvent(eventName, eventData); // Disabled
 
         // 4. In a real-world application, this would also send data to an analytics backend.
         console.log(`[ANALYTICS] Event: ${eventName}`, eventData);

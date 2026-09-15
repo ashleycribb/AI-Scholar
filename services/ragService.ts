@@ -1,9 +1,10 @@
-
 import { GoogleGenAI, FunctionDeclaration, Type, Chat } from "@google/genai";
 import type { ResearchPaper, ModelDefinition, Project, ChatMessage, ConnectedPaper } from '../types';
 import * as apiService from './apiService';
 
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+const ai = new GoogleGenAI({ 
+  apiKey: process.env.GEMINI_API_KEY,
+});
 
 // --- AGENT TOOL DEFINITIONS ---
 
@@ -58,7 +59,8 @@ export async function* runAgentTask(
     modelDef: ModelDefinition
 ): AsyncGenerator<AgentUpdate> {
 
-    const modelId = 'gemini-2.5-pro'; // Use a powerful model for agentic tasks
+    // Updated: Use gemini-3-pro-preview for agentic reasoning tasks as per guidelines
+    const modelId = 'gemini-3-pro-preview'; 
 
     const toolImplementations = {
         get_papers_in_project: () => projectPapers.map(p => ({ id: p.id, title: p.title, year: p.year })),
@@ -120,9 +122,14 @@ export async function* runAgentTask(
             yield { type: 'tool-end', toolResponse: { name, result: toolResult } };
 
             response = await chat.sendMessage({
-                message: {
-                    functionResponses: { id, name, response: { result: toolResult } }
-                }
+                message: [
+                    {
+                        functionResponse: {
+                            name,
+                            response: { result: toolResult }
+                        }
+                    }
+                ]
             });
         }
     }

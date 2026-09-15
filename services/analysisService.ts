@@ -105,8 +105,8 @@ const simpleKMeans = (data: number[][], k: number, maxIterations = 50) => {
 // --- End of Custom Implementations ---
 
 
-export const analyzePapers = async (papers: ResearchPaper[]): Promise<AnalysisResult> => {
-    const cacheKey = JSON.stringify({ papers: papers.map(p => p.id) });
+export const analyzePapers = async (papers: ResearchPaper[], domain?: string): Promise<AnalysisResult> => {
+    const cacheKey = JSON.stringify({ papers: papers.map(p => p.id), domain });
     const cachedEntry = analysisCache.get(cacheKey);
     if (cachedEntry && (Date.now() - cachedEntry.timestamp < CACHE_TTL_MS)) {
         return cachedEntry.result;
@@ -242,6 +242,7 @@ export const analyzePapers = async (papers: ResearchPaper[]): Promise<AnalysisRe
         clusters,
         publicationYears,
         topAuthors,
+        domain,
         graph: { nodes, edges }
     };
     
