@@ -61,9 +61,12 @@ describe("testSourceEndpoint refuses SSRF payloads without touching the network"
     await reg.testSourceEndpoint("scielo", "https://169.254.169.254/");
     expect(JSON.stringify(reg.getAllSources().find((s) => s.id === "scielo"))).toBe(before);
   });
-  test("a custom source that reuses a built-in id and points at the metadata service is still refused", async () => {
-    reg.addCustomDiscoveredSource({ id: "scielo", endpointUrl: "https://169.254.169.254/latest/meta-data/" });
-    const r = await reg.testSourceEndpoint("scielo");
+  test("a custom source cannot reuse a built-in id (it gets a new one), and one pointing at the metadata service is refused", async () => {
+    const before = JSON.stringify(reg.getAllSources().find((s) => s.id === "scielo"));
+    const s = reg.addCustomDiscoveredSource({ id: "scielo", endpointUrl: "https://169.254.169.254/latest/meta-data/" });
+    expect(s.id).not.toBe("scielo");
+    expect(JSON.stringify(reg.getAllSources().find((x) => x.id === "scielo"))).toBe(before);
+    const r = await reg.testSourceEndpoint(s.id);
     expect(r.error).toBe(REFUSED);
     expect(r.status).toBe(400);
   });

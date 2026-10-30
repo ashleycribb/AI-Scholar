@@ -260,7 +260,11 @@ export interface DiscoveredSource {
   sampleQueryUrl?: string;
   emailRecipient?: string;
   notes?: string;
+  /** @deprecated clear-text token from earlier versions; never read, removed on the next proposal/approval. */
   approvalToken?: string;
+  /** SHA-256 digest of the live one-click approval token (server only; stripped from API responses). */
+  approvalTokenHash?: string;
+  approvalTokenExpiresAt?: string;
 }
 
 export interface SourceProposalResult {

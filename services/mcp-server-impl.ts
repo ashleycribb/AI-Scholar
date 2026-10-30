@@ -429,7 +429,8 @@ export class WorkspaceMcpServer {
           sessionUuid,
           agent,
           limit: limit || 50,
-          role: "researcher"
+          // The MCP endpoint is researcher/admin-only (server/routePolicy.ts), so full scope is correct here.
+          scope: { kind: "all" }
         });
 
         // If doi was specified, filter by matching object id

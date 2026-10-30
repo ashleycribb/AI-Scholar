@@ -10,10 +10,13 @@ if (!fs.existsSync(localEngineDir)) {
 
 // 1. SQLite Database for Yet SQL LRS (Human Interaction Tracking)
 const sqlLrsPath = path.join(localEngineDir, 'sql_lrs.sqlite');
-const sqliteDb = new DatabaseSync(sqlLrsPath);
 
-// Initialize Yet SQL LRS Schema
-sqliteDb.exec(`
+/** Who is asking, as far as data scoping goes. Always derived from the server-side session, never from the request. */
+export type LrsScope =
+  | { kind: 'all' }
+  | { kind: 'own'; actors: string[] };
+
+const SCHEMA_SQL = `
   CREATE TABLE IF NOT EXISTS xapi_statements (
     id TEXT PRIMARY KEY,
     timestamp TEXT DEFAULT CURRENT_TIMESTAMP,
@@ -37,85 +40,191 @@ sqliteDb.exec(`
     updated_at TEXT,
     PRIMARY KEY (activity_id, state_id)
   );
-`);
+`;
+
+/** Matches one actor identifier exactly (no wildcards): column values or the actor fields inside the stored payload. */
+const ACTOR_MATCH_SQL = `(
+  LOWER(actor_mbox) = LOWER(?)
+  OR LOWER(actor_name) = LOWER(?)
+  OR (CASE WHEN json_valid(payload) THEN LOWER(json_extract(payload, '$.actor.mbox')) END) = LOWER(?)
+  OR (CASE WHEN json_valid(payload) THEN LOWER(json_extract(payload, '$.actor.name')) END) = LOWER(?)
+  OR (CASE WHEN json_valid(payload) THEN LOWER(json_extract(payload, '$.actor.account.name')) END) = LOWER(?)
+)`;
+const actorMatchParams = (actor: string) => [actor, actor, actor, actor, actor];
+const matchAny = (actors: string[]) => ({
+  sql: actors.map(() => ACTOR_MATCH_SQL).join(' OR '),
+  params: actors.flatMap(actorMatchParams),
+});
+
+export const MAX_ACTOR_LENGTH = 256;
+
+/** Exact-match identifiers only: non-empty, bounded, no control characters. */
+export function normalizeActorIdentifier(input: unknown): string | null {
+  if (typeof input !== 'string') return null;
+  const v = input.trim();
+  if (!v || v.length > MAX_ACTOR_LENGTH || /[\u0000-\u001f\u007f]/.test(v)) return null;
+  return v;
+}
+
+export class SqlLrsStore {
+  readonly db: DatabaseSync;
+  constructor(db: DatabaseSync) {
+    this.db = db;
+    this.db.exec(SCHEMA_SQL);
+  }
+
+  getStatements(filter: { limit?: number; actor?: string; scope: LrsScope }): any[] {
+    try {
+      let query = `SELECT payload FROM xapi_statements`;
+      const params: any[] = [];
+      if (filter.scope.kind === 'own') {
+        if (filter.scope.actors.length === 0) return [];
+        const m = matchAny(filter.scope.actors);
+        query += ` WHERE ${m.sql}`;
+        params.push(...m.params);
+      } else if (filter.actor) {
+        // Researcher search box: plain case-insensitive substring (instr), not a LIKE pattern.
+        query += ` WHERE instr(LOWER(actor_name), LOWER(?)) > 0`;
+        params.push(filter.actor);
+      }
+      query += ` ORDER BY timestamp DESC LIMIT ?`;
+      params.push(filter.limit || 100);
+      const rows = this.db.prepare(query).all(...params) as { payload: string }[];
+      return rows.map(r => { try { return JSON.parse(r.payload); } catch { return null; } }).filter(Boolean);
+    } catch (err) {
+      console.error('[SQL LRS] Failed to query SQLite:', err);
+      return [];
+    }
+  }
+
+  count(): number {
+    try {
+      const row = this.db.prepare(`SELECT COUNT(*) as cnt FROM xapi_statements`).get() as { cnt: number };
+      return row?.cnt || 0;
+    } catch (err) {
+      console.error('[SQL LRS] Failed to get count:', err);
+      return 0;
+    }
+  }
+
+  /** Deletes statements whose actor equals one of `actors` exactly. Parameterized; `%` and `_` are ordinary characters. */
+  deleteByActors(actors: string[]): number {
+    const clean = actors.map(normalizeActorIdentifier).filter((a): a is string => !!a);
+    if (clean.length === 0) return 0;
+    const m = matchAny(clean);
+    const result = this.db.prepare(`DELETE FROM xapi_statements WHERE ${m.sql}`).run(...m.params);
+    return Number(result.changes || 0);
+  }
+
+  getState(activityId: string, stateId: string): { data: any; etag: string } | null {
+    try {
+      const row = this.db.prepare(`SELECT data, etag FROM xapi_states WHERE activity_id = ? AND state_id = ?`).get(activityId, stateId) as { data: string; etag: string } | undefined;
+      if (!row) return null;
+      return { data: JSON.parse(row.data), etag: row.etag };
+    } catch (err) {
+      console.error('[xAPI State] Error getting state:', err);
+      return null;
+    }
+  }
+
+  putState(activityId: string, stateId: string, data: any, ifMatch?: string | null): { etag: string; conflict?: boolean } {
+    try {
+      const existing = this.db.prepare(`SELECT etag FROM xapi_states WHERE activity_id = ? AND state_id = ?`).get(activityId, stateId) as { etag: string } | undefined;
+      if (ifMatch && existing && existing.etag !== ifMatch) {
+        return { etag: existing.etag, conflict: true };
+      }
+      const newEtag = `"${Date.now()}-${Math.random().toString(36).slice(2, 8)}"`;
+      this.db.prepare(`
+        INSERT OR REPLACE INTO xapi_states (activity_id, state_id, etag, data, updated_at)
+        VALUES (?, ?, ?, ?, ?)
+      `).run(activityId, stateId, newEtag, JSON.stringify(data), new Date().toISOString());
+      return { etag: newEtag };
+    } catch (err) {
+      console.error('[xAPI State] Error putting state:', err);
+      return { etag: `"${Date.now()}"` };
+    }
+  }
+
+  queryConforming(params: { registration?: string; verb?: string; limit?: number; since?: string; scope: LrsScope }): any[] {
+    try {
+      let sql = `SELECT payload FROM xapi_statements`;
+      const where: string[] = [];
+      const args: any[] = [];
+      if (params.scope.kind === 'own') {
+        if (params.scope.actors.length === 0) return [];
+        const m = matchAny(params.scope.actors);
+        where.push(`(${m.sql})`);
+        args.push(...m.params);
+      }
+      if (params.verb) { where.push(`verb_id = ?`); args.push(params.verb); }
+      if (params.since) { where.push(`timestamp >= ?`); args.push(params.since); }
+      if (where.length > 0) sql += ` WHERE ` + where.join(' AND ');
+      sql += ` ORDER BY timestamp ASC LIMIT ?`;
+      args.push(params.limit || 500);
+
+      const rows = this.db.prepare(sql).all(...args) as { payload: string }[];
+      const list: any[] = [];
+      for (const r of rows) {
+        try {
+          const stmt = JSON.parse(r.payload);
+          if (params.registration) {
+            const reg = stmt.context?.registration || stmt.context?.extensions?.sessionUuid;
+            if (reg && reg.toLowerCase() !== params.registration.toLowerCase()) continue;
+          }
+          list.push(stmt);
+        } catch {}
+      }
+      return list;
+    } catch (err) {
+      console.error('[xAPI Statements] Error querying statements:', err);
+      return [];
+    }
+  }
+}
+
+// Opened on first use (not at import) so importing this module never touches local_engine/sql_lrs.sqlite.
+let sqlLrsInstance: SqlLrsStore | null = null;
+const sqlLrs = (): SqlLrsStore => (sqlLrsInstance ??= new SqlLrsStore(new DatabaseSync(sqlLrsPath)));
+
+/** Test seam: swap the store the module-level functions use (e.g. an in-memory database). Returns the previous one. */
+export function useSqlLrsStore(store: SqlLrsStore | null): SqlLrsStore | null {
+  const previous = sqlLrsInstance;
+  sqlLrsInstance = store;
+  return previous;
+}
 
 export function insertSqlLrsStatement(_stmt: any): void {
   // S3A WASM Snapshot is the single source of truth.
   // SQLite statement writing is disabled to consolidate storage on S3A.
 }
 
-export function getSqlLrsStatements(filter: {
-  limit?: number;
-  actor?: string;
-  role?: string;
-  userName?: string;
-}): any[] {
-  try {
-    const isResearcher = filter.role === 'researcher';
-    let query = `SELECT payload FROM xapi_statements`;
-    const params: any[] = [];
-
-    if (!isResearcher) {
-      const targetUser = filter.userName || filter.actor;
-      if (targetUser) {
-        query += ` WHERE LOWER(actor_name) = LOWER(?) OR LOWER(actor_mbox) = LOWER(?)`;
-        params.push(targetUser, targetUser);
-      } else {
-        query += ` WHERE LOWER(actor_name) LIKE '%scholar explorer user%'`;
-      }
-    } else if (filter.actor) {
-      query += ` WHERE LOWER(actor_name) LIKE LOWER(?)`;
-      params.push(`%${filter.actor}%`);
-    }
-
-    query += ` ORDER BY timestamp DESC LIMIT ?`;
-    params.push(filter.limit || 100);
-
-    const rows = sqliteDb.prepare(query).all(...params) as { payload: string }[];
-    return rows.map(r => {
-      try {
-        return JSON.parse(r.payload);
-      } catch {
-        return null;
-      }
-    }).filter(Boolean);
-  } catch (err) {
-    console.error('[SQL LRS] Failed to query SQLite:', err);
-    return [];
-  }
+/**
+ * `scope` comes from the caller's server-side session (see server/lrsAccess.ts), never from the query string.
+ * `actor` is an optional researcher-only substring filter.
+ */
+export function getSqlLrsStatements(filter: { limit?: number; actor?: string; scope: LrsScope }): any[] {
+  return sqlLrs().getStatements(filter);
 }
 
 export function getSqlLrsCount(): number {
-  try {
-    const row = sqliteDb.prepare(`SELECT COUNT(*) as cnt FROM xapi_statements`).get() as { cnt: number };
-    return row?.cnt || 0;
-  } catch (err) {
-    console.error('[SQL LRS] Failed to get count:', err);
-    return 0;
-  }
+  return sqlLrs().count();
 }
 
-export function deleteSqlLrsStatementsByActor(actorIdentifier: string): number {
+/**
+ * Deletes every statement whose actor is exactly one of `actors` (SQLite, and DuckDB when enabled).
+ * Exact, case-insensitive equality with bound parameters: there is no LIKE pattern, so `%` or `_` in an
+ * identifier is just a character and cannot widen the match. Who may call this is decided by the route.
+ */
+export function deleteSqlLrsStatementsByActor(actors: string | string[]): number {
+  const list = (Array.isArray(actors) ? actors : [actors])
+    .map(normalizeActorIdentifier)
+    .filter((a): a is string => !!a);
+  if (list.length === 0) return 0;
   try {
-    if (!actorIdentifier || !actorIdentifier.trim()) return 0;
-    const actor = actorIdentifier.trim();
-    const query = `
-      DELETE FROM xapi_statements 
-      WHERE actor_mbox = ? 
-         OR actor_name = ? 
-         OR payload LIKE ? 
-         OR payload LIKE ?
-    `;
-    const pattern1 = `%"name":"${actor}"%`;
-    const pattern2 = `%"name": "${actor}"%`;
-    const result = sqliteDb.prepare(query).run(actor, actor, pattern1, pattern2);
-
-    try {
-      duckDbInstance.run(`DELETE FROM xapi_audit_trail WHERE xapi_payload LIKE '%${actor.replace(/'/g, "''")}%'`, () => {});
-    } catch {}
-
-    console.log(`[S3A LRS] Deleted statements for actor: ${actor}`);
-    return Number(result.changes || 0);
+    const removed = sqlLrs().deleteByActors(list);
+    deleteDuckDbByActors(list);
+    console.log(`[S3A LRS] Deleted ${removed} statement(s) for ${list.length} actor identifier(s)`);
+    return removed;
   } catch (err) {
     console.error('[SQL LRS] Failed to delete statements by actor:', err);
     return 0;
@@ -123,38 +232,11 @@ export function deleteSqlLrsStatementsByActor(actorIdentifier: string): number {
 }
 
 export function getXapiState(activityId: string, stateId: string): { data: any; etag: string } | null {
-  try {
-    const row = sqliteDb.prepare(`SELECT data, etag FROM xapi_states WHERE activity_id = ? AND state_id = ?`).get(activityId, stateId) as { data: string; etag: string } | undefined;
-    if (!row) return null;
-    return {
-      data: JSON.parse(row.data),
-      etag: row.etag
-    };
-  } catch (err) {
-    console.error('[xAPI State] Error getting state:', err);
-    return null;
-  }
+  return sqlLrs().getState(activityId, stateId);
 }
 
 export function putXapiState(activityId: string, stateId: string, data: any, ifMatch?: string | null): { etag: string; conflict?: boolean } {
-  try {
-    const existing = sqliteDb.prepare(`SELECT etag FROM xapi_states WHERE activity_id = ? AND state_id = ?`).get(activityId, stateId) as { etag: string } | undefined;
-    if (ifMatch && existing && existing.etag !== ifMatch) {
-      return { etag: existing.etag, conflict: true };
-    }
-    const newEtag = `"${Date.now()}-${Math.random().toString(36).slice(2, 8)}"`;
-    const dataStr = JSON.stringify(data);
-    const updatedAt = new Date().toISOString();
-    sqliteDb.prepare(`
-      INSERT OR REPLACE INTO xapi_states (activity_id, state_id, etag, data, updated_at)
-      VALUES (?, ?, ?, ?, ?)
-    `).run(activityId, stateId, newEtag, dataStr, updatedAt);
-    return { etag: newEtag };
-  } catch (err) {
-    console.error('[xAPI State] Error putting state:', err);
-    const fallbackEtag = `"${Date.now()}"`;
-    return { etag: fallbackEtag };
-  }
+  return sqlLrs().putState(activityId, stateId, data, ifMatch);
 }
 
 export function queryConformingStatements(params: {
@@ -162,46 +244,9 @@ export function queryConformingStatements(params: {
   verb?: string;
   limit?: number;
   since?: string;
+  scope: LrsScope;
 }): any[] {
-  try {
-    let sql = `SELECT payload FROM xapi_statements`;
-    const where: string[] = [];
-    const args: any[] = [];
-
-    if (params.verb) {
-      where.push(`verb_id = ?`);
-      args.push(params.verb);
-    }
-    if (params.since) {
-      where.push(`timestamp >= ?`);
-      args.push(params.since);
-    }
-
-    if (where.length > 0) {
-      sql += ` WHERE ` + where.join(' AND ');
-    }
-    sql += ` ORDER BY timestamp ASC LIMIT ?`;
-    args.push(params.limit || 500);
-
-    const rows = sqliteDb.prepare(sql).all(...args) as { payload: string }[];
-    const list: any[] = [];
-    for (const r of rows) {
-      try {
-        const stmt = JSON.parse(r.payload);
-        if (params.registration) {
-          const reg = stmt.context?.registration || stmt.context?.extensions?.sessionUuid;
-          if (reg && reg.toLowerCase() !== params.registration.toLowerCase()) {
-            continue;
-          }
-        }
-        list.push(stmt);
-      } catch {}
-    }
-    return list;
-  } catch (err) {
-    console.error('[xAPI Statements] Error querying statements:', err);
-    return [];
-  }
+  return sqlLrs().queryConforming(params);
 }
 
 // 2. DuckDB Optional Read-Only Analytics Export (Off by default)
@@ -218,6 +263,30 @@ if (ENABLE_DUCKDB_ANALYTICS) {
   }
 }
 
+/** Parameterized, exact-match delete for the optional DuckDB audit table. */
+export function buildDuckDbDelete(actors: string[]): { sql: string; params: string[] } {
+  const one = `(LOWER(agent_name) = LOWER(?)
+    OR LOWER(json_extract_string(xapi_payload, '$.actor.mbox')) = LOWER(?)
+    OR LOWER(json_extract_string(xapi_payload, '$.actor.name')) = LOWER(?)
+    OR LOWER(json_extract_string(xapi_payload, '$.actor.account.name')) = LOWER(?))`;
+  return {
+    sql: `DELETE FROM xapi_audit_trail WHERE ${actors.map(() => one).join(' OR ')}`,
+    params: actors.flatMap(a => [a, a, a, a]),
+  };
+}
+
+function deleteDuckDbByActors(actors: string[]): void {
+  if (!duckDbInstance || actors.length === 0) return;
+  const { sql, params } = buildDuckDbDelete(actors);
+  try {
+    duckDbInstance.run(sql, ...params, (err: any) => {
+      if (err) console.warn('[DuckDB Analytics] Delete by actor failed:', err.message);
+    });
+  } catch (err: any) {
+    console.warn('[DuckDB Analytics] Delete by actor failed:', err?.message);
+  }
+}
+
 export function insertDuckDbStatement(_stmt: any): Promise<void> {
   // S3A WASM Snapshot is the single source of truth.
   // DuckDB writes are removed to consolidate storage on S3A.
@@ -228,8 +297,8 @@ export function getDuckDbStatements(filter: {
   sessionUuid?: string;
   agent?: string;
   limit?: number;
-  role?: string;
-  userName?: string;
+  /** From the caller's server-side session. 'own' (participants) must name a sessionUuid; 'all' is researcher/committee/admin. */
+  scope: LrsScope;
 }): Promise<any[]> {
   if (!ENABLE_DUCKDB_ANALYTICS || !duckDbInstance) {
     return Promise.resolve([]);
@@ -237,7 +306,7 @@ export function getDuckDbStatements(filter: {
 
   return new Promise((resolve) => {
     try {
-      const isResearcher = filter.role === 'researcher';
+      const isResearcher = filter.scope.kind === 'all';
       let sql = `SELECT xapi_payload FROM xapi_audit_trail`;
       const params: any[] = [];
       const whereClauses: string[] = [];
@@ -255,8 +324,9 @@ export function getDuckDbStatements(filter: {
           params.push(filter.sessionUuid);
         }
         if (filter.agent) {
-          whereClauses.push(`LOWER(agent_name) LIKE LOWER(?)`);
-          params.push(`%${filter.agent}%`);
+          // Plain substring match: strpos, not LIKE, so `%` and `_` are ordinary characters.
+          whereClauses.push(`strpos(LOWER(agent_name), LOWER(?)) > 0`);
+          params.push(filter.agent);
         }
       }
 
@@ -316,6 +386,6 @@ export async function exportDuckDbAnalytics(): Promise<{ enabled: boolean; count
   if (!ENABLE_DUCKDB_ANALYTICS) {
     return { enabled: false, count: 0, statements: [] };
   }
-  const statements = await getDuckDbStatements({ role: 'researcher', limit: 1000 });
+  const statements = await getDuckDbStatements({ scope: { kind: 'all' }, limit: 1000 });
   return { enabled: true, count: statements.length, statements };
 }
