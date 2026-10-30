@@ -5,6 +5,7 @@ import React, { useState, useEffect } from 'react';
 import ReactDOM from 'react-dom/client';
 import type { LocalPaper } from './lib/types';
 import { scrapePageMetadata } from './lib/scraper';
+import { parsePopupMessage } from '../services/extensionMessages';
 
 const Popup: React.FC = () => {
     const [papers, setPapers] = useState<LocalPaper[]>([]);
@@ -22,12 +23,15 @@ const Popup: React.FC = () => {
         
         const channel = new BroadcastChannel('ai_research_explorer_channel');
         const handleChannelMessage = (event: MessageEvent) => {
-             if (event.data.type === 'paper_saved') {
+             const message = parsePopupMessage(event.data);
+             if (!message) return; // ignore malformed or unexpected channel data
+             if (message.type === 'paper_saved') {
                 setIsSaving(false); // Stop saving indicator when paper is confirmed saved
-                setPapers(prev => [event.data.paper, ...prev.filter(p => p.id !== event.data.paper.id)]);
+                const saved = message.paper as unknown as LocalPaper;
+                setPapers(prev => [saved, ...prev.filter(p => p.id !== saved.id)]);
              }
-             if (event.data.type === 'paper_removed') {
-                setPapers(prev => prev.filter(p => p.id !== event.data.paperId));
+             if (message.type === 'paper_removed') {
+                setPapers(prev => prev.filter(p => p.id !== message.paperId));
              }
         };
         channel.addEventListener('message', handleChannelMessage);

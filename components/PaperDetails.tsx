@@ -27,6 +27,7 @@ import * as apiService from '../services/apiService';
 import * as citationService from '../services/citationService';
 import * as scholarBridgeService from '../services/scholarBridgeService';
 import { LoadingSpinner } from './LoadingSpinner';
+import { SafeHTML } from './SafeHTML';
 import { SciteBadge } from './SciteBadge';
 import { ShieldCheck, ThumbsUp, MessageSquare, ThumbsDown, Share2, Award, Database, ExternalLink, RefreshCw } from 'lucide-react';
 import { BibliographicCopyBar } from './BibliographicCopyBar';
@@ -830,9 +831,9 @@ const PaperDetailsInner: React.FC<PaperDetailsProps> = (props) => {
 
                                 {quickCitation && (
                                     <div className="p-3 bg-white rounded-lg border border-border group relative animate-fade-in shadow-inner">
-                                        <div 
-                                            className="text-xs text-foreground leading-relaxed pr-8 font-serif" 
-                                            dangerouslySetInnerHTML={{ __html: quickCitation }}
+                                        <SafeHTML
+                                            html={quickCitation}
+                                            className="text-xs text-foreground leading-relaxed pr-8 font-serif"
                                         />
                                         <button 
                                             onClick={handleCopyCitation}

@@ -3,6 +3,7 @@
 declare const chrome: any;
 
 import type { ResearchPaper, PaperAnalysis } from '../../types';
+import { escapeHtml, safeHttpUrl } from '../lib/escapeHtml';
 
 // --- UTILITY FUNCTIONS ---
 const createPaperIdFromUrl = (url: string): string => {
@@ -74,18 +75,18 @@ function showCoPilotPanel() {
 function renderCoPilotContent(summary: string, analysis: PaperAnalysis) {
     const content = coPilotPanel!.querySelector('#are-copilot-content') as HTMLElement;
     
-    const findingsHTML = analysis.keyFindings.map(item => `<li>${item}</li>`).join('');
-    const limitationsHTML = analysis.limitations.map(item => `<li>${item}</li>`).join('');
+    const findingsHTML = analysis.keyFindings.map(item => `<li>${escapeHtml(item)}</li>`).join('');
+    const limitationsHTML = analysis.limitations.map(item => `<li>${escapeHtml(item)}</li>`).join('');
 
     content.innerHTML = `
         <div class="are-copilot-section">
             <h3>Summary</h3>
-            <p>${summary}</p>
+            <p>${escapeHtml(summary)}</p>
         </div>
         <div class="are-copilot-section">
             <h3>Analysis</h3>
-            <p><strong>Research Question:</strong> ${analysis.researchQuestion}</p>
-            <p><strong>Methodology:</strong> ${analysis.methodology}</p>
+            <p><strong>Research Question:</strong> ${escapeHtml(analysis.researchQuestion)}</p>
+            <p><strong>Methodology:</strong> ${escapeHtml(analysis.methodology)}</p>
         </div>
         <div class="are-copilot-section">
             <h3>Key Findings</h3>
@@ -117,8 +118,9 @@ function handleFindPdf(e: Event) {
 
     chrome.runtime.sendMessage({ action: 'findOpenAccessForPaper', paper: currentPaper }, response => {
         const toolDiv = document.getElementById('are-pdf-tool')!;
-        if (response?.success && response.pdfUrl) {
-            toolDiv.innerHTML = `<a href="${response.pdfUrl}" target="_blank" rel="noopener noreferrer" class="are-copilot-tool-button">Open PDF</a>`;
+        const pdfUrl = response?.success ? safeHttpUrl(response.pdfUrl) : null;
+        if (pdfUrl) {
+            toolDiv.innerHTML = `<a href="${escapeHtml(pdfUrl)}" target="_blank" rel="noopener noreferrer" class="are-copilot-tool-button">Open PDF</a>`;
         } else {
             toolDiv.innerHTML = `<p style="font-size: 0.875rem; text-align: center;">No open access PDF found.</p>`;
         }
@@ -133,7 +135,7 @@ function handleGetSuggestions(e: Event) {
     chrome.runtime.sendMessage({ action: 'getSuggestionsForPaper', paper: currentPaper }, response => {
         const toolDiv = document.getElementById('are-suggestions-tool')!;
         if (response?.success && response.suggestions.length > 0) {
-            const suggestionsHTML = response.suggestions.map((s: string) => `<li><button data-query="${s}">${s}</button></li>`).join('');
+            const suggestionsHTML = response.suggestions.map((s: string) => `<li><button data-query="${escapeHtml(s)}">${escapeHtml(s)}</button></li>`).join('');
             toolDiv.innerHTML = `
                 <ul class="are-copilot-suggestion-list">${suggestionsHTML}</ul>
             `;

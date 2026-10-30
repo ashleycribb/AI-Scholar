@@ -1,4 +1,5 @@
 import type { ResearchPaper } from '../types';
+import { parseExtensionMessage } from './extensionMessages';
 
 const CHANNEL_NAME = 'ai_research_explorer_channel';
 let channel: BroadcastChannel | null = null;
@@ -16,15 +17,24 @@ export const listenForExtensionMessages = (
     onAllPapersReceived?: (papers: ResearchPaper[]) => void
 ) => {
     const bc = getChannel();
-    bc.onmessage = (event) => {
-        if (event.data.type === 'paper_saved_to_workspace') {
-            onPaperReceived(event.data.paper);
+    bc.onmessage = (event: MessageEvent) => {
+        const expectedOrigin = typeof window !== 'undefined' ? window.location?.origin : undefined;
+        const message = parseExtensionMessage(event.data, event.origin, expectedOrigin);
+        if (!message) {
+            console.warn('[extensionService] Ignored invalid or untrusted message on extension channel');
+            return;
         }
-        if (event.data.type === 'paper_removed') {
-            onPaperRemoved(event.data.paperId);
-        }
-        if (event.data.type === 'all_papers_response' && onAllPapersReceived) {
-            onAllPapersReceived(event.data.papers);
+
+        switch (message.type) {
+            case 'paper_saved_to_workspace':
+                onPaperReceived(message.paper);
+                break;
+            case 'paper_removed':
+                onPaperRemoved(message.paperId);
+                break;
+            case 'all_papers_response':
+                onAllPapersReceived?.(message.papers);
+                break;
         }
     };
     
