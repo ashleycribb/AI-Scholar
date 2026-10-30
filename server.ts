@@ -3,10 +3,10 @@ import { createServer as createViteServer } from "vite";
 import path from "path";
 import axios from "axios";
 import fs from "fs";
-import { exec } from "child_process";
 import { WebSocketServer } from "ws";
 import http from "http";
 import { createGeminiProxyRouter } from "./server/geminiProxy";
+import { createLocalVerifyRouter } from "./server/localVerify";
 import { WorkspaceMcpServer } from "./services/mcp-server-impl";
 import { 
   registerCapabilityPackInRegistry, 
@@ -479,21 +479,8 @@ async function startServer() {
     });
   });
 
-  app.post("/api/local/verify", async (req, res) => {
-    const { filePath } = req.body;
-    if (!filePath) return res.status(400).json({ error: "filePath is required" });
-
-    const absolutePath = path.resolve(process.cwd(), "local_engine", "vault", filePath);
-    const logicianScript = path.join(process.cwd(), "local_engine", "nanobots", "logician.py");
-
-    exec(`python3 "${logicianScript}" "${absolutePath}"`, (error: any, stdout: string, stderr: string) => {
-      if (error) {
-          console.error(`exec error: ${error}`);
-          return res.status(500).json({ error: "Verification failed", details: stderr });
-      }
-      res.json({ status: "success", output: stdout });
-    });
-  });
+  // Runs the logician nanobot on a vault file. No shell; path confined to the vault (see server/localVerify.ts).
+  app.use("/api/local", createLocalVerifyRouter());
 
   // --- OpenAlex Proxy Routes ---
   app.get("/api/openalex/autocomplete", async (req, res) => {
