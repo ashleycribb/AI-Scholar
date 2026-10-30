@@ -1175,10 +1175,14 @@ async function startServer() {
   });
 
   // 15. Test an open database endpoint with live ping
+  // SSRF-safe: https only, allowlisted hosts, public IPs only, no response body returned (see server/safeFetch.ts).
   app.post("/api/sources/test-endpoint", async (req, res) => {
-    const { sourceId, url } = req.body;
-    const result = await testSourceEndpoint(sourceId, url);
-    res.json(result);
+    const { sourceId, url } = req.body ?? {};
+    if (typeof sourceId !== "string" || (url !== undefined && url !== null && typeof url !== "string")) {
+      return res.status(400).json({ online: false, status: 400, latencyMs: 0, error: "sourceId and url must be strings" });
+    }
+    const result = await testSourceEndpoint(sourceId, url ?? undefined);
+    res.status(result.error === "URL not allowed" ? 400 : 200).json(result);
   });
 
   // 16. Dispatch proposal email to ashley.e.cribb@gmail.com

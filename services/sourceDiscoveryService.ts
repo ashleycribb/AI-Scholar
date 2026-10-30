@@ -22,7 +22,8 @@ export const testSourceEndpoint = async (sourceId: string, url?: string): Promis
   online: boolean;
   status: number;
   latencyMs: number;
-  dataSnippet?: string;
+  contentType?: string;
+  bytesRead?: number;
   error?: string;
 }> => {
   const res = await axios.post('/api/sources/test-endpoint', { sourceId, url });
