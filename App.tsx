@@ -58,6 +58,8 @@ import { S3AInspectorModal } from './components/S3AInspectorModal';
 import { S3ADevPanel } from './components/S3ADevPanel';
 import { DatabaseSettingsModal } from './components/DatabaseSettingsModal';
 import { FirstRunConsentModal } from './components/FirstRunConsentModal';
+import { StudyInviteBanner } from './components/StudyInviteBanner';
+import { captureStudyInviteOnLoad } from './services/studyInvite';
 import { JoinStudyModal } from './components/JoinStudyModal';
 import { StartResearchProjectModal } from './components/StartResearchProjectModal';
 import { 
@@ -269,6 +271,7 @@ const App: React.FC = () => {
   const [showFirstRunConsent, setShowFirstRunConsent] = useState(false);
   const [showJoinStudy, setShowJoinStudy] = useState(false);
   const [targetStudyId, setTargetStudyId] = useState<string>('');
+  const [studyInvitePending, setStudyInvitePending] = useState(false);
   const [showStartResearchProject, setShowStartResearchProject] = useState(false);
   const [userRoleMode, setUserRoleMode] = useState<UserRoleMode>('explorer');
   const [recordingActive, setRecordingActive] = useState<boolean>(false);
@@ -557,17 +560,13 @@ const App: React.FC = () => {
       getConsentState().then(setConsentState).catch(() => {});
       isRecordingActive().then(setRecordingActive).catch(() => {});
 
-      // 3. Check for study invite link containing Study ID (e.g. ?studyId=... or ?study=...)
-      try {
-          const urlParams = new URLSearchParams(window.location.search);
-          const inviteStudyId = urlParams.get('studyId') || urlParams.get('study');
-          if (inviteStudyId && inviteStudyId.trim()) {
-              setTargetStudyId(inviteStudyId.trim());
-              setShowFirstRunConsent(true);
-          }
-      } catch (e) {
-          console.warn('[Invite link] Failed to parse query params:', e);
-      }
+      // 3. Study invite link (?studyId=... or ?study=...): capture the id only.
+      // This must never open the consent modal or start tracing. The user opts in
+      // later from the "Join study" banner or the "Join a study" button.
+      captureStudyInviteOnLoad(window.location.search, (inviteStudyId) => {
+          setTargetStudyId(inviteStudyId);
+          setStudyInvitePending(true);
+      });
 
       const cleanupExtensionListener = extensionService.listenForExtensionMessages(
           (paper) => {
@@ -2450,6 +2449,17 @@ const App: React.FC = () => {
             userRoleMode={userRoleMode}
             consentState={consentState}
         />
+
+        {studyInvitePending && targetStudyId && consentState === 'none' && !showFirstRunConsent && (
+            <StudyInviteBanner
+                studyId={targetStudyId}
+                onJoin={(id) => {
+                    setTargetStudyId(id);
+                    setShowFirstRunConsent(true);
+                }}
+                onDismiss={() => setStudyInvitePending(false)}
+            />
+        )}
 
         <main className="flex-grow flex flex-col">
             {renderMainContent()}
