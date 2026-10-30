@@ -15,19 +15,11 @@ import {
 } from "./services/marketplaceService";
 import { registerCapabilityToolInAgent } from "./services/agentService";
 import { createAuth } from "./server/auth";
+import { applyLockdown } from "./server/lockdown";
+import { authorizeRelayUpgrade } from "./server/relayAuth";
+import { createSourceApprovalRouter } from "./server/sourceApproval";
 
-import { 
-  insertSqlLrsStatement, 
-  getSqlLrsStatements, 
-  getSqlLrsCount, 
-  deleteSqlLrsStatementsByActor,
-  insertDuckDbStatement, 
-  getDuckDbStatements, 
-  getDuckDbStats,
-  getXapiState,
-  putXapiState,
-  queryConformingStatements
-} from "./server/lrsDatabase";
+import { registerLrsRoutes } from "./server/lrsRoutes";
 import { 
   recordClaim, 
   linkClaimEvidence, 
@@ -54,22 +46,6 @@ async function startServer() {
   // We need to create an explicit HTTP server to attach WebSockets to
   const httpServer = http.createServer(app);
 
-  // Initialize MCP WebSocket Relay
-  const wss = new WebSocketServer({ server: httpServer, path: '/mcp-relay' });
-
-  wss.on('connection', (ws) => {
-    console.log('[MCP Relay] Scholar Explorer Local Lab connected via WebSocket!');
-    
-    ws.on('message', (message) => {
-      console.log('[MCP Relay] Received message from Local Lab:', message.toString());
-      // Here we will eventually route responses back to the React frontend
-    });
-
-    ws.on('close', () => {
-      console.log('[MCP Relay] Scholar Explorer Local Lab disconnected.');
-    });
-  });
-
   // Initialize MCP Workspace Server
   const mcpServer = new WorkspaceMcpServer();
 
@@ -85,180 +61,43 @@ async function startServer() {
   if (auth.config.trustProxy !== undefined) app.set("trust proxy", auth.config.trustProxy);
   app.use("/api/auth", auth.router);
 
+  // CORS allowlist (no wildcard) and the route policy: who may call each route (server/routePolicy.ts).
+  // Both run before the JSON parser and every handler below, so a rejected request is never parsed.
+  // Handlers read the caller from `req.principal`. Service tokens for non-browser clients and the CORS
+  // origins come from the environment (SERVICE_TOKENS, CORS_ALLOWED_ORIGINS); see server/auth/README.md.
+  const { service, cors: corsConfig } = applyLockdown(app, auth);
+
+  // Initialize MCP WebSocket Relay
+  // Only a researcher session or a service token with the `relay` scope may connect, and browsers must come from an allowed origin.
+  const wss = new WebSocketServer({
+    server: httpServer,
+    path: '/mcp-relay',
+    verifyClient: (info: { origin: string; req: http.IncomingMessage }, done: (ok: boolean, code?: number, message?: string) => void) => {
+      const verdict = authorizeRelayUpgrade(info.req, { auth, service, allowedOrigins: corsConfig.origins });
+      if (!("status" in verdict)) return done(true);
+      console.warn(`[MCP Relay] Rejected WebSocket upgrade (${verdict.status})`);
+      done(false, verdict.status, verdict.reason);
+    }
+  });
+
+  wss.on('connection', (ws) => {
+    console.log('[MCP Relay] Scholar Explorer Local Lab connected via WebSocket!');
+    
+    ws.on('message', (message) => {
+      console.log('[MCP Relay] Received message from Local Lab:', message.toString());
+      // Here we will eventually route responses back to the React frontend
+    });
+
+    ws.on('close', () => {
+      console.log('[MCP Relay] Scholar Explorer Local Lab disconnected.');
+    });
+  });
+
   // Middleware
   app.use(express.json());
 
-  // Global CORS with xAPI 1.0.3 headers exposed
-  app.use((req, res, next) => {
-    res.header("Access-Control-Allow-Origin", "*");
-    res.header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
-    res.header("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept, Authorization, X-Experience-API-Version, If-Match");
-    res.header("Access-Control-Expose-Headers", "ETag, X-Experience-API-Version, Content-Type");
-    if (req.method === "OPTIONS") {
-      return res.sendStatus(200);
-    }
-    next();
-  });
-
-  // --- Authoritative S3A LRS xAPI 1.0.3 Protocol Endpoints ---
-
-  // GET {endpoint}about with header X-Experience-API-Version: 1.0.3
-  app.get("/xapi/about", (req, res) => {
-    res.setHeader("X-Experience-API-Version", "1.0.3");
-
-    // Basic Auth Check
-    const authHeader = req.headers.authorization;
-    if (authHeader && authHeader.startsWith("Basic ")) {
-      try {
-        const decoded = Buffer.from(authHeader.slice(6), "base64").toString("utf-8");
-        const parts = decoded.split(":");
-        const pass = parts.slice(1).join(":");
-        if (pass === "wrong" || pass === "invalid" || pass === "badpassword") {
-          return res.status(401).json({ message: "Auth error: Invalid username or password (401 Unauthorized)" });
-        }
-      } catch {}
-    }
-
-    res.json({
-      version: ["1.0.3"],
-      extensions: {
-        "https://ashecribb.dev/xapi/extensions/s3a-server": "S3A Sovereign LRS Server",
-        "service": "S3A LRS",
-        "version": "1.0.3"
-      }
-    });
-  });
-
-  // POST {endpoint}statements -> returns array of stored IDs
-  app.post("/xapi/statements", async (req, res) => {
-    res.setHeader("X-Experience-API-Version", "1.0.3");
-
-    // Basic Auth Check
-    const authHeader = req.headers.authorization;
-    if (authHeader && authHeader.startsWith("Basic ")) {
-      try {
-        const decoded = Buffer.from(authHeader.slice(6), "base64").toString("utf-8");
-        const parts = decoded.split(":");
-        const pass = parts.slice(1).join(":");
-        if (pass === "wrong" || pass === "invalid" || pass === "badpassword") {
-          return res.status(401).json({ message: "Auth error: Invalid credentials (401 Unauthorized)" });
-        }
-      } catch {}
-    }
-
-    const body = req.body;
-    if (!body) {
-      return res.status(400).json({ message: "Missing statement body" });
-    }
-
-    const statements: any[] = Array.isArray(body) ? body : [body];
-    const storedIds: string[] = [];
-
-    for (const stmt of statements) {
-      if (!stmt.id || !stmt.actor || !stmt.verb || !stmt.object) {
-        return res.status(400).json({ message: "Invalid xAPI 1.0.3 statement format: id, actor, verb, and object are required." });
-      }
-
-      // Check policy permissions for AI statements
-      const isAi = stmt.actor?.account?.homePage?.includes("/agents");
-      if (isAi) {
-        const agentName = stmt.actor?.account?.name || stmt.actor?.name;
-        // If agent is denied or attempting unauthorized publish tool
-        if (agentName === "denied-agent" || stmt.verb?.id?.includes("publish") || stmt.object?.id?.includes("publish")) {
-          return res.status(403).json({ message: "Agent action blocked by policy (403 Forbidden)" });
-        }
-      }
-
-      // Consolidate storage on S3A as single source of truth (no SQLite or DuckDB writes)
-      storedIds.push(stmt.id);
-    }
-
-    console.log(`[S3A LRS] Acknowledged ${storedIds.length} statements via xAPI 1.0.3 (S3A authoritative)`);
-    res.status(200).json(storedIds);
-  });
-
-  // GET {endpoint}statements -> query statements, follow 'more' links
-  app.get("/xapi/statements", (req, res) => {
-    res.setHeader("X-Experience-API-Version", "1.0.3");
-    const { registration, verb, since, limit } = req.query;
-    const maxLimit = limit ? parseInt(limit as string, 10) : 500;
-
-    const stmts = queryConformingStatements({
-      registration: registration as string,
-      verb: verb as string,
-      since: since as string,
-      limit: maxLimit
-    });
-
-    res.json({
-      statements: stmts,
-      more: ""
-    });
-  });
-
-  // GET {endpoint}activities/state -> retrieve workspace document
-  app.get("/xapi/activities/state", (req, res) => {
-    res.setHeader("X-Experience-API-Version", "1.0.3");
-    const { activityId, stateId } = req.query;
-    if (!activityId || !stateId) {
-      return res.status(400).json({ message: "activityId and stateId are required" });
-    }
-
-    const state = getXapiState(activityId as string, stateId as string);
-    if (!state) {
-      return res.status(404).json({ message: "State document not found" });
-    }
-
-    res.setHeader("ETag", state.etag);
-    res.json(state.data);
-  });
-
-  // PUT {endpoint}activities/state -> save workspace document with ETag/If-Match
-  app.put("/xapi/activities/state", (req, res) => {
-    res.setHeader("X-Experience-API-Version", "1.0.3");
-    const { activityId, stateId } = req.query;
-    if (!activityId || !stateId) {
-      return res.status(400).json({ message: "activityId and stateId are required" });
-    }
-
-    const ifMatch = req.headers["if-match"] as string | undefined;
-    const result = putXapiState(activityId as string, stateId as string, req.body, ifMatch);
-
-    if (result.conflict) {
-      return res.status(409).json({ message: "State conflict: ETag mismatch" });
-    }
-
-    res.setHeader("ETag", result.etag);
-    res.status(204).end();
-  });
-
-  // DELETE {endpoint}statements/by-actor or DELETE {endpoint}actors/:actorId -> "Delete my data" endpoint
-  const handleDeleteByActor = (req: express.Request, res: express.Response) => {
-    res.setHeader("X-Experience-API-Version", "1.0.3");
-    const actorParam = (req.query.actor || req.query.agent || req.query.name || req.body?.actor || req.params?.actorId) as string;
-    if (!actorParam) {
-      return res.status(400).json({ message: "Actor identifier is required to delete records." });
-    }
-
-    const deletedCount = deleteSqlLrsStatementsByActor(actorParam);
-    console.log(`[S3A LRS] Data deletion requested for actor: ${actorParam} (${deletedCount} statements removed)`);
-    res.status(200).json({
-      success: true,
-      message: `Deleted statements for actor ${actorParam}`,
-      deletedCount
-    });
-  };
-
-  app.delete("/xapi/statements/by-actor", handleDeleteByActor);
-  app.post("/xapi/statements/delete-by-actor", handleDeleteByActor);
-  app.delete("/xapi/statements", (req, res, next) => {
-    if (req.query.actor || req.query.agent) {
-      return handleDeleteByActor(req, res);
-    }
-    next();
-  });
-  app.delete("/xapi/actors/:actorId", handleDeleteByActor);
-  app.delete("/api/lrs/actors/:actorId", handleDeleteByActor);
+  // xAPI 1.0.3 endpoints and the LRS routes live in server/lrsRoutes.ts
+  registerLrsRoutes(app);
 
   // Serve platform OWL ontologies and xAPI profiles directly from public folder
   app.use("/ontologies", express.static(path.join(process.cwd(), "public", "ontologies")));
@@ -291,123 +130,6 @@ async function startServer() {
     res.json(getResearchGraph(req.params.sessionUuid));
   });
 
-  // --- LRS & xAPI Traceability Engines (Yet SQL LRS, learnmcp-xapi, DuckDB Vertical LRS) ---
-
-  app.get("/api/lrs/status", async (req, res) => {
-    try {
-      const sqlCount = getSqlLrsCount();
-      const duckDbStats = await getDuckDbStats();
-
-      res.json({
-        yetSqlLrs: {
-          status: "active",
-          totalStatements: sqlCount,
-          dbEngine: "Yet SQL LRS (SQLite Engine: local_engine/sql_lrs.sqlite)",
-          endpoint: "/api/lrs/sql-lrs/statements",
-          githubRepo: "https://github.com/yetanalytics/lrsql"
-        },
-        learnMcpXapi: {
-          status: "active",
-          version: "0.1.0-learnmcp",
-          mcpToolsRegistered: 6,
-          profileUri: "/xapi/research_traceability_profile.json",
-          githubRepo: "https://github.com/DavidLMS/learnmcp-xapi"
-        },
-        duckDbVerticalLrs: {
-          status: "active",
-          totalStatements: duckDbStats.totalStatements,
-          dbEngine: "DuckDB Vertical Columnar Engine (local_engine/tensor_lrs.duckdb)",
-          activeSessionsCount: duckDbStats.activeSessionsCount,
-          endpoint: "/api/lrs/duckdb-lrs/statements",
-          githubRepo: "https://github.com/duckdb/duckdb"
-        }
-      });
-    } catch (err: any) {
-      console.error("[LRS Status] Error fetching stats:", err);
-      res.status(500).json({ error: "Failed to retrieve LRS status" });
-    }
-  });
-
-  // Yet SQL LRS Endpoints (Human User Actions stored in SQLite)
-  app.get("/api/lrs/sql-lrs/statements", (req, res) => {
-    const { limit, actor, role, userName } = req.query;
-    const maxLimit = limit ? parseInt(limit as string, 10) : 100;
-    const isResearcher = role === 'researcher';
-
-    const statements = getSqlLrsStatements({
-      limit: maxLimit,
-      actor: actor as string,
-      role: role as string,
-      userName: userName as string
-    });
-
-    res.json({
-      lrsEngine: "yet-sql-lrs",
-      accessScope: isResearcher ? "researcher-full-system" : "participant-privacy-scoped",
-      count: statements.length,
-      statements
-    });
-  });
-
-  app.post("/api/lrs/sql-lrs/statements", (req, res) => {
-    const stmt = req.body;
-    if (!stmt || !stmt.actor || !stmt.verb || !stmt.object) {
-      return res.status(400).json({ error: "Invalid xAPI statement format." });
-    }
-    stmt.stored = new Date().toISOString();
-    stmt.lrsTarget = "s3a-snapshot";
-    // S3A snapshot is single source of truth; SQLite writes removed
-    res.status(201).json({ status: "success", id: stmt.id, lrs: "s3a-snapshot", note: "S3A snapshot is single source of truth" });
-  });
-
-  // DuckDB Optional Read-Only Analytics Export
-  app.get("/api/analytics/duckdb-export", async (_req, res) => {
-    try {
-      const { exportDuckDbAnalytics } = await import("./server/lrsDatabase");
-      const result = await exportDuckDbAnalytics();
-      res.json(result);
-    } catch (err: any) {
-      res.status(500).json({ error: "Analytics export failed", message: err.message });
-    }
-  });
-
-  app.get("/api/lrs/duckdb-lrs/statements", async (req, res) => {
-    const { sessionUuid, agent, limit, role, userName } = req.query;
-    const maxLimit = limit ? parseInt(limit as string, 10) : 100;
-    const isResearcher = role === 'researcher';
-
-    try {
-      const statements = await getDuckDbStatements({
-        sessionUuid: sessionUuid as string,
-        agent: agent as string,
-        limit: maxLimit,
-        role: role as string,
-        userName: userName as string
-      });
-
-      res.json({
-        lrsEngine: "duckdb-analytics-readonly",
-        accessScope: isResearcher ? "researcher-full-system" : "participant-privacy-scoped",
-        sessionUuid: sessionUuid || (isResearcher ? "all" : "current-session-only"),
-        count: statements.length,
-        statements
-      });
-    } catch (err: any) {
-      res.status(500).json({ error: "Failed to retrieve DuckDB statements" });
-    }
-  });
-
-  app.post("/api/lrs/duckdb-lrs/statements", async (req, res) => {
-    const stmt = req.body;
-    if (!stmt || !stmt.actor || !stmt.verb || !stmt.object) {
-      return res.status(400).json({ error: "Invalid xAPI statement format." });
-    }
-    stmt.stored = new Date().toISOString();
-    stmt.lrsTarget = "s3a-snapshot";
-    // S3A snapshot is single source of truth; DuckDB writes removed
-    res.status(201).json({ status: "success", id: stmt.id, lrs: "s3a-snapshot", sessionUuid: stmt.context?.sessionUuid });
-  });
-
   app.get("/api/xapi/learnmcp/profiles", (req, res) => {
     const profilePath = path.join(process.cwd(), "public", "xapi", "research_traceability_profile.json");
     if (fs.existsSync(profilePath)) {
@@ -418,13 +140,14 @@ async function startServer() {
   });
 
   // --- Bi-Directional Capability Marketplace Sync Endpoints ---
-  // Registering a pack adds a tool to the server's agent, so it needs a signed-in researcher
-  // (or admin) plus CSRF. First route to use the auth middleware; the rest follow in the
-  // route-lockdown PR.
-  app.post("/api/marketplace/capabilities", auth.requireRole("researcher"), (req, res) => {
+  // Registering a pack adds a tool to the server's agent. The route policy requires a signed-in researcher
+  // (or admin) with CSRF, or a service token with marketplace:write.
+  app.post("/api/marketplace/capabilities", (req, res) => {
     try {
       const payload = req.body;
-      const author = (req.headers["x-local-lab-author"] as string) || payload.author || "Local Lab Researcher";
+      // The recorded author is the authenticated caller, not a client-supplied header.
+      const principal = (req as any).principal;
+      const author = principal?.kind === "session" ? principal.email : `service:${principal?.name ?? "unknown"}`;
 
       const validation = validateCapabilityPackPayload(payload);
       if (!validation.valid) {
@@ -1230,30 +953,9 @@ async function startServer() {
     res.json({ success: true, source });
   });
 
-  // 20. One-click approval link handler from email
-  app.get("/api/sources/approve-token", (req, res) => {
-    try {
-      const { id } = req.query;
-      if (!id) return res.status(400).send("Source ID required");
-      const source = approveSource(String(id));
-      res.send(`
-        <html>
-          <body style="font-family: system-ui, -apple-system, sans-serif; text-align: center; padding: 60px 20px; background: #f8fafc; color: #0f172a;">
-            <div style="max-width: 520px; margin: 0 auto; background: white; padding: 40px; border-radius: 16px; box-shadow: 0 10px 25px -5px rgba(0,0,0,0.1); border: 1px solid #e2e8f0;">
-              <div style="font-size: 48px; margin-bottom: 16px;">✨</div>
-              <h1 style="color: #059669; font-size: 24px; font-weight: 800; margin: 0 0 12px;">Source Approved & Activated!</h1>
-              <p style="font-size: 15px; color: #475569; line-height: 1.5; margin: 0 0 24px;">
-                <strong>${source.name}</strong> has been successfully incorporated into the Scholar Explorer search registry. Students will now search this repository automatically.
-              </p>
-              <a href="/" style="display: inline-block; padding: 12px 28px; background: #0f172a; color: white; text-decoration: none; border-radius: 10px; font-weight: 700; font-size: 14px;">Return to Scholar Explorer</a>
-            </div>
-          </body>
-        </html>
-      `);
-    } catch (err: any) {
-      res.status(400).send(`Approval error: ${err.message}`);
-    }
-  });
+  // 20. One-click approval link from the proposal email: confirmation page + POST, single-use token,
+  //     escaped output (server/sourceApproval.ts). The route policy leaves it public; the token is the credential.
+  app.use("/api/sources", createSourceApprovalRouter());
 
   // ==========================================
   // UNIVERSITY LIBRARY MCP CONNECTOR & PROSPECTUS

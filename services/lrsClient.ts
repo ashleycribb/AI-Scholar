@@ -13,6 +13,7 @@
  * - Exponential backoff for network and 5xx errors
  */
 
+import { csrfHeaders, isSameOrigin, isUnsafeMethod } from './csrf';
 import { getLrsCredentials, type LrsCredentials, normalizeLrsEndpoint, hasConfiguredLrsCredentials } from './lrsCredentialsService';
 
 export class LrsError extends Error {
@@ -104,6 +105,12 @@ async function fetchWithRetry(
 ): Promise<Response> {
   let attempt = 0;
   let delay = 1000;
+
+  // A same-origin unsafe request (PUT state, POST statements, DELETE by actor) to this app's own server
+  // needs the CSRF token of the signed-in session. Cross-origin LRS hosts authenticate with Basic credentials instead.
+  if (isUnsafeMethod(options.method) && isSameOrigin(url)) {
+    options = { ...options, headers: { ...(options.headers as Record<string, string>), ...(await csrfHeaders()) } };
+  }
 
   while (true) {
     try {

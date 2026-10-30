@@ -259,12 +259,8 @@ export const fetchLrsStatus = async (): Promise<LrsSystemStatus> => {
  */
 export const fetchUserSqlLrsStatements = async (userRole?: string, userName?: string): Promise<xAPIStatement[]> => {
   try {
-    const params = new URLSearchParams();
-    if (userRole) params.append('role', userRole);
-    if (userName) params.append('userName', userName);
-    const queryString = params.toString() ? `?${params.toString()}` : '';
-    
-    const res = await fetch(`/api/lrs/sql-lrs/statements${queryString}`);
+    // The server decides what this caller may see from their signed-in session; role/userName are not sent.
+    const res = await fetch('/api/lrs/sql-lrs/statements');
     if (res.ok) {
       const data = await res.json();
       if (Array.isArray(data.statements)) return data.statements;
@@ -290,8 +286,6 @@ export const fetchAgentDuckDbStatements = async (sessionUuid?: string, userRole?
   try {
     const params = new URLSearchParams();
     if (sessionUuid) params.append('sessionUuid', sessionUuid);
-    if (userRole) params.append('role', userRole);
-    if (userName) params.append('userName', userName);
     const queryString = params.toString() ? `?${params.toString()}` : '';
 
     const res = await fetch(`/api/lrs/duckdb-lrs/statements${queryString}`);

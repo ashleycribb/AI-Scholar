@@ -2,13 +2,14 @@ import path from 'path';
 import fs from 'fs';
 import axios from 'axios';
 import type { DiscoveredSource, SourceProposalResult, LibraryMcpProspectusConfig } from '../types';
+import { issueApprovalToken, approvalTokenValid, clearApprovalToken } from './approvalTokens';
 
 const localEngineDir = path.join(process.cwd(), 'local_engine');
 if (!fs.existsSync(localEngineDir)) {
   fs.mkdirSync(localEngineDir, { recursive: true });
 }
 
-const REGISTRY_FILE = path.join(localEngineDir, 'source_registry.json');
+let REGISTRY_FILE = path.join(localEngineDir, 'source_registry.json');
 export const DEFAULT_EMAIL_RECIPIENT = 'ashley.e.cribb@gmail.com';
 
 const INITIAL_DISCOVERED_SOURCES: DiscoveredSource[] = [
@@ -188,6 +189,9 @@ function loadState(): RegistryState {
       const raw = fs.readFileSync(REGISTRY_FILE, 'utf-8');
       const data = JSON.parse(raw);
       if (Array.isArray(data.discovered) && data.discovered.length > 0) {
+        // Approval tokens used to be stored in clear text and are now only ever stored as a digest. Old ones are
+        // never accepted; drop them from memory here, so they leave the file the next time the registry is saved.
+        for (const s of data.discovered) if (s && 'approvalToken' in s) delete s.approvalToken;
         return data;
       }
     }
@@ -214,14 +218,28 @@ function saveState(state: RegistryState): void {
 
 let registryState = loadState();
 
+/** Test seam: point the registry at another file (and reload it). Returns the previous file so a test can restore it. */
+export function useRegistryFile(file: string): string {
+  const previous = REGISTRY_FILE;
+  REGISTRY_FILE = file;
+  registryState = loadState();
+  return previous;
+}
+
+/** Copy of a source that is safe to send to a browser: no approval token (clear text from older versions, or digest). */
+export function toPublicSource(source: DiscoveredSource): DiscoveredSource {
+  const { approvalToken: _legacy, approvalTokenHash: _hash, approvalTokenExpiresAt: _exp, ...rest } = source as DiscoveredSource & Record<string, unknown>;
+  return rest as DiscoveredSource;
+}
+
 export function getSourcesRegistry(): {
   discovered: DiscoveredSource[];
   approved: DiscoveredSource[];
   recipientEmail: string;
   lastScanAt: string;
 } {
-  const discovered = registryState.discovered.filter(s => s.status === 'discovered' || s.status === 'proposed');
-  const approved = registryState.discovered.filter(s => s.status === 'approved_active');
+  const discovered = registryState.discovered.filter(s => s.status === 'discovered' || s.status === 'proposed').map(toPublicSource);
+  const approved = registryState.discovered.filter(s => s.status === 'approved_active').map(toPublicSource);
   return {
     discovered,
     approved,
@@ -304,11 +322,11 @@ export async function proposeSource(sourceId: string, recipientEmail?: string): 
   }
 
   const emailTo = recipientEmail || registryState.recipientEmail || DEFAULT_EMAIL_RECIPIENT;
-  const token = generateApprovalToken(sourceId);
+  const token = issueApprovalToken(source);
+  delete source.approvalToken; // older versions kept the token in clear text
   source.status = 'proposed';
   source.proposedAt = new Date().toISOString();
   source.emailRecipient = emailTo;
-  source.approvalToken = token;
   saveState(registryState);
 
   const subject = `[Scholar Explorer Source Discovery] New Academic Database Proposal: ${source.name}`;
@@ -406,7 +424,7 @@ Click Approve in the Scholar Explorer Sources Hub or use token: ${token}
 
   return {
     success: true,
-    source,
+    source: toPublicSource(source),
     emailRecipient: emailTo,
     emailSubject: subject,
     emailHtml: html,
@@ -425,6 +443,8 @@ export function approveSource(sourceId: string): DiscoveredSource {
 
   source.status = 'approved_active';
   source.approvedAt = new Date().toISOString();
+  clearApprovalToken(source);
+  delete source.approvalToken;
   saveState(registryState);
 
   console.log(`[SourceRegistry] Source approved and activated in search index: ${source.name} (${source.id})`);
@@ -438,26 +458,54 @@ export function rejectSource(sourceId: string): DiscoveredSource {
   }
 
   source.status = 'rejected';
+  clearApprovalToken(source);
+  delete source.approvalToken;
   saveState(registryState);
   return source;
 }
 
-export function addCustomDiscoveredSource(data: Partial<DiscoveredSource>): DiscoveredSource {
+/** What the emailed approval page may show for a source, or null when the id/token pair is not valid (unknown, wrong, expired, used). */
+export function peekSourceForApproval(sourceId: unknown, token: unknown): DiscoveredSource | null {
+  const source = typeof sourceId === 'string' ? registryState.discovered.find(s => s.id === sourceId) : undefined;
+  if (!source || source.status !== 'proposed' || !approvalTokenValid(source, token)) return null;
+  return toPublicSource(source);
+}
+
+/** Approves only if `token` is the live, unexpired token issued for this exact source. Single use. */
+export function approveSourceWithToken(sourceId: unknown, token: unknown): DiscoveredSource | null {
+  if (!peekSourceForApproval(sourceId, token)) return null;
+  return toPublicSource(approveSource(sourceId as string));
+}
+
+const CATEGORIES = ['dissertations', 'biomedical', 'cs_tech', 'social_edu', 'multidisciplinary', 'open_data', 'institutional_repo'] as const;
+const PROTOCOLS = ['REST', 'OAI-PMH', 'SPARQL', 'GraphQL', 'OpenSearch'] as const;
+const oneOf = <T extends string>(v: unknown, allowed: readonly T[], fallback: T): T =>
+  typeof v === 'string' && (allowed as readonly string[]).includes(v) ? (v as T) : fallback;
+
+const text = (v: unknown, max: number, fallback: string): string =>
+  typeof v === 'string' && v.trim() ? v.trim().slice(0, max) : fallback;
+
+export function addCustomDiscoveredSource(input: Partial<DiscoveredSource>): DiscoveredSource {
+  const data: Partial<DiscoveredSource> = input && typeof input === 'object' ? input : {};
+  // The id comes from the client: accept only a plain slug that does not collide with an existing source
+  // (otherwise a custom entry could shadow a built-in one), else generate one.
+  const wanted = typeof data.id === 'string' && /^[a-z0-9][a-z0-9_-]{0,63}$/.test(data.id) ? data.id : '';
+  const id = wanted && !registryState.discovered.some(s => s.id === wanted) ? wanted : `custom_src_${Date.now()}`;
   const newSource: DiscoveredSource = {
-    id: data.id || `custom_src_${Date.now()}`,
-    name: data.name || 'New Discovered Repository',
-    description: data.description || 'Open academic source discovered through research network.',
-    category: data.category || 'multidisciplinary',
-    categoryLabel: data.categoryLabel || 'Open Academic Repository',
-    endpointUrl: data.endpointUrl || '',
-    protocol: data.protocol || 'REST',
-    license: data.license || 'Open Access',
-    recordCount: data.recordCount || '1M+ Records',
-    officialUrl: data.officialUrl || '',
+    id,
+    name: text(data.name, 200, 'New Discovered Repository'),
+    description: text(data.description, 2000, 'Open academic source discovered through research network.'),
+    category: oneOf(data.category, CATEGORIES, 'multidisciplinary'),
+    categoryLabel: text(data.categoryLabel, 120, 'Open Academic Repository'),
+    endpointUrl: text(data.endpointUrl, 2048, ''),
+    protocol: oneOf(data.protocol, PROTOCOLS, 'REST'),
+    license: text(data.license, 200, 'Open Access'),
+    recordCount: text(data.recordCount, 100, '1M+ Records'),
+    officialUrl: text(data.officialUrl, 2048, ''),
     status: 'discovered',
     pingStatus: 'unverified',
     emailRecipient: DEFAULT_EMAIL_RECIPIENT,
-    notes: data.notes || 'Added for review'
+    notes: text(data.notes, 2000, 'Added for review')
   };
 
   registryState.discovered.unshift(newSource);

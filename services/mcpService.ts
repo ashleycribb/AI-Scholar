@@ -1,6 +1,7 @@
 
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
+import { csrfHeaders } from './csrf';
 import type { McpStatus, LocalLibraryMetadata, ResearchPaper } from '../types';
 
 const DEFAULT_MCP_URL = '/mcp';
@@ -29,7 +30,8 @@ class McpClientService {
             // The SSEClientTransport connects to the GET endpoint for events
             // and uses the same URL (or a sub-path) for POSTing messages
             const baseUrl = url.startsWith('http') ? url : `${window.location.origin}${url.startsWith('/') ? '' : '/'}${url}`;
-            this.transport = new SSEClientTransport(new URL(baseUrl));
+            // /mcp needs a signed-in researcher session; the POSTed messages also need the CSRF token.
+            this.transport = new SSEClientTransport(new URL(baseUrl), { requestInit: { headers: await csrfHeaders() } });
             
             this.client = new Client(
                 {
