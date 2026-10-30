@@ -36,6 +36,7 @@ import {
   regenerateExplorerDeviceId,
   clearPastExplorerSearches,
   DEFAULT_LRS_ENDPOINT, 
+  normalizeLrsEndpoint,
   getRejectedStatements,
   getResearchLoggingConsent,
   setResearchLoggingConsent,
@@ -55,6 +56,9 @@ import {
   S3A_ENGINE_VERSION
 } from '../services/s3aWasmService';
 import { testLrsConnection, deleteStatementsByActor, LrsError } from '../services/lrsClient';
+import { planServerDelete, skippedDeleteMessage, deletedMessage, deleteErrorMessage } from '../services/deleteMyData';
+import { authService } from '../services/authService';
+import { isSameOrigin } from '../services/csrf';
 import { 
   getLrsSyncState, 
   subscribeLrsSync, 
@@ -258,8 +262,16 @@ export const DatabaseSettingsModal: React.FC<DatabaseSettingsModalProps> = ({
       const expCreds = await getExplorerCredentials();
       const currentId = deviceId || await getExplorerDeviceId();
 
-      // Call server delete-by-actor endpoint
-      const result = await deleteStatementsByActor(currentId, expCreds);
+      // On this app's own server the session decides whose records go (participants: only their own).
+      const plan = planServerDelete({
+        sameOrigin: isSameOrigin(normalizeLrsEndpoint(expCreds.endpoint)),
+        user: authService.getUser(),
+        deviceId: currentId
+      });
+      let result: { deletedCount?: number } = {};
+      if (plan.kind === 'call') {
+        result = await deleteStatementsByActor(plan.actorId, expCreds);
+      }
 
       // Clear local past search history
       await clearPastExplorerSearches();
@@ -268,9 +280,9 @@ export const DatabaseSettingsModal: React.FC<DatabaseSettingsModalProps> = ({
       const freshId = await regenerateExplorerDeviceId();
       setDeviceId(freshId);
 
-      setDeletionStatus(`Deleted ${result.deletedCount ?? 0} statement(s) from the server. Generated new anonymous device ID.`);
+      setDeletionStatus(plan.kind === 'call' ? deletedMessage(result.deletedCount) : skippedDeleteMessage(plan.reason));
     } catch (err: any) {
-      setDeletionStatus(`Data deletion error: ${err.message || 'Server unreachable'}`);
+      setDeletionStatus(`Data deletion error: ${deleteErrorMessage(err)}`);
     } finally {
       setDeletingData(false);
     }
@@ -1009,7 +1021,7 @@ export const DatabaseSettingsModal: React.FC<DatabaseSettingsModalProps> = ({
                   <span>Delete My Data</span>
                 </div>
                 <p className="text-[11px] text-rose-800 leading-relaxed">
-                  This calls the S3A LRS server's delete-by-actor endpoint to remove all stored telemetry statements for your device ID, then creates a new device ID.
+                  This clears your local search history and creates a new device ID. If you are signed in to this app, it also asks the server to delete the records tied to your sign-in address. Participants can delete only their own records. If you are not signed in, server records are left alone, so sign in first.
                 </p>
                 {!showDeleteConfirm ? (
                   <button
@@ -1024,7 +1036,7 @@ export const DatabaseSettingsModal: React.FC<DatabaseSettingsModalProps> = ({
                 ) : (
                   <div className="p-3 bg-white border border-rose-300 rounded-lg space-y-2">
                     <p className="text-xs font-semibold text-rose-900">
-                      Permanently delete telemetry statements for device <code className="bg-rose-100 px-1 py-0.5 rounded font-mono text-[10px]">{deviceId}</code> from the LRS server?
+                      Permanently delete your local history and device <code className="bg-rose-100 px-1 py-0.5 rounded font-mono text-[10px]">{deviceId}</code>, and your server records if you are signed in?
                     </p>
                     <div className="flex items-center gap-2">
                       <button

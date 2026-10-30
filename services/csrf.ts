@@ -4,7 +4,8 @@
  * Unsafe requests (POST/PUT/PATCH/DELETE) to this app's own server must carry the `X-CSRF-Token` that
  * `GET /api/auth/session` returns for the signed-in user. Without a session there is no token, the header
  * is simply left off and the server answers 401, which callers already treat as a failed request.
- * The full login screen arrives in the next PR; until then there is no way to obtain a session in the UI.
+ * `authService` primes this cache whenever it reads or changes the session (sign-in, sign-out, refresh), so the
+ * header always belongs to the current session.
  */
 
 const UNSAFE = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
@@ -25,6 +26,11 @@ export function isUnsafeMethod(method?: string): boolean {
 
 export function resetCsrfToken(): void {
   cached = undefined;
+}
+
+/** Called by authService with the token from /api/auth/session (null = signed out). */
+export function setCsrfToken(token: string | null): void {
+  cached = token;
 }
 
 export async function getCsrfToken(force = false): Promise<string | null> {

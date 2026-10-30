@@ -1,6 +1,7 @@
 
 import React, { useState, useEffect } from 'react';
-import { getVaultFiles, verifyPaperWithLogician } from '../services/localAgentService';
+import { authService } from '../services/authService';
+import { getVaultFilesResult, verifyPaperWithLogician, type VaultAccess } from '../services/localAgentService';
 import { DatabaseIcon, FileTextIcon, PlayIcon, ShieldCheckIcon, TerminalIcon, AlertCircleIcon, CheckCircleIcon } from 'lucide-react';
 
 export const LocalNanobotPanel: React.FC = () => {
@@ -9,16 +10,20 @@ export const LocalNanobotPanel: React.FC = () => {
     const [isVerifying, setIsVerifying] = useState<string | null>(null);
     const [results, setResults] = useState<Record<string, string>>({});
     const [error, setError] = useState<string | null>(null);
+    const [access, setAccess] = useState<VaultAccess>('ok');
 
     const loadFiles = async () => {
         setIsLoading(true);
-        const vaultFiles = await getVaultFiles();
-        setFiles(vaultFiles);
+        const result = await getVaultFilesResult();
+        setFiles(result.files);
+        setAccess(result.access);
         setIsLoading(false);
     };
 
     useEffect(() => {
         loadFiles();
+        // Reload when the session changes (signed in or out, or restored after the page loaded).
+        return authService.subscribe(() => { loadFiles(); });
     }, []);
 
     const handleVerify = async (fileName: string) => {
@@ -57,6 +62,20 @@ export const LocalNanobotPanel: React.FC = () => {
             {isLoading ? (
                 <div className="py-12 flex justify-center">
                     <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600"></div>
+                </div>
+            ) : access === 'signed_out' || access === 'forbidden' ? (
+                <div role="status" className="p-8 text-center bg-muted/20 border-2 border-dashed rounded-xl">
+                    <ShieldCheckIcon className="w-8 h-8 text-muted-foreground mx-auto mb-2 opacity-50" />
+                    <p className="text-sm text-muted-foreground">
+                        {access === 'signed_out'
+                            ? 'Sign in with a researcher account to use the Logician Nanobot.'
+                            : 'Your account does not have access to the Logician Nanobot. It needs a researcher account.'}
+                    </p>
+                </div>
+            ) : access === 'error' ? (
+                <div role="status" className="p-8 text-center bg-muted/20 border-2 border-dashed rounded-xl">
+                    <AlertCircleIcon className="w-8 h-8 text-muted-foreground mx-auto mb-2 opacity-50" />
+                    <p className="text-sm text-muted-foreground">Could not reach the vault. Try Refresh Vault.</p>
                 </div>
             ) : files.length === 0 ? (
                 <div className="p-8 text-center bg-muted/20 border-2 border-dashed rounded-xl">

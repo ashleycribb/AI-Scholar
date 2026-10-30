@@ -1,6 +1,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { mcpService } from '../services/mcpService';
+import { authService } from '../services/authService';
 import * as scholarBridgeService from '../services/scholarBridgeService';
 import type { McpStatus, LocalLibraryMetadata, UserSettings } from '../types';
 import { Library } from 'lucide-react';
@@ -44,6 +45,12 @@ export const LocalLibraryPanel: React.FC<LocalLibraryPanelProps> = ({ userSettin
         }
     }, [userSettings.isMcpEnabled, userSettings.isScholarBridgeEnabled, userSettings.mcpServerUrl]);
 
+    // The MCP bridge needs a signed-in researcher session: try again when the session changes.
+    useEffect(() => {
+        if (!userSettings.isMcpEnabled) return;
+        return authService.subscribe(() => { refreshConnection(); });
+    }, [userSettings.isMcpEnabled, userSettings.mcpServerUrl]);
+
     return (
         <div className="space-y-6">
             <div className="p-5 bg-indigo-50 border border-indigo-100 rounded-xl">
@@ -62,7 +69,7 @@ export const LocalLibraryPanel: React.FC<LocalLibraryPanelProps> = ({ userSettin
                         <div className="flex items-center gap-2">
                             <div className={`w-2.5 h-2.5 rounded-full ${status.isConnected ? 'bg-green-500 animate-pulse' : 'bg-slate-300'}`} />
                             <span className="text-sm font-bold text-indigo-950">
-                                Local Lab Plugin: {status.isConnected ? 'Connected' : 'Offline'}
+                                Local Lab Plugin: {status.isConnected ? 'Connected' : status.authRequired ? 'Sign in with a researcher account to connect' : 'Offline'}
                             </span>
                         </div>
                         {status.isConnected && <CheckIcon className="w-4 h-4 text-green-600" />}

@@ -239,7 +239,9 @@ describe("tokens: hashed, single use, short lived", () => {
     expect(page.status).toBe(200);
     const html = await page.text();
     expect(html).toContain('method="post"');
-    expect(page.headers.get("referrer-policy")).toBe("no-referrer");
+    // Must not be "no-referrer": browsers then send `Origin: null` on this page's form POST, the origin check refuses it,
+    // and the emailed link can never be used (found with a headless Chrome sign-in).
+    expect(page.headers.get("referrer-policy")).toBe("same-origin");
     expect(page.headers.get("cache-control")).toBe("no-store");
     expect(page.headers.get("content-security-policy")).toContain("default-src 'none'");
     const form = new URLSearchParams({ token: tokenFrom(h.mails[0]) });
@@ -247,6 +249,13 @@ describe("tokens: hashed, single use, short lived", () => {
     expect(r.status).toBe(303); // browser form flow redirects
     expect(r.headers.get("location")).toBe("/");
     expect(r.headers.getSetCookie().length).toBe(1);
+  });
+
+  test("a form POST whose Origin is the string \"null\" is still refused, so the page's policy has to keep the real Origin", async () => {
+    await requestLink(h, "pi@uni.edu");
+    const token = tokenFrom(h.mails[0]);
+    expect((await json(h, "/api/auth/magic-link/verify", { token }, { Origin: "null" })).status).toBe(403);
+    expect((await json(h, "/api/auth/magic-link/verify", { token })).status).toBe(200); // token not burned
   });
 
   test("the confirmation page escapes the token", async () => {

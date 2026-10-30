@@ -28,14 +28,13 @@ import {
   getRejectedStatements,
   getLrsCredentials,
   getExplorerCredentials,
-  hasConfiguredLrsCredentials,
   getUserMode,
   getResearchLoggingConsent,
   getStoredConsentState,
   DEFAULT_LRS_ENDPOINT,
   type QueuedStatementItem
 } from './lrsCredentialsService';
-import { postStatements, testLrsConnection, LrsError } from './lrsClient';
+import { postStatements, testLrsConnection, lrsAuthAvailable, LrsError } from './lrsClient';
 import { iri_for_verb_id } from './s3aWasmService';
 
 export type LrsStatusType = 'connected' | 'offline' | 'auth_error';
@@ -408,7 +407,7 @@ export async function flushOutbox(): Promise<void> {
 
   syncState.activeEndpoint = creds.endpoint;
 
-  if (!hasConfiguredLrsCredentials(creds)) {
+  if (!(await lrsAuthAvailable(creds))) {
     syncState.status = 'offline';
     syncState.lastError = null;
     notifyListeners();

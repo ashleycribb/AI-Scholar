@@ -157,7 +157,9 @@ The `/mcp-relay` WebSocket needs a token with `relay`, or a researcher/admin ses
 | `CORS_ALLOWED_ORIGINS` | Extra browser origins that may call the API cross-origin (exact, no wildcard) |
 | `SERVICE_TOKENS` | Service credentials as above |
 
-## Next PR
+## Client
 
-Replace the client-side login (`authService.ts`, `LoginScreen.tsx`) with a magic-link screen that calls these endpoints.
-Until then the browser UI has no way to obtain a session; see the PR description for what answers 401 in the meantime.
+`services/authService.ts` and `components/LoginScreen.tsx` are the browser side of this flow (request a link, the
+server's confirmation page, `/session`, `/logout`, `X-CSRF-Token` on unsafe calls via `services/csrf.ts`). The root
+`README.md` describes what a signed-out visitor, a participant and staff can do, and how to set up the hosted LRS
+service token.

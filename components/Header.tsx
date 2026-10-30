@@ -93,8 +93,8 @@ export const Header: React.FC<HeaderProps> = ({
         };
     }, []);
 
-    // Only signed-in study participants see flush / LRS status. Signed-out users see nothing.
-    const isSignedInStudyParticipant = Boolean(user) && (consentState === 'granted' || user?.role === 'participant');
+    // Only signed-in people who have consented to a study see flush / LRS status. Signing in alone is not joining a study.
+    const isSignedInStudyParticipant = Boolean(user) && consentState === 'granted';
     const totalQueued = (syncState.queuedCount || 0) + (s3aState.bufferedQueueCount || 0);
 
     // Status pill text and colors
@@ -307,8 +307,8 @@ export const Header: React.FC<HeaderProps> = ({
                                     onMouseLeave={() => setUserMenuOpen(false)}
                                 >
                                     <div className="px-3.5 py-2">
-                                        <div className="font-semibold text-slate-900 truncate">{user.name}</div>
-                                        <div className="text-[11px] text-slate-500 capitalize">{user.role}</div>
+                                        <div className="font-semibold text-slate-900 truncate" title={user.email || user.name}>{user.email || user.name}</div>
+                                        <div className="text-[11px] text-slate-500 capitalize">{(user.serverRole || user.role).replace('_', ' ')}</div>
                                     </div>
 
                                     <div className="py-1">
