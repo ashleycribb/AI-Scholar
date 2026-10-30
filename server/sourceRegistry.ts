@@ -2,6 +2,7 @@ import path from 'path';
 import fs from 'fs';
 import { safeFetch, createHostAllowlist, hostsOfUrls, SafeFetchError } from './safeFetch';
 import type { DiscoveredSource, SourceProposalResult, LibraryMcpProspectusConfig } from '../types';
+import { randomBytes } from 'node:crypto';
 import { issueApprovalToken, approvalTokenValid, clearApprovalToken } from './approvalTokens';
 
 const localEngineDir = path.join(process.cwd(), 'local_engine');
@@ -510,7 +511,7 @@ export function addCustomDiscoveredSource(input: Partial<DiscoveredSource>): Dis
   // The id comes from the client: accept only a plain slug that does not collide with an existing source
   // (otherwise a custom entry could shadow a built-in one), else generate one.
   const wanted = typeof data.id === 'string' && /^[a-z0-9][a-z0-9_-]{0,63}$/.test(data.id) ? data.id : '';
-  const id = wanted && !registryState.discovered.some(s => s.id === wanted) ? wanted : `custom_src_${Date.now()}`;
+  const id = wanted && !registryState.discovered.some(s => s.id === wanted) ? wanted : `custom_src_${Date.now()}_${randomBytes(3).toString('hex')}`;
   const newSource: DiscoveredSource = {
     id,
     name: text(data.name, 200, 'New Discovered Repository'),
