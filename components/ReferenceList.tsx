@@ -1,5 +1,6 @@
 import React from 'react';
 import { ErrorMessage } from './ErrorMessage';
+import { SafeHTML } from './SafeHTML';
 import type { CitationStyle } from '../types';
 import { CustomDropdown } from './CustomDropdown';
 
@@ -60,8 +61,9 @@ export const ReferenceList: React.FC<ReferenceListProps> = ({ citations, isLoadi
                         <li 
                             key={index} 
                             className="text-gray-700 leading-relaxed pl-5 -indent-5"
-                            dangerouslySetInnerHTML={{ __html: citation }}
-                        />
+                        >
+                            <SafeHTML html={citation} as="span" />
+                        </li>
                     ))}
                 </ol>
             )}

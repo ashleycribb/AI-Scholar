@@ -4,6 +4,7 @@ import type { ResearchPaper, CitationStyle, ModelDefinition } from '../types';
 import * as citationService from '../services/citationService';
 import { trackExplorerExport } from '../services/explorerTrackingService';
 import { ErrorMessage } from './ErrorMessage';
+import { SafeHTML } from './SafeHTML';
 import { LoadingSpinner } from './LoadingSpinner';
 import { CitationIcon } from './icons/CitationIcon';
 import { CopyIcon } from './icons/CopyIcon';
@@ -144,9 +145,9 @@ export const CitationModal: React.FC<CitationModalProps> = ({ isOpen, onClose, p
                 {isLoading && <LoadingSpinner message="Generating citation..." />}
                 {error && <ErrorMessage message={error} />}
                 {citation && !isLoading && (
-                    <div
+                    <SafeHTML
+                        html={citation}
                         className="p-4 bg-muted/50 border border-border rounded-md text-sm text-foreground leading-relaxed prose max-w-none"
-                        dangerouslySetInnerHTML={{ __html: citation }}
                     />
                 )}
             </div>
