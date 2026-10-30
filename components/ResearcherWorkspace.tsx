@@ -178,6 +178,7 @@ export const ResearcherWorkspace: React.FC<ResearcherWorkspaceProps> = ({
     }, [papers, searchTerm, selectedStudyFilter]);
 
     // Synthetic claims extracted from selected papers
+    // Abstract-sentence preview only: NOT claim extraction. No category, no confidence, no verification.
     const synthesizedClaims = useMemo(() => {
         if (papers.length === 0) return [];
         return papers.map((paper, index) => {
@@ -186,15 +187,13 @@ export const ResearcherWorkspace: React.FC<ResearcherWorkspaceProps> = ({
                 .filter(s => s.length > 25);
             
             const claimText = sentences.length > 1 ? sentences[1] : sentences[0] || paper.title;
-            const contextText = sentences.length > 2 ? sentences[2] : 'Empirical finding documented in research abstract.';
+            const contextText = sentences.length > 2 ? sentences[2] : '';
 
             return {
                 id: `claim-${paper.id || index}`,
                 paper,
                 claim: claimText,
-                supportingContext: contextText,
-                confidence: paper.citations && paper.citations > 20 ? 'High Confidence' : 'Emerging Evidence',
-                category: index % 2 === 0 ? 'Empirical Finding' : 'Methodological Contribution'
+                supportingContext: contextText
             };
         });
     }, [papers]);
@@ -301,14 +300,14 @@ export const ResearcherWorkspace: React.FC<ResearcherWorkspaceProps> = ({
     }, [papers, selectedPdfPaperId]);
 
     // Multi-Researcher Project Collaboration & Committee Sign-Off State
-    const [committeeMembers, setCommitteeMembers] = useState<Array<{ id: string; name: string; role: string; institution: string; status: 'Approved' | 'Review In Progress' | 'Pending Signoff' }>>([
-        { id: 'cm-1', name: 'Dr. Young Baek', role: 'Dissertation Committee Chair', institution: 'UNC Wilmington', status: 'Approved' },
-        { id: 'cm-2', name: 'Dr. Sarah Lin', role: 'Methodologist / Quant Lead', institution: 'Graduate Research Council', status: 'Approved' },
-        { id: 'cm-3', name: 'Dr. Marcus Vance', role: 'External Reader & Examiner', institution: 'University Consortium', status: 'Review In Progress' }
+    const [committeeMembers, setCommitteeMembers] = useState<Array<{ id: string; isDemo?: boolean; name: string; role: string; institution: string; status: 'Approved' | 'Review In Progress' | 'Pending Signoff' }>>([
+        { id: 'cm-1', isDemo: true, name: 'Dr. Young Baek', role: 'Dissertation Committee Chair', institution: 'UNC Wilmington', status: 'Approved' },
+        { id: 'cm-2', isDemo: true, name: 'Dr. Sarah Lin', role: 'Methodologist / Quant Lead', institution: 'Graduate Research Council', status: 'Approved' },
+        { id: 'cm-3', isDemo: true, name: 'Dr. Marcus Vance', role: 'External Reader & Examiner', institution: 'University Consortium', status: 'Review In Progress' }
     ]);
-    const [reviewNotes, setReviewNotes] = useState<Array<{ id: string; author: string; role: string; date: string; comment: string; tag: string }>>([
-        { id: 'rn-1', author: 'Dr. Young Baek', role: 'Committee Chair', date: '2026-09-18', comment: 'Methodology matrix demonstrates sufficient empirical corroboration across primary multi-source registries. Proceed with chapter 2 synthesis.', tag: 'Methodology Signoff' },
-        { id: 'rn-2', author: 'Dr. Sarah Lin', role: 'Methodologist', date: '2026-09-19', comment: 'Ensure open-access preprints are clearly differentiated from blinded peer-reviewed publications in PRISMA flow.', tag: 'PRISMA Audit' }
+    const [reviewNotes, setReviewNotes] = useState<Array<{ id: string; isDemo?: boolean; author: string; role: string; date: string; comment: string; tag: string }>>([
+        { id: 'rn-1', isDemo: true, author: 'Dr. Young Baek', role: 'Committee Chair', date: '2026-09-18', comment: 'Methodology matrix demonstrates sufficient empirical corroboration across primary multi-source registries. Proceed with chapter 2 synthesis.', tag: 'Methodology Signoff' },
+        { id: 'rn-2', isDemo: true, author: 'Dr. Sarah Lin', role: 'Methodologist', date: '2026-09-19', comment: 'Ensure open-access preprints are clearly differentiated from blinded peer-reviewed publications in PRISMA flow.', tag: 'PRISMA Audit' }
     ]);
     const [newReviewAuthor, setNewReviewAuthor] = useState('');
     const [newReviewComment, setNewReviewComment] = useState('');
@@ -331,6 +330,9 @@ export const ResearcherWorkspace: React.FC<ResearcherWorkspaceProps> = ({
     };
 
     const handleExportCommitteeReport = () => {
+        // DEMO sample entries (isDemo) are never exported: only entries the user recorded go into the dossier.
+        const exportMembers = committeeMembers.filter(m => !m.isDemo);
+        const exportNotes = reviewNotes.filter(n => !n.isDemo);
         const report = `# Research Committee Review & Audit Dossier
 **Project:** ${projectName}
 **Date Generated:** ${new Date().toLocaleDateString()}
@@ -339,12 +341,12 @@ export const ResearcherWorkspace: React.FC<ResearcherWorkspaceProps> = ({
 ---
 
 ## 1. Committee Sign-Off Ledger
-${committeeMembers.map(m => `- **${m.name}** (${m.role}, ${m.institution}): \`[${m.status}]\``).join('\n')}
+${exportMembers.length > 0 ? exportMembers.map(m => `- **${m.name}** (${m.role}, ${m.institution}): \`[${m.status}]\``).join('\n') : '_No committee sign-offs recorded. (Sample DEMO entries shown in the app are excluded from this export.)_'}
 
 ---
 
 ## 2. Reviewer Logs & Methodological Sign-Offs
-${reviewNotes.map(n => `### [${n.tag}] ${n.author} (${n.role}) — ${n.date}\n> "${n.comment}"\n`).join('\n')}
+${exportNotes.length > 0 ? exportNotes.map(n => `### [${n.tag}] ${n.author} (${n.role}) — ${n.date}\n> "${n.comment}"\n`).join('\n') : '_No reviewer notes recorded. (Sample DEMO entries shown in the app are excluded from this export.)_'}
 
 ---
 
@@ -414,17 +416,8 @@ ${reviewNotes.map(n => `### [${n.tag}] ${n.author} (${n.role}) — ${n.date}\n> 
                 responseText = `Based on your ${papers.length} selected works (${citedAuthors.join(', ')}):\n\n- **Primary Consensus**: The literature consistently emphasizes empirical rigor, systematic inclusion protocols, and cross-dataset validation.\n- **Theoretical Alignment**: Authors converge on structured methodological reporting to ensure replicability across independent laboratory environments.\n- **Actionable Next Step**: Review the Comparative Evidence Matrix to contrast specific study designs and sample sizes before packaging your discovery snapshot.`;
             }
 
-            // Emit xAPI statement for AI answer shown (actor: agent)
-            emitStatement('ai-answered', {
-                id: `urn:ai:response:${Date.now()}`,
-                name: 'AI Response',
-                type: 'ai-response'
-            }, { 
-                actor: 'agent', 
-                agentSlug: 'scholar-explorer-assistant', 
-                prompt: promptToSend,
-                citations: citationsList 
-            }).catch(() => {});
+            // NOTE: this reply is a timer-driven template, not AI output. It is intentionally NOT logged
+            // as an AI trace (no 'ai-answered' statement). The researcher's own question is still logged above.
 
             setAssistantMessages(prev => [
                 ...prev,
@@ -863,7 +856,7 @@ ${reviewNotes.map(n => `### [${n.tag}] ${n.author} (${n.role}) — ${n.date}\n> 
                                     : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
                             }`}
                         >
-                            Extracted Claims ({synthesizedClaims.length})
+                            Abstract Sentences (preview) ({synthesizedClaims.length})
                         </button>
                         <button
                             type="button"
@@ -874,7 +867,7 @@ ${reviewNotes.map(n => `### [${n.tag}] ${n.author} (${n.role}) — ${n.date}\n> 
                                     : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
                             }`}
                         >
-                            PDF Claim Extraction
+                            PDF Extraction (not built yet)
                         </button>
                         <button
                             type="button"
@@ -1014,16 +1007,16 @@ ${reviewNotes.map(n => `### [${n.tag}] ${n.author} (${n.role}) — ${n.date}\n> 
                             <div className="p-4 bg-white border border-slate-200/80 rounded-xl space-y-1">
                                 <h3 className="text-sm font-semibold text-slate-900 flex items-center gap-2">
                                     <FileCheck className="w-4 h-4 text-slate-700" />
-                                    Extracted Claims & Propositional Evidence
+                                    Abstract sentences (preview, not claim extraction)
                                 </h3>
                                 <p className="text-xs text-slate-500">
-                                    Core empirical and methodological claims extracted from your selected literature.
+                                    One sentence per selected paper, copied from its abstract. These are not extracted or verified claims, they carry no category or confidence score, and no PDF text is read.
                                 </p>
                             </div>
 
                             {synthesizedClaims.length === 0 ? (
                                 <div className="text-center py-12 bg-white border border-slate-200 rounded-xl text-xs text-slate-500">
-                                    No claims synthesized yet. Add articles to your workspace to extract propositions.
+                                    No abstract sentences to preview yet. Add articles to your workspace.
                                 </div>
                             ) : (
                                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -1034,11 +1027,8 @@ ${reviewNotes.map(n => `### [${n.tag}] ${n.author} (${n.role}) — ${n.date}\n> 
                                         >
                                             <div className="space-y-2">
                                                 <div className="flex items-center justify-between gap-2">
-                                                    <span className="px-2 py-0.5 text-[10px] font-medium rounded bg-indigo-50 text-indigo-700 border border-indigo-100">
-                                                        {item.category}
-                                                    </span>
-                                                    <span className="text-[11px] font-mono text-slate-400">
-                                                        {item.confidence}
+                                                    <span className="px-2 py-0.5 text-[10px] font-medium rounded bg-slate-100 text-slate-600 border border-slate-200">
+                                                        Abstract sentence (not verified)
                                                     </span>
                                                 </div>
 
@@ -1046,9 +1036,11 @@ ${reviewNotes.map(n => `### [${n.tag}] ${n.author} (${n.role}) — ${n.date}\n> 
                                                     "{item.claim}"
                                                 </p>
 
-                                                <p className="text-[11px] text-slate-500 leading-relaxed">
-                                                    {item.supportingContext}
-                                                </p>
+                                                {item.supportingContext && (
+                                                    <p className="text-[11px] text-slate-500 leading-relaxed">
+                                                        {item.supportingContext}
+                                                    </p>
+                                                )}
                                             </div>
 
                                             <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-xs">
@@ -1157,10 +1149,10 @@ ${reviewNotes.map(n => `### [${n.tag}] ${n.author} (${n.role}) — ${n.date}\n> 
                                 <div className="space-y-1">
                                     <h3 className="text-sm font-semibold text-slate-900 flex items-center gap-2">
                                         <BookOpen className="w-4 h-4 text-indigo-600" />
-                                        Full-Text PDF Extraction & Claim Attribution Pipeline
+                                        PDF extraction is not built yet (abstract sentences, preview only)
                                     </h3>
                                     <p className="text-xs text-slate-500">
-                                        Grounded section-level claim extraction linking empirical claims to source paragraphs and in-text citation tags.
+                                        This view does not read the PDF. It lists sentences from the paper's abstract only, with no section numbers or page references.
                                     </p>
                                 </div>
                                 {activePdfPaper && (activePdfPaper.pdfURL || activePdfPaper.openAccessPdfUrl || activePdfPaper.sourceURL) && (
@@ -1207,122 +1199,51 @@ ${reviewNotes.map(n => `### [${n.tag}] ${n.author} (${n.role}) — ${n.date}\n> 
                                         })}
                                     </div>
 
-                                    {/* Structured Claim Sections */}
+                                    {/* Abstract sentences (preview). Not PDF extraction: no section tags, no generated text. */}
                                     {activePdfPaper && (() => {
-                                        const pdfAuthor = typeof activePdfPaper.authors === 'string' && activePdfPaper.authors ? activePdfPaper.authors.split(',')[0] : (activePdfPaper.authorList?.[0]?.name || 'Author');
+                                        const pdfAuthor = typeof activePdfPaper.authors === 'string' && activePdfPaper.authors ? activePdfPaper.authors.split(',')[0].trim() : (activePdfPaper.authorList?.[0]?.name || 'Author');
+                                        const abstractSentences = (activePdfPaper.abstract || '')
+                                            .split(/(?<=[.!?])\s+/)
+                                            .map(s => s.trim())
+                                            .filter(s => s.length > 25)
+                                            .slice(0, 8);
+                                        if (abstractSentences.length === 0) {
+                                            return (
+                                                <div className="text-center py-8 bg-white border border-slate-200 rounded-xl text-xs text-slate-500">
+                                                    No abstract is available for this paper, so there is nothing to preview.
+                                                </div>
+                                            );
+                                        }
                                         return (
                                         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                            {/* Section 1: Hypothesis & Framework */}
-                                            <div className="p-4 bg-white border border-slate-200/80 rounded-xl space-y-2">
-                                                <div className="flex items-center justify-between gap-2">
-                                                    <span className="px-2 py-0.5 text-[10px] font-semibold rounded bg-slate-100 text-slate-700 uppercase tracking-wider">
-                                                        Theoretical Framework
-                                                    </span>
-                                                    <span className="text-[11px] font-mono text-slate-400">Section 1</span>
+                                            {abstractSentences.map((sentence, si) => (
+                                                <div key={si} className="p-4 bg-white border border-slate-200/80 rounded-xl space-y-2">
+                                                    <div className="flex items-center justify-between gap-2">
+                                                        <span className="px-2 py-0.5 text-[10px] font-semibold rounded bg-slate-100 text-slate-700 uppercase tracking-wider">
+                                                            Abstract sentence {si + 1}
+                                                        </span>
+                                                        <span className="text-[11px] font-mono text-slate-400">preview, not PDF</span>
+                                                    </div>
+                                                    <p className="text-xs text-slate-700 leading-relaxed font-serif">
+                                                        "{sentence}"
+                                                    </p>
+                                                    <div className="pt-2 flex items-center justify-between border-t border-slate-100">
+                                                        <span className="text-[10px] text-slate-400 font-mono">
+                                                            [{pdfAuthor}, {activePdfPaper.year || 'n.d.'}, abstract]
+                                                        </span>
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => {
+                                                                const tag = `\n\n> "${sentence}" [${pdfAuthor}, ${activePdfPaper.year || 'n.d.'}, abstract]`;
+                                                                setResearchNotes(prev => prev + tag);
+                                                            }}
+                                                            className="text-xs text-indigo-600 hover:text-indigo-900 font-semibold"
+                                                        >
+                                                            + Add to Notes
+                                                        </button>
+                                                    </div>
                                                 </div>
-                                                <p className="text-xs text-slate-700 leading-relaxed font-serif">
-                                                    "{activePdfPaper.title} establishes a rigorous investigation into {searchQuery || 'the domain problem'}, focusing on systemic reproducibility and conceptual boundaries."
-                                                </p>
-                                                <div className="pt-2 flex items-center justify-between border-t border-slate-100">
-                                                    <span className="text-[10px] text-slate-400 font-mono">
-                                                        [{pdfAuthor}, {activePdfPaper.year || '2026'}, §1]
-                                                    </span>
-                                                    <button
-                                                        type="button"
-                                                        onClick={() => {
-                                                            const tag = `\n\n> "${activePdfPaper.title} establishes a rigorous investigation..." [${pdfAuthor}, ${activePdfPaper.year || '2026'}, §1]`;
-                                                            setResearchNotes(prev => prev + tag);
-                                                        }}
-                                                        className="text-xs text-indigo-600 hover:text-indigo-900 font-semibold"
-                                                    >
-                                                        + Add to Notes
-                                                    </button>
-                                                </div>
-                                            </div>
-
-                                            {/* Section 2: Empirical Methodology */}
-                                            <div className="p-4 bg-white border border-slate-200/80 rounded-xl space-y-2">
-                                                <div className="flex items-center justify-between gap-2">
-                                                    <span className="px-2 py-0.5 text-[10px] font-semibold rounded bg-indigo-50 text-indigo-700 uppercase tracking-wider">
-                                                        Empirical Methodology
-                                                    </span>
-                                                    <span className="text-[11px] font-mono text-slate-400">Section 3</span>
-                                                </div>
-                                                <p className="text-xs text-slate-700 leading-relaxed font-serif">
-                                                    "{activePdfPaper.abstract ? activePdfPaper.abstract.split('.')[0] + '.' : 'Methodology leverages structured data collection and peer validation.'}"
-                                                </p>
-                                                <div className="pt-2 flex items-center justify-between border-t border-slate-100">
-                                                    <span className="text-[10px] text-slate-400 font-mono">
-                                                        [{pdfAuthor}, {activePdfPaper.year || '2026'}, §3.2]
-                                                    </span>
-                                                    <button
-                                                        type="button"
-                                                        onClick={() => {
-                                                            const tag = `\n\n> "${activePdfPaper.abstract ? activePdfPaper.abstract.split('.')[0] : 'Methodology data'}" [${pdfAuthor}, ${activePdfPaper.year || '2026'}, §3.2]`;
-                                                            setResearchNotes(prev => prev + tag);
-                                                        }}
-                                                        className="text-xs text-indigo-600 hover:text-indigo-900 font-semibold"
-                                                    >
-                                                        + Add to Notes
-                                                    </button>
-                                                </div>
-                                            </div>
-
-                                            {/* Section 3: Primary Findings */}
-                                            <div className="p-4 bg-white border border-slate-200/80 rounded-xl space-y-2">
-                                                <div className="flex items-center justify-between gap-2">
-                                                    <span className="px-2 py-0.5 text-[10px] font-semibold rounded bg-emerald-50 text-emerald-700 uppercase tracking-wider">
-                                                        Primary Empirical Findings
-                                                    </span>
-                                                    <span className="text-[11px] font-mono text-slate-400">Section 4</span>
-                                                </div>
-                                                <p className="text-xs text-slate-700 leading-relaxed font-serif">
-                                                    "{activePdfPaper.abstract && activePdfPaper.abstract.split('.').length > 1 ? activePdfPaper.abstract.split('.')[1] + '.' : 'Findings substantiate corroboration with primary domain indices.'}"
-                                                </p>
-                                                <div className="pt-2 flex items-center justify-between border-t border-slate-100">
-                                                    <span className="text-[10px] text-slate-400 font-mono">
-                                                        [{pdfAuthor}, {activePdfPaper.year || '2026'}, §4.1]
-                                                    </span>
-                                                    <button
-                                                        type="button"
-                                                        onClick={() => {
-                                                            const tag = `\n\n> "${activePdfPaper.abstract && activePdfPaper.abstract.split('.').length > 1 ? activePdfPaper.abstract.split('.')[1] : 'Findings summary'}" [${pdfAuthor}, ${activePdfPaper.year || '2026'}, §4.1]`;
-                                                            setResearchNotes(prev => prev + tag);
-                                                        }}
-                                                        className="text-xs text-indigo-600 hover:text-indigo-900 font-semibold"
-                                                    >
-                                                        + Add to Notes
-                                                    </button>
-                                                </div>
-                                            </div>
-
-                                            {/* Section 4: Limitations & Delimitations */}
-                                            <div className="p-4 bg-white border border-slate-200/80 rounded-xl space-y-2">
-                                                <div className="flex items-center justify-between gap-2">
-                                                    <span className="px-2 py-0.5 text-[10px] font-semibold rounded bg-amber-50 text-amber-700 uppercase tracking-wider">
-                                                        Delimitations & Limitations
-                                                    </span>
-                                                    <span className="text-[11px] font-mono text-slate-400">Section 5</span>
-                                                </div>
-                                                <p className="text-xs text-slate-700 leading-relaxed font-serif">
-                                                    "Generalizability bounded by sample cohort and regional publication venue constraints ({activePdfPaper.journal || 'Institutional Registry'})."
-                                                </p>
-                                                <div className="pt-2 flex items-center justify-between border-t border-slate-100">
-                                                    <span className="text-[10px] text-slate-400 font-mono">
-                                                        [{pdfAuthor}, {activePdfPaper.year || '2026'}, §5.4]
-                                                    </span>
-                                                    <button
-                                                        type="button"
-                                                        onClick={() => {
-                                                            const tag = `\n\n> "Generalizability bounded by sample cohort constraints." [${pdfAuthor}, ${activePdfPaper.year || '2026'}, §5.4]`;
-                                                            setResearchNotes(prev => prev + tag);
-                                                        }}
-                                                        className="text-xs text-indigo-600 hover:text-indigo-900 font-semibold"
-                                                    >
-                                                        + Add to Notes
-                                                    </button>
-                                                </div>
-                                            </div>
+                                            ))}
                                         </div>
                                         );
                                     })()}
@@ -1354,6 +1275,10 @@ ${reviewNotes.map(n => `### [${n.tag}] ${n.author} (${n.role}) — ${n.date}\n> 
                                 </button>
                             </div>
 
+                            <p className="text-[11px] font-semibold text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                                DEMO DATA: the committee members, sign-off statuses and the two earlier reviewer notes below are sample placeholders, not real sign-offs. They are excluded from the exported dossier and from traces. Only notes you record yourself are exported.
+                            </p>
+
                             {/* Committee Members Table */}
                             <div className="border border-slate-200/80 rounded-xl overflow-hidden bg-white shadow-2xs">
                                 <div className="p-3.5 bg-slate-50 border-b border-slate-200 font-semibold text-xs text-slate-700 flex items-center gap-2">
@@ -1369,6 +1294,9 @@ ${reviewNotes.map(n => `### [${n.tag}] ${n.author} (${n.role}) — ${n.date}\n> 
                                                 <span className="text-xs text-slate-500">{member.role}</span>
                                                 <span className="text-slate-400 text-xs mx-1.5">•</span>
                                                 <span className="text-[11px] text-slate-400">{member.institution}</span>
+                                                {member.isDemo && (
+                                                    <span className="ml-2 px-1.5 py-0.5 text-[9px] font-bold rounded bg-amber-100 text-amber-800 border border-amber-300 uppercase tracking-wider">DEMO</span>
+                                                )}
                                             </div>
                                             <div className="flex items-center gap-2">
                                                 <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-semibold border ${
@@ -1448,6 +1376,9 @@ ${reviewNotes.map(n => `### [${n.tag}] ${n.author} (${n.role}) — ${n.date}\n> 
                                         <div className="flex items-center justify-between text-xs">
                                             <div className="flex items-center gap-2">
                                                 <span className="font-semibold text-slate-900">{note.author}</span>
+                                                {note.isDemo && (
+                                                    <span className="px-1.5 py-0.5 text-[9px] font-bold rounded bg-amber-100 text-amber-800 border border-amber-300 uppercase tracking-wider">DEMO</span>
+                                                )}
                                                 <span className="text-[10px] px-2 py-0.5 bg-slate-100 text-slate-700 rounded font-medium">
                                                     {note.tag}
                                                 </span>
@@ -1532,6 +1463,9 @@ ${reviewNotes.map(n => `### [${n.tag}] ${n.author} (${n.role}) — ${n.date}\n> 
                         <p className="text-xs text-slate-500">
                             Context-aware academic collaborator analyzing your {papers.length} selected candidate {papers.length === 1 ? 'work' : 'works'}.
                         </p>
+                        <p className="text-[11px] font-semibold text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1.5 mt-2">
+                            Placeholder: replies below are fixed template text, not AI output. They are not recorded as AI traces.
+                        </p>
                     </div>
 
                     {/* Quick research prompts */}
@@ -1567,7 +1501,7 @@ ${reviewNotes.map(n => `### [${n.tag}] ${n.author} (${n.role}) — ${n.date}\n> 
                                 className={`flex flex-col space-y-1.5 ${msg.role === 'user' ? 'items-end' : 'items-start'}`}
                             >
                                 <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-400 px-1">
-                                    {msg.role === 'user' ? 'Researcher' : 'Scholar Explorer Assistant'}
+                                    {msg.role === 'user' ? 'Researcher' : 'Placeholder reply (template text, not AI)'}
                                 </span>
                                 <div className={`p-4 rounded-xl text-xs leading-relaxed max-w-2xl ${
                                     msg.role === 'user'
@@ -1592,7 +1526,7 @@ ${reviewNotes.map(n => `### [${n.tag}] ${n.author} (${n.role}) — ${n.date}\n> 
                         {isAssistantResponding && (
                             <div className="flex items-center gap-2 text-xs text-slate-400 py-2">
                                 <div className="w-3.5 h-3.5 border-2 border-slate-400 border-t-transparent rounded-full animate-spin" />
-                                <span>Scholar Explorer Assistant is analyzing selected evidence...</span>
+                                <span>Preparing placeholder reply (not AI)...</span>
                             </div>
                         )}
                     </div>
