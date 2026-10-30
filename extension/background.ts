@@ -24,7 +24,7 @@ const createPaperId = (paper: Partial<ResearchPaper>): string => {
         return `url:${paper.sourceURL}`;
     }
     // Fallback to a simple hash of the title
-    return `title:${paper.title?.toLowerCase().replace(/\s+/g, '-') || Math.random().toString()}`;
+    return `title:${paper.title?.toLowerCase().replace(/\s+/g, '-') || crypto.randomUUID()}`;
 };
 
 async function enrichPaper(paperId: string, paperData: LocalPaper) {
