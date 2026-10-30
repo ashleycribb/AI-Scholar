@@ -1291,19 +1291,24 @@ export async function addOpenAlexPaper(
 /**
  * Records an empirical claim in the S3A snapshot via add_claim.
  * Surfaces any failure as a visible error and records it in sessionRecordErrors.
+ *
+ * `kind` and `embedding` match the wasm signature `add_claim(agent_slug, text, confidence, kind?, embedding?)`
+ * (types/s3a_wasm.d.ts). `kind` defaults to the pack's empirical-claim kind when null.
+ * (Previously the 4th/5th args were an evidence paper index and a human step index, which the
+ * wasm API has no slot for, so the call did not type-check and would have thrown at runtime.)
  */
 export async function addS3AClaim(
   agentOrAuthor: string,
   claimText: string,
   confidence: number = 1.0,
-  evidencePaperIdx: number = 0,
-  humanStepIdx: number | null = null
+  kind: number | null = null,
+  embedding: Float32Array | null = null
 ): Promise<number> {
   let claimIdx = 0;
   await snapshotMutex.run(async () => {
     const snapshot = await _ensureActiveSnapshotInternal();
     try {
-      claimIdx = snapshot.add_claim(agentOrAuthor, claimText, confidence, evidencePaperIdx, humanStepIdx);
+      claimIdx = snapshot.add_claim(agentOrAuthor, claimText, confidence, kind, embedding);
     } catch (err: any) {
       const errMsg = `Failed to record claim "${claimText.slice(0, 60)}" via add_claim: ${err?.message || err}`;
       if (!sessionRecordErrors.includes(errMsg)) {

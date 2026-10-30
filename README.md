@@ -30,4 +30,10 @@ Optional server env: `GEMINI_PROXY_PER_CLIENT_PER_MIN` (default 60), `GEMINI_PRO
 (default 600), `GEMINI_PROXY_ALLOWED_ORIGINS` (comma-separated extra origins, e.g.
 `chrome-extension://<id>`; the extension also needs `chrome.storage.local.set({geminiProxyUrl: "https://<app-url>"})`).
 
-Tests: `npm test` (bun).
+Tests: `npm test` (runs `bun test`; install [Bun](https://bun.sh) for the test runner only).
+
+## Dependencies and CI
+
+`npm` is the package manager; `package-lock.json` is the only lockfile. Use `npm ci` for a clean,
+reproducible install. GitHub Actions (`.github/workflows/ci.yml`) runs `npm ci`, `tsc --noEmit`,
+`npm test`, `npm run build` and `npm run build-extension` on every pull request and push to `main`.
