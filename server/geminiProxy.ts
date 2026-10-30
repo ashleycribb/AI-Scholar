@@ -15,13 +15,21 @@
  *  - request body cap, contents size cap
  *  - upstream errors are sanitized; the key is never echoed
  *
+ * Provider layer: this router only validates, rate-limits and shapes HTTP. Calls go through an LLMService
+ * (server/llm/), which owns provider selection, failover (generate only), timeouts and circuit breaking;
+ * the Gemini SDK lives in server/llm/providers/gemini.ts. Responses carry an X-LLM-Provider header.
+ *
  * Embedding note: use /embed-batch for more than one text. /embed with an array `contents` is
  * forwarded as-is, and gemini-embedding-2* aggregates a flat list of parts into a single vector.
  */
 import express, { type Request, type Response, type NextFunction, Router } from "express";
-import { GoogleGenAI } from "@google/genai";
+import type { GoogleGenAI } from "@google/genai";
+import { createLLMService } from "./llm/config";
+import { LLMError, isLLMError, toHttpError } from "./llm/errors";
+import { GEMINI_MODEL_PATTERN, normalizeGeminiError } from "./llm/providers/gemini";
+import type { LLMService } from "./llm/service";
 
-export const MODEL_PATTERN = /^(models\/)?(gemini|gemma|text-embedding|embedding)[a-z0-9._-]{0,80}$/i;
+export const MODEL_PATTERN = GEMINI_MODEL_PATTERN;
 export const GENERATE_CONFIG_KEYS = new Set([
   "systemInstruction", "tools", "responseMimeType", "responseSchema", "temperature",
   "topP", "topK", "maxOutputTokens", "thinkingConfig", "stopSequences", "seed",
@@ -34,10 +42,12 @@ export const DEFAULT_EMBED_BATCH_MAX_TEXTS = 100; // Gemini batchEmbedContents a
 export const DEFAULT_EMBED_TEXT_MAX_CHARS = 20_000; // ~8k-token input limit of the embedding models, with margin
 
 export interface ProxyOptions {
-  /** Returns the API key; defaults to process.env.GEMINI_API_KEY (read per request). */
+  /** Returns the API key for the Gemini adapter; defaults to process.env.GEMINI_API_KEY (read per request). */
   getApiKey?: () => string | undefined;
-  /** Test seam / alternative backend. */
+  /** Test seam / alternative backend for the Gemini adapter. */
   clientFactory?: (apiKey: string) => Pick<GoogleGenAI, "models">;
+  /** Provider service. Defaults to one built from env (LLM_* variables) with only the Gemini adapter registered. */
+  llm?: LLMService;
   /** generate budget (calls per minute). */
   perClientPerMinute?: number;
   globalPerMinute?: number;
@@ -173,15 +183,8 @@ export function validateEmbedBatch(
 
 /** Map an upstream SDK error to a safe client-facing error. Never forwards raw upstream text. */
 export function sanitizeUpstreamError(err: any): { code: number; status: string; message: string } {
-  const raw = Number(err?.status ?? err?.code ?? err?.error?.code);
-  const code = Number.isInteger(raw) && raw >= 400 && raw < 600 ? raw : 502;
-  const msg = String(err?.message ?? "");
-  if (/API_KEY_INVALID|API key not valid|API key expired/i.test(msg)) return { code: 502, status: "UPSTREAM_AUTH", message: "Gemini credentials were rejected by the server configuration." };
-  if (code === 429) return { code, status: "RESOURCE_EXHAUSTED", message: "Gemini quota or rate limit reached (429). Please retry shortly." };
-  if (code === 404) return { code, status: "NOT_FOUND", message: "Gemini model not found (404)." };
-  if (code === 400) return { code, status: "INVALID_ARGUMENT", message: "Gemini rejected the request (400)." };
-  if (code === 401 || code === 403) return { code: 502, status: "UPSTREAM_AUTH", message: "Gemini credentials were rejected by the server configuration." };
-  return { code: code >= 500 ? 502 : code, status: "UPSTREAM_ERROR", message: "Gemini request failed." };
+  const { code, status, message } = toHttpError(normalizeGeminiError(err));
+  return { code, status, message };
 }
 
 export function createGeminiProxyRouter(opts: ProxyOptions = {}): Router {
@@ -200,8 +203,7 @@ export function createGeminiProxyRouter(opts: ProxyOptions = {}): Router {
   const extraOrigins = new Set(
     (opts.allowedOrigins ?? (process.env.GEMINI_PROXY_ALLOWED_ORIGINS || "").split(","))
       .map(s => s.trim()).filter(Boolean));
-  const getKey = opts.getApiKey ?? (() => process.env.GEMINI_API_KEY);
-  const makeClient = opts.clientFactory ?? ((apiKey: string) => new GoogleGenAI({ apiKey }));
+  const llm = opts.llm ?? createLLMService({ gemini: { getApiKey: opts.getApiKey, clientFactory: opts.clientFactory } });
 
   // Never cached; CORS is explicit (no wildcard) so other sites cannot read responses.
   router.use((req, res, next) => {
@@ -279,21 +281,23 @@ export function createGeminiProxyRouter(opts: ProxyOptions = {}): Router {
   const jsonBody = express.json({ limit: BODY_LIMIT });
   router.use(guard);
 
+  /** Normalized provider error -> the same client-facing JSON as before the provider layer. */
+  const sendError = (res: Response, err: unknown) => {
+    const e = toHttpError(isLLMError(err) ? err : new LLMError("unavailable", "unknown", "Gemini request failed."));
+    console.error(`[gemini-proxy] upstream error ${e.code} ${e.status}`); // status only; never log body/key
+    if (e.retryAfterSeconds) res.setHeader("Retry-After", String(e.retryAfterSeconds));
+    fail(res, e.code, e.status, e.message);
+  };
+
   const handle = (embed: boolean) => async (req: Request, res: Response) => {
     const v = validateGenerate(req.body, embed);
     if (v.error) return fail(res, 400, "INVALID_ARGUMENT", v.error);
-    const apiKey = getKey();
-    if (!apiKey) return fail(res, 503, "UNAVAILABLE", "Gemini is not configured on the server (GEMINI_API_KEY is not set).");
     try {
-      const client = makeClient(apiKey);
-      const out: any = embed
-        ? await client.models.embedContent(v.value)
-        : await client.models.generateContent(v.value);
-      res.json(out);
-    } catch (err: any) {
-      const e = sanitizeUpstreamError(err);
-      console.error(`[gemini-proxy] upstream error ${e.code} ${e.status}`); // status only; never log body/key
-      fail(res, e.code, e.status, e.message);
+      const out = embed ? await llm.embed(v.value) : await llm.generate(v.value);
+      res.setHeader("X-LLM-Provider", out.providerId);
+      res.json(out.raw);
+    } catch (err) {
+      sendError(res, err);
     }
   };
 
@@ -301,27 +305,12 @@ export function createGeminiProxyRouter(opts: ProxyOptions = {}): Router {
   const handleBatch = async (req: Request, res: Response) => {
     const v = validateEmbedBatch(req.body, batchCaps);
     if (v.error) return fail(res, 400, "INVALID_ARGUMENT", v.error);
-    const apiKey = getKey();
-    if (!apiKey) return fail(res, 503, "UNAVAILABLE", "Gemini is not configured on the server (GEMINI_API_KEY is not set).");
     try {
-      const { model, texts, config } = v.value!;
-      const client = makeClient(apiKey);
-      const out: any = await client.models.embedContent({
-        model,
-        contents: texts.map(text => ({ role: "user", parts: [{ text }] })),
-        config,
-      } as any);
-      const embeddings = Array.isArray(out?.embeddings) ? out.embeddings : [];
-      // A short/aggregated answer must never be paired positionally with the inputs.
-      if (embeddings.length !== texts.length) {
-        console.error(`[gemini-proxy] embed-batch count mismatch: sent ${texts.length}, got ${embeddings.length}`);
-        return fail(res, 502, "UPSTREAM_ERROR", "Gemini returned an unexpected number of embeddings.");
-      }
-      res.json({ embeddings: embeddings.map((e: any) => ({ values: Array.isArray(e?.values) ? e.values : [] })) });
-    } catch (err: any) {
-      const e = sanitizeUpstreamError(err);
-      console.error(`[gemini-proxy] upstream error ${e.code} ${e.status}`);
-      fail(res, e.code, e.status, e.message);
+      const out = await llm.embedBatch(v.value!);
+      res.setHeader("X-LLM-Provider", out.providerId);
+      res.json({ embeddings: out.embeddings, providerId: out.providerId });
+    } catch (err) {
+      sendError(res, err);
     }
   };
 
