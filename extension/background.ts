@@ -4,6 +4,7 @@ declare const chrome: any;
 import { db } from './lib/db';
 import type { LocalPaper } from './lib/types';
 import type { ResearchPaper } from '../types';
+import { parseWebAppMessage } from '../services/extensionMessages';
 import { 
     summarizeAbstract, 
     analyzeSinglePaper,
@@ -150,8 +151,15 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
 // Listen for messages from the web app (via the channel)
 channel.onmessage = async (event) => {
-    if (event.data.type === 'web_app_favorite_toggled') {
-        const { paper, isFavorite } = event.data;
+    // Channel data is untrusted: validate before touching IndexedDB or replying.
+    const message = parseWebAppMessage(event.data);
+    if (!message) {
+        console.warn('[background] Ignored invalid message on extension channel');
+        return;
+    }
+
+    if (message.type === 'web_app_favorite_toggled') {
+        const { paper, isFavorite } = message;
         const id = createPaperId(paper);
         
         if (isFavorite) {
@@ -162,7 +170,7 @@ channel.onmessage = async (event) => {
         }
     }
     
-    if (event.data.type === 'request_all_papers') {
+    if (message.type === 'request_all_papers') {
         try {
             const papers = await db.getAllPapers();
             channel.postMessage({ type: 'all_papers_response', papers });
