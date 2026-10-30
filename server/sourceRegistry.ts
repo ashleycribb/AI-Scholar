@@ -1,6 +1,6 @@
 import path from 'path';
 import fs from 'fs';
-import axios from 'axios';
+import { safeFetch, createHostAllowlist, hostsOfUrls, SafeFetchError } from './safeFetch';
 import type { DiscoveredSource, SourceProposalResult, LibraryMcpProspectusConfig } from '../types';
 
 const localEngineDir = path.join(process.cwd(), 'local_engine');
@@ -238,58 +238,82 @@ export function getApprovedSources(): DiscoveredSource[] {
   return registryState.discovered.filter(s => s.status === 'approved_active');
 }
 
-export async function testSourceEndpoint(sourceId: string, customUrl?: string): Promise<{
+/**
+ * Hosts the endpoint test may contact. Derived from the sources shipped in code
+ * (INITIAL_DISCOVERED_SOURCES), NOT from the persisted registry: the registry file is writable
+ * through /api/sources/custom, so trusting it would let a caller allowlist any host.
+ * Extra hosts can be added by the operator with SOURCE_TEST_EXTRA_HOSTS=host1,host2.
+ */
+export function getTestEndpointAllowlist(extraEnv: string | undefined = process.env.SOURCE_TEST_EXTRA_HOSTS): ReadonlySet<string> {
+  const urls: Array<string | undefined> = [];
+  for (const s of INITIAL_DISCOVERED_SOURCES) urls.push(s.endpointUrl, s.sampleQueryUrl, s.officialUrl);
+  const extra = (extraEnv || '').split(',').map(h => h.trim()).filter(Boolean);
+  return createHostAllowlist([...hostsOfUrls(urls), ...extra]);
+}
+
+const TEST_ENDPOINT_MAX_BYTES = 64 * 1024;
+
+export async function testSourceEndpoint(sourceId: string, customUrl?: string, fetcher: typeof safeFetch = safeFetch): Promise<{
   online: boolean;
   status: number;
   latencyMs: number;
-  dataSnippet?: string;
+  contentType?: string;
+  bytesRead?: number;
   error?: string;
 }> {
   const source = registryState.discovered.find(s => s.id === sourceId);
-  const targetUrl = customUrl || source?.sampleQueryUrl || source?.endpointUrl;
+  const targetUrl = (typeof customUrl === 'string' && customUrl) || source?.sampleQueryUrl || source?.endpointUrl;
 
   if (!targetUrl) {
     return { online: false, status: 400, latencyMs: 0, error: 'Endpoint URL missing' };
   }
 
+  // A caller-supplied URL must not be able to flip a registered source's stored status.
+  const updateSource = source && !(typeof customUrl === 'string' && customUrl);
   const start = Date.now();
   try {
-    const res = await axios.get(targetUrl, {
-      timeout: 7000,
-      headers: {
-        'User-Agent': 'ScholarExplorer-OpenSourceDiscoveryBot/1.0 (+https://scholar-explorer.com)'
-      }
+    // https only, allowlisted host, public IPs only (re-checked on every redirect). See server/safeFetch.ts.
+    const res = await fetcher(targetUrl, {
+      allowedHosts: getTestEndpointAllowlist(),
+      timeoutMs: 7000,
+      maxBytes: TEST_ENDPOINT_MAX_BYTES,
+      onOverflow: 'truncate',
+      maxRedirects: 3
     });
     const latency = Date.now() - start;
-    const snippet = typeof res.data === 'string' 
-      ? res.data.substring(0, 300) 
-      : JSON.stringify(res.data).substring(0, 300);
+    const online = res.status >= 200 && res.status < 400;
 
-    if (source) {
-      source.pingStatus = res.status >= 200 && res.status < 400 ? 'online' : 'offline';
+    if (updateSource) {
+      source.pingStatus = online ? 'online' : 'offline';
       source.pingLatencyMs = latency;
       saveState(registryState);
     }
 
+    // Deliberately no response body: the endpoint only reports reachability.
     return {
-      online: res.status >= 200 && res.status < 400,
+      online,
       status: res.status,
       latencyMs: latency,
-      dataSnippet: snippet
+      contentType: String(res.headers['content-type'] || '').slice(0, 100) || undefined,
+      bytesRead: res.body.length
     };
   } catch (err: any) {
     const latency = Date.now() - start;
-    if (source) {
+    if (updateSource) {
       source.pingStatus = 'offline';
       source.pingLatencyMs = latency;
       saveState(registryState);
     }
-    return {
-      online: false,
-      status: err.response?.status || 500,
-      latencyMs: latency,
-      error: err.message || 'Connection failed'
-    };
+    if (err instanceof SafeFetchError) {
+      const refused = err.code !== 'timeout' && err.code !== 'network_error' && err.code !== 'dns_error' && err.code !== 'too_large';
+      return {
+        online: false,
+        status: refused ? 400 : 502,
+        latencyMs: latency,
+        error: refused ? 'URL not allowed' : err.message
+      };
+    }
+    return { online: false, status: 502, latencyMs: latency, error: 'Connection failed' };
   }
 }
 
