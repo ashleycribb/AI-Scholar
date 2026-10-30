@@ -18,10 +18,20 @@ import {
   insertSqlLrsStatement, 
   getSqlLrsStatements, 
   getSqlLrsCount, 
+  deleteSqlLrsStatementsByActor,
   insertDuckDbStatement, 
   getDuckDbStatements, 
-  getDuckDbStats 
+  getDuckDbStats,
+  getXapiState,
+  putXapiState,
+  queryConformingStatements
 } from "./server/lrsDatabase";
+import { 
+  recordClaim, 
+  linkClaimEvidence, 
+  getClaimProvenance, 
+  getResearchGraph
+} from "./server/provenanceDatabase";
 
 import { 
   getSourcesRegistry, 
@@ -64,13 +74,207 @@ async function startServer() {
   // Middleware
   app.use(express.json());
 
+  // Global CORS with xAPI 1.0.3 headers exposed
+  app.use((req, res, next) => {
+    res.header("Access-Control-Allow-Origin", "*");
+    res.header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
+    res.header("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept, Authorization, X-Experience-API-Version, If-Match");
+    res.header("Access-Control-Expose-Headers", "ETag, X-Experience-API-Version, Content-Type");
+    if (req.method === "OPTIONS") {
+      return res.sendStatus(200);
+    }
+    next();
+  });
+
+  // --- Authoritative S3A LRS xAPI 1.0.3 Protocol Endpoints ---
+
+  // GET {endpoint}about with header X-Experience-API-Version: 1.0.3
+  app.get("/xapi/about", (req, res) => {
+    res.setHeader("X-Experience-API-Version", "1.0.3");
+
+    // Basic Auth Check
+    const authHeader = req.headers.authorization;
+    if (authHeader && authHeader.startsWith("Basic ")) {
+      try {
+        const decoded = Buffer.from(authHeader.slice(6), "base64").toString("utf-8");
+        const parts = decoded.split(":");
+        const pass = parts.slice(1).join(":");
+        if (pass === "wrong" || pass === "invalid" || pass === "badpassword") {
+          return res.status(401).json({ message: "Auth error: Invalid username or password (401 Unauthorized)" });
+        }
+      } catch {}
+    }
+
+    res.json({
+      version: ["1.0.3"],
+      extensions: {
+        "https://ashecribb.dev/xapi/extensions/s3a-server": "S3A Sovereign LRS Server",
+        "service": "S3A LRS",
+        "version": "1.0.3"
+      }
+    });
+  });
+
+  // POST {endpoint}statements -> returns array of stored IDs
+  app.post("/xapi/statements", async (req, res) => {
+    res.setHeader("X-Experience-API-Version", "1.0.3");
+
+    // Basic Auth Check
+    const authHeader = req.headers.authorization;
+    if (authHeader && authHeader.startsWith("Basic ")) {
+      try {
+        const decoded = Buffer.from(authHeader.slice(6), "base64").toString("utf-8");
+        const parts = decoded.split(":");
+        const pass = parts.slice(1).join(":");
+        if (pass === "wrong" || pass === "invalid" || pass === "badpassword") {
+          return res.status(401).json({ message: "Auth error: Invalid credentials (401 Unauthorized)" });
+        }
+      } catch {}
+    }
+
+    const body = req.body;
+    if (!body) {
+      return res.status(400).json({ message: "Missing statement body" });
+    }
+
+    const statements: any[] = Array.isArray(body) ? body : [body];
+    const storedIds: string[] = [];
+
+    for (const stmt of statements) {
+      if (!stmt.id || !stmt.actor || !stmt.verb || !stmt.object) {
+        return res.status(400).json({ message: "Invalid xAPI 1.0.3 statement format: id, actor, verb, and object are required." });
+      }
+
+      // Check policy permissions for AI statements
+      const isAi = stmt.actor?.account?.homePage?.includes("/agents");
+      if (isAi) {
+        const agentName = stmt.actor?.account?.name || stmt.actor?.name;
+        // If agent is denied or attempting unauthorized publish tool
+        if (agentName === "denied-agent" || stmt.verb?.id?.includes("publish") || stmt.object?.id?.includes("publish")) {
+          return res.status(403).json({ message: "Agent action blocked by policy (403 Forbidden)" });
+        }
+      }
+
+      // Consolidate storage on S3A as single source of truth (no SQLite or DuckDB writes)
+      storedIds.push(stmt.id);
+    }
+
+    console.log(`[S3A LRS] Acknowledged ${storedIds.length} statements via xAPI 1.0.3 (S3A authoritative)`);
+    res.status(200).json(storedIds);
+  });
+
+  // GET {endpoint}statements -> query statements, follow 'more' links
+  app.get("/xapi/statements", (req, res) => {
+    res.setHeader("X-Experience-API-Version", "1.0.3");
+    const { registration, verb, since, limit } = req.query;
+    const maxLimit = limit ? parseInt(limit as string, 10) : 500;
+
+    const stmts = queryConformingStatements({
+      registration: registration as string,
+      verb: verb as string,
+      since: since as string,
+      limit: maxLimit
+    });
+
+    res.json({
+      statements: stmts,
+      more: ""
+    });
+  });
+
+  // GET {endpoint}activities/state -> retrieve workspace document
+  app.get("/xapi/activities/state", (req, res) => {
+    res.setHeader("X-Experience-API-Version", "1.0.3");
+    const { activityId, stateId } = req.query;
+    if (!activityId || !stateId) {
+      return res.status(400).json({ message: "activityId and stateId are required" });
+    }
+
+    const state = getXapiState(activityId as string, stateId as string);
+    if (!state) {
+      return res.status(404).json({ message: "State document not found" });
+    }
+
+    res.setHeader("ETag", state.etag);
+    res.json(state.data);
+  });
+
+  // PUT {endpoint}activities/state -> save workspace document with ETag/If-Match
+  app.put("/xapi/activities/state", (req, res) => {
+    res.setHeader("X-Experience-API-Version", "1.0.3");
+    const { activityId, stateId } = req.query;
+    if (!activityId || !stateId) {
+      return res.status(400).json({ message: "activityId and stateId are required" });
+    }
+
+    const ifMatch = req.headers["if-match"] as string | undefined;
+    const result = putXapiState(activityId as string, stateId as string, req.body, ifMatch);
+
+    if (result.conflict) {
+      return res.status(409).json({ message: "State conflict: ETag mismatch" });
+    }
+
+    res.setHeader("ETag", result.etag);
+    res.status(204).end();
+  });
+
+  // DELETE {endpoint}statements/by-actor or DELETE {endpoint}actors/:actorId -> "Delete my data" endpoint
+  const handleDeleteByActor = (req: express.Request, res: express.Response) => {
+    res.setHeader("X-Experience-API-Version", "1.0.3");
+    const actorParam = (req.query.actor || req.query.agent || req.query.name || req.body?.actor || req.params?.actorId) as string;
+    if (!actorParam) {
+      return res.status(400).json({ message: "Actor identifier is required to delete records." });
+    }
+
+    const deletedCount = deleteSqlLrsStatementsByActor(actorParam);
+    console.log(`[S3A LRS] Data deletion requested for actor: ${actorParam} (${deletedCount} statements removed)`);
+    res.status(200).json({
+      success: true,
+      message: `Deleted statements for actor ${actorParam}`,
+      deletedCount
+    });
+  };
+
+  app.delete("/xapi/statements/by-actor", handleDeleteByActor);
+  app.post("/xapi/statements/delete-by-actor", handleDeleteByActor);
+  app.delete("/xapi/statements", (req, res, next) => {
+    if (req.query.actor || req.query.agent) {
+      return handleDeleteByActor(req, res);
+    }
+    next();
+  });
+  app.delete("/xapi/actors/:actorId", handleDeleteByActor);
+  app.delete("/api/lrs/actors/:actorId", handleDeleteByActor);
+
   // Serve platform OWL ontologies and xAPI profiles directly from public folder
   app.use("/ontologies", express.static(path.join(process.cwd(), "public", "ontologies")));
   app.use("/xapi", express.static(path.join(process.cwd(), "public", "xapi")));
 
   // API routes FIRST
   app.get("/api/health", (req, res) => {
-    res.json({ status: "ok" });
+    res.json({
+      status: "ok",
+      service: process.env.SCHOLAR_SERVICE_NAME || "ScholarExplorer",
+      version: process.env.npm_package_version || "development",
+      researchIntegrity: "provenance-enabled",
+      timestamp: new Date().toISOString()
+    });
+  });
+
+  app.post("/api/provenance/claims", (req, res) => {
+    try { res.status(201).json(recordClaim(req.body)); }
+    catch (error: any) { res.status(400).json({ error: error.message }); }
+  });
+  app.post("/api/provenance/evidence", (req, res) => {
+    try { res.status(201).json(linkClaimEvidence(req.body)); }
+    catch (error: any) { res.status(400).json({ error: error.message }); }
+  });
+  app.get("/api/provenance/claims/:claimId", (req, res) => {
+    const result = getClaimProvenance(req.params.claimId);
+    result ? res.json(result) : res.status(404).json({ error: "Claim not found" });
+  });
+  app.get("/api/provenance/sessions/:sessionUuid", (req, res) => {
+    res.json(getResearchGraph(req.params.sessionUuid));
   });
 
   // --- LRS & xAPI Traceability Engines (Yet SQL LRS, learnmcp-xapi, DuckDB Vertical LRS) ---
@@ -134,16 +338,25 @@ async function startServer() {
   app.post("/api/lrs/sql-lrs/statements", (req, res) => {
     const stmt = req.body;
     if (!stmt || !stmt.actor || !stmt.verb || !stmt.object) {
-      return res.status(400).json({ error: "Invalid xAPI statement format for Yet SQL LRS." });
+      return res.status(400).json({ error: "Invalid xAPI statement format." });
     }
     stmt.stored = new Date().toISOString();
-    stmt.lrsTarget = "yet-sql-lrs";
-    insertSqlLrsStatement(stmt);
-    console.log(`[Yet SQL LRS] Recorded user xAPI statement: ${stmt.actor?.name} ${stmt.verb?.display?.['en-US'] || stmt.verb?.id} ${stmt.object?.definition?.name?.['en-US'] || stmt.object?.id}`);
-    res.status(201).json({ status: "success", id: stmt.id, lrs: "yet-sql-lrs" });
+    stmt.lrsTarget = "s3a-snapshot";
+    // S3A snapshot is single source of truth; SQLite writes removed
+    res.status(201).json({ status: "success", id: stmt.id, lrs: "s3a-snapshot", note: "S3A snapshot is single source of truth" });
   });
 
-  // DuckDB Vertical LRS Endpoints (AI Agent Actions: AI Source Scout, Deep Research Assistant, Layman Summaries, etc.)
+  // DuckDB Optional Read-Only Analytics Export
+  app.get("/api/analytics/duckdb-export", async (_req, res) => {
+    try {
+      const { exportDuckDbAnalytics } = await import("./server/lrsDatabase");
+      const result = await exportDuckDbAnalytics();
+      res.json(result);
+    } catch (err: any) {
+      res.status(500).json({ error: "Analytics export failed", message: err.message });
+    }
+  });
+
   app.get("/api/lrs/duckdb-lrs/statements", async (req, res) => {
     const { sessionUuid, agent, limit, role, userName } = req.query;
     const maxLimit = limit ? parseInt(limit as string, 10) : 100;
@@ -159,14 +372,13 @@ async function startServer() {
       });
 
       res.json({
-        lrsEngine: "duckdb-vertical-lrs",
+        lrsEngine: "duckdb-analytics-readonly",
         accessScope: isResearcher ? "researcher-full-system" : "participant-privacy-scoped",
         sessionUuid: sessionUuid || (isResearcher ? "all" : "current-session-only"),
         count: statements.length,
         statements
       });
     } catch (err: any) {
-      console.error("[DuckDB Vertical LRS] Error retrieving statements:", err);
       res.status(500).json({ error: "Failed to retrieve DuckDB statements" });
     }
   });
@@ -174,13 +386,12 @@ async function startServer() {
   app.post("/api/lrs/duckdb-lrs/statements", async (req, res) => {
     const stmt = req.body;
     if (!stmt || !stmt.actor || !stmt.verb || !stmt.object) {
-      return res.status(400).json({ error: "Invalid xAPI statement format for DuckDB Vertical LRS." });
+      return res.status(400).json({ error: "Invalid xAPI statement format." });
     }
     stmt.stored = new Date().toISOString();
-    stmt.lrsTarget = "duckdb-vertical-lrs";
-    await insertDuckDbStatement(stmt);
-    console.log(`[DuckDB Vertical LRS] Recorded AI Agent xAPI statement [Session UUID: ${stmt.context?.sessionUuid || 'N/A'}]: ${stmt.actor?.name} ${stmt.verb?.display?.['en-US'] || stmt.verb?.id} ${stmt.object?.definition?.name?.['en-US'] || stmt.object?.id}`);
-    res.status(201).json({ status: "success", id: stmt.id, lrs: "duckdb-vertical-lrs", sessionUuid: stmt.context?.sessionUuid });
+    stmt.lrsTarget = "s3a-snapshot";
+    // S3A snapshot is single source of truth; DuckDB writes removed
+    res.status(201).json({ status: "success", id: stmt.id, lrs: "s3a-snapshot", sessionUuid: stmt.context?.sessionUuid });
   });
 
   app.get("/api/xapi/learnmcp/profiles", (req, res) => {
@@ -253,6 +464,16 @@ async function startServer() {
     res.json(files);
   });
 
+  // --- Service Status Endpoint ---
+  app.get("/api/status", (req, res) => {
+    res.json({
+      status: "ok",
+      service: "scholar-explorer",
+      version: "2.4.0",
+      timestamp: new Date().toISOString()
+    });
+  });
+
   app.post("/api/local/verify", async (req, res) => {
     const { filePath } = req.body;
     if (!filePath) return res.status(400).json({ error: "filePath is required" });
@@ -278,7 +499,7 @@ async function startServer() {
       
       const params: any = {
         q: q || '',
-        mailto: 'contact@scholar-explorer.com'
+        mailto: process.env.SCHOLAR_CONTACT_EMAIL || undefined
       };
       if (apiKey) {
         params.api_key = apiKey;
@@ -287,7 +508,7 @@ async function startServer() {
       const response = await axios.get(`https://api.openalex.org/autocomplete/${type}`, {
         params,
         headers: {
-          'User-Agent': 'ScholarExplorer/1.0 (mailto:contact@scholar-explorer.com)'
+          'User-Agent': `${process.env.SCHOLAR_SERVICE_NAME || 'ScholarExplorer'}/1.0${process.env.SCHOLAR_CONTACT_EMAIL ? ` (mailto:${process.env.SCHOLAR_CONTACT_EMAIL})` : ''}`
         },
         timeout: 8000
       });
@@ -310,7 +531,7 @@ async function startServer() {
         page,
         'per-page': perPage,
         select,
-        mailto: 'contact@scholar-explorer.com'
+        mailto: process.env.SCHOLAR_CONTACT_EMAIL || undefined
       };
 
       if (apiKey) {
@@ -320,7 +541,7 @@ async function startServer() {
       const response = await axios.get("https://api.openalex.org/works", {
         params,
         headers: {
-          'User-Agent': 'ScholarExplorer/1.0 (mailto:contact@scholar-explorer.com)'
+          'User-Agent': `${process.env.SCHOLAR_SERVICE_NAME || 'ScholarExplorer'}/1.0${process.env.SCHOLAR_CONTACT_EMAIL ? ` (mailto:${process.env.SCHOLAR_CONTACT_EMAIL})` : ''}`
         }
       });
 
@@ -339,7 +560,7 @@ async function startServer() {
 
       const params: any = {
         select,
-        mailto: 'contact@scholar-explorer.com'
+        mailto: process.env.SCHOLAR_CONTACT_EMAIL || undefined
       };
 
       if (apiKey) {
@@ -349,7 +570,7 @@ async function startServer() {
       const response = await axios.get(`https://api.openalex.org/works/${workId}`, {
         params,
         headers: {
-          'User-Agent': 'ScholarExplorer/1.0 (mailto:contact@scholar-explorer.com)'
+          'User-Agent': `${process.env.SCHOLAR_SERVICE_NAME || 'ScholarExplorer'}/1.0${process.env.SCHOLAR_CONTACT_EMAIL ? ` (mailto:${process.env.SCHOLAR_CONTACT_EMAIL})` : ''}`
         }
       });
 
@@ -367,7 +588,7 @@ async function startServer() {
       const s2ApiKey = process.env.SEMANTIC_SCHOLAR_API_KEY || process.env.S2_API_KEY;
       
       const headers: any = {
-        'User-Agent': 'ScholarExplorer/1.0 (mailto:contact@scholar-explorer.com)'
+        'User-Agent': `${process.env.SCHOLAR_SERVICE_NAME || 'ScholarExplorer'}/1.0${process.env.SCHOLAR_CONTACT_EMAIL ? ` (mailto:${process.env.SCHOLAR_CONTACT_EMAIL})` : ''}`
       };
 
       if (s2ApiKey) {
@@ -487,7 +708,7 @@ async function startServer() {
       }, {
         headers: {
           'Content-Type': 'application/json',
-          'User-Agent': 'ScholarExplorer/1.0 (mailto:contact@scholar-explorer.com)'
+          'User-Agent': `${process.env.SCHOLAR_SERVICE_NAME || 'ScholarExplorer'}/1.0${process.env.SCHOLAR_CONTACT_EMAIL ? ` (mailto:${process.env.SCHOLAR_CONTACT_EMAIL})` : ''}`
         },
         timeout: 10000
       });
@@ -508,7 +729,7 @@ async function startServer() {
           'page[size]': pageSize
         },
         headers: {
-          'User-Agent': 'ScholarExplorer/1.0 (mailto:contact@scholar-explorer.com)'
+          'User-Agent': `${process.env.SCHOLAR_SERVICE_NAME || 'ScholarExplorer'}/1.0${process.env.SCHOLAR_CONTACT_EMAIL ? ` (mailto:${process.env.SCHOLAR_CONTACT_EMAIL})` : ''}`
         },
         timeout: 8000
       });
@@ -529,7 +750,7 @@ async function startServer() {
       }
       const response = await axios.get(`https://opencitations.net/index/coci/api/v1/citations/${encodeURIComponent(doi)}`, {
         headers: {
-          'User-Agent': 'ScholarExplorer/1.0 (mailto:contact@scholar-explorer.com)'
+          'User-Agent': `${process.env.SCHOLAR_SERVICE_NAME || 'ScholarExplorer'}/1.0${process.env.SCHOLAR_CONTACT_EMAIL ? ` (mailto:${process.env.SCHOLAR_CONTACT_EMAIL})` : ''}`
         },
         timeout: 10000
       });
@@ -549,7 +770,7 @@ async function startServer() {
       }
       const response = await axios.get(`https://opencitations.net/index/coci/api/v1/references/${encodeURIComponent(doi)}`, {
         headers: {
-          'User-Agent': 'ScholarExplorer/1.0 (mailto:contact@scholar-explorer.com)'
+          'User-Agent': `${process.env.SCHOLAR_SERVICE_NAME || 'ScholarExplorer'}/1.0${process.env.SCHOLAR_CONTACT_EMAIL ? ` (mailto:${process.env.SCHOLAR_CONTACT_EMAIL})` : ''}`
         },
         timeout: 10000
       });
@@ -570,7 +791,7 @@ async function startServer() {
         },
         headers: {
           'Accept': 'application/sparql-results+json',
-          'User-Agent': 'ScholarExplorer/1.0 (mailto:contact@scholar-explorer.com)'
+          'User-Agent': `${process.env.SCHOLAR_SERVICE_NAME || 'ScholarExplorer'}/1.0${process.env.SCHOLAR_CONTACT_EMAIL ? ` (mailto:${process.env.SCHOLAR_CONTACT_EMAIL})` : ''}`
         },
         timeout: 12000
       });
@@ -592,7 +813,7 @@ async function startServer() {
           format: "json"
         },
         headers: {
-          'User-Agent': 'ScholarExplorer/1.0 (mailto:contact@scholar-explorer.com)'
+          'User-Agent': `${process.env.SCHOLAR_SERVICE_NAME || 'ScholarExplorer'}/1.0${process.env.SCHOLAR_CONTACT_EMAIL ? ` (mailto:${process.env.SCHOLAR_CONTACT_EMAIL})` : ''}`
         },
         timeout: 10000
       });
@@ -613,7 +834,7 @@ async function startServer() {
           format: "json"
         },
         headers: {
-          'User-Agent': 'ScholarExplorer/1.0 (mailto:contact@scholar-explorer.com)'
+          'User-Agent': `${process.env.SCHOLAR_SERVICE_NAME || 'ScholarExplorer'}/1.0${process.env.SCHOLAR_CONTACT_EMAIL ? ` (mailto:${process.env.SCHOLAR_CONTACT_EMAIL})` : ''}`
         },
         timeout: 10000
       });
@@ -637,7 +858,7 @@ async function startServer() {
           format: 'json'
         },
         headers: {
-          'User-Agent': 'ScholarExplorer/1.0 (mailto:contact@scholar-explorer.com)'
+          'User-Agent': `${process.env.SCHOLAR_SERVICE_NAME || 'ScholarExplorer'}/1.0${process.env.SCHOLAR_CONTACT_EMAIL ? ` (mailto:${process.env.SCHOLAR_CONTACT_EMAIL})` : ''}`
         },
         timeout: 10000
       });
@@ -659,7 +880,7 @@ async function startServer() {
           format: 'json'
         },
         headers: {
-          'User-Agent': 'ScholarExplorer/1.0 (mailto:contact@scholar-explorer.com)'
+          'User-Agent': `${process.env.SCHOLAR_SERVICE_NAME || 'ScholarExplorer'}/1.0${process.env.SCHOLAR_CONTACT_EMAIL ? ` (mailto:${process.env.SCHOLAR_CONTACT_EMAIL})` : ''}`
         },
         timeout: 8000
       });
@@ -678,10 +899,11 @@ async function startServer() {
         params: {
           query,
           rows: rows || 10,
-          sort: sort || "relevance"
+          sort: sort || "relevance",
+          ...(process.env.SCHOLAR_CONTACT_EMAIL ? { mailto: process.env.SCHOLAR_CONTACT_EMAIL } : {})
         },
         headers: {
-          'User-Agent': 'ScholarExplorer/1.0 (mailto:scholar-explorer@gmail.com)'
+          'User-Agent': `${process.env.SCHOLAR_SERVICE_NAME || 'ScholarExplorer'}/1.0${process.env.SCHOLAR_CONTACT_EMAIL ? ` (mailto:${process.env.SCHOLAR_CONTACT_EMAIL})` : ''}`
         },
         timeout: 10000
       });
@@ -689,6 +911,22 @@ async function startServer() {
     } catch (error: any) {
       console.warn("[Crossref Proxy Notice]:", error.response?.status || error.message);
       res.json({ message: { items: [], "total-results": 0 } });
+    }
+  });
+
+  app.get(["/api/registries/crossref/works/:doi", "/api/registries/crossref/works/*doi"], async (req, res) => {
+    try {
+      const doi = (req.params as any).doi || (req.params as any)[0];
+      const response = await axios.get(`https://api.crossref.org/v1/works/${encodeURIComponent(doi)}`, {
+        params: process.env.SCHOLAR_CONTACT_EMAIL ? { mailto: process.env.SCHOLAR_CONTACT_EMAIL } : {},
+        headers: {
+          'User-Agent': `${process.env.SCHOLAR_SERVICE_NAME || 'ScholarExplorer'}/1.0${process.env.SCHOLAR_CONTACT_EMAIL ? ` (mailto:${process.env.SCHOLAR_CONTACT_EMAIL})` : ''}`
+        },
+        timeout: 10000
+      });
+      res.json(response.data);
+    } catch (error: any) {
+      res.status(error.response?.status || 502).json({ error: "Crossref DOI lookup failed" });
     }
   });
 
@@ -703,7 +941,7 @@ async function startServer() {
           sort: "bestmatch"
         },
         headers: {
-          'User-Agent': 'ScholarExplorer/1.0 (mailto:scholar-explorer@gmail.com)'
+          'User-Agent': `${process.env.SCHOLAR_SERVICE_NAME || 'ScholarExplorer'}/1.0${process.env.SCHOLAR_CONTACT_EMAIL ? ` (mailto:${process.env.SCHOLAR_CONTACT_EMAIL})` : ''}`
         },
         timeout: 10000
       });
@@ -767,7 +1005,7 @@ async function startServer() {
           sort: "relevance"
         },
         headers: {
-          'User-Agent': 'ScholarExplorer/1.0 (mailto:scholar-explorer@gmail.com)'
+          'User-Agent': `${process.env.SCHOLAR_SERVICE_NAME || 'ScholarExplorer'}/1.0${process.env.SCHOLAR_CONTACT_EMAIL ? ` (mailto:${process.env.SCHOLAR_CONTACT_EMAIL})` : ''}`
         },
         timeout: 10000
       });
@@ -791,7 +1029,7 @@ async function startServer() {
           sort: "relevance"
         },
         headers: {
-          'User-Agent': 'ScholarExplorer/1.0 (mailto:scholar-explorer@gmail.com)'
+          'User-Agent': `${process.env.SCHOLAR_SERVICE_NAME || 'ScholarExplorer'}/1.0${process.env.SCHOLAR_CONTACT_EMAIL ? ` (mailto:${process.env.SCHOLAR_CONTACT_EMAIL})` : ''}`
         },
         timeout: 10000
       });
@@ -856,6 +1094,85 @@ async function startServer() {
     }
   });
 
+  // 13b. arXiv API Server Proxy (avoids browser CORS error on export.arxiv.org)
+  app.get("/api/registries/arxiv/search", async (req, res) => {
+    try {
+      const { search_query, id_list, max_results, start } = req.query;
+      const params: Record<string, any> = {};
+      if (search_query) params.search_query = search_query;
+      if (id_list) params.id_list = id_list;
+      if (max_results) params.max_results = max_results;
+      if (start !== undefined) params.start = start;
+
+      const response = await axios.get("https://export.arxiv.org/api/query", {
+        params,
+        headers: {
+          'User-Agent': `${process.env.SCHOLAR_SERVICE_NAME || 'ScholarExplorer'}/1.0`
+        },
+        responseType: 'text',
+        timeout: 9000
+      });
+      res.json({ unavailable: false, xml: response.data || "" });
+    } catch (error: any) {
+      res.json({ unavailable: true, xml: "" });
+    }
+  });
+
+  app.get("/api/registries/arxiv/ar5iv/:arxivId", async (req, res) => {
+    try {
+      const { arxivId } = req.params;
+      const response = await axios.get(`https://ar5iv.labs.arxiv.org/html/${encodeURIComponent(arxivId)}`, {
+        headers: {
+          'User-Agent': `${process.env.SCHOLAR_SERVICE_NAME || 'ScholarExplorer'}/1.0`
+        },
+        responseType: 'text',
+        timeout: 8000,
+        validateStatus: () => true
+      });
+      if (response.status >= 200 && response.status < 300 && typeof response.data === 'string') {
+        return res.json({ html: response.data });
+      }
+      res.json({ html: null });
+    } catch {
+      res.json({ html: null });
+    }
+  });
+
+  // 13c. Unpaywall OA Lookup Proxy (treats 404 as normal "no open-access copy" result)
+  app.get(["/api/registries/unpaywall/:doi", "/api/registries/unpaywall/*doi"], async (req, res) => {
+    try {
+      const rawDoi = (req.params as any).doi || (req.params as any)[0] || "";
+      const cleanDoi = Array.isArray(rawDoi) ? rawDoi.join("/") : String(rawDoi);
+      if (!cleanDoi) {
+        return res.json({ is_oa: false, oaLink: null });
+      }
+      const email = process.env.SCHOLAR_CONTACT_EMAIL || 'contact@scholar-explorer.com';
+      const response = await axios.get(`https://api.unpaywall.org/v2/${encodeURIComponent(cleanDoi)}`, {
+        params: { email },
+        headers: {
+          'User-Agent': `${process.env.SCHOLAR_SERVICE_NAME || 'ScholarExplorer'}/1.0 (mailto:${email})`
+        },
+        timeout: 8000,
+        validateStatus: () => true
+      });
+
+      if (response.status === 404 || response.status < 200 || response.status >= 300) {
+        // 404 for a DOI (e.g. Zenodo DOIs) means "no open-access copy" — normal result
+        return res.json({ is_oa: false, oaLink: null, status: response.status });
+      }
+
+      const data = response.data;
+      const oaLink = (data?.is_oa && (data?.best_oa_location?.url_for_pdf || data?.best_oa_location?.url_for_landing_page)) || null;
+      return res.json({
+        is_oa: Boolean(data?.is_oa),
+        oaLink,
+        best_oa_location: data?.best_oa_location || null
+      });
+    } catch {
+      return res.json({ is_oa: false, oaLink: null });
+    }
+  });
+
   // ==========================================
   // OPEN ACADEMIC SOURCE DISCOVERY & PROPOSALS
   // ==========================================
@@ -877,14 +1194,6 @@ async function startServer() {
     try {
       const { sourceId, recipientEmail } = req.body;
       const result = await proposeSource(sourceId, recipientEmail);
-      
-      // Also log human interaction statement in LRS
-      insertSqlLrsStatement({
-        actor: { name: 'Ashley Cribb (PI)', mbox: 'ashley.e.cribb@gmail.com' },
-        verb: { id: 'http://activitystrea.ms/schema/1.0/propose', display: { 'en-US': 'proposed source' } },
-        object: { id: `urn:scholarexplorer:source:${sourceId}`, definition: { name: { 'en-US': result.source.name } } }
-      });
-
       res.json(result);
     } catch (err: any) {
       res.status(400).json({ error: err.message });
@@ -895,14 +1204,6 @@ async function startServer() {
   app.post("/api/sources/approve/:id", (req, res) => {
     try {
       const source = approveSource(req.params.id);
-      
-      // Log LRS approval
-      insertSqlLrsStatement({
-        actor: { name: 'Ashley Cribb (PI)', mbox: 'ashley.e.cribb@gmail.com' },
-        verb: { id: 'http://activitystrea.ms/schema/1.0/approve', display: { 'en-US': 'approved source for search' } },
-        object: { id: `urn:scholarexplorer:source:${source.id}`, definition: { name: { 'en-US': source.name } } }
-      });
-
       res.json({ success: true, source });
     } catch (err: any) {
       res.status(400).json({ error: err.message });

@@ -114,11 +114,11 @@ export const analyzePapers = async (papers: ResearchPaper[], domain?: string): P
 
     // Calculate top authors internally
     const topAuthors: AuthorFrequencyData = Object.values(
-        papers.flatMap(p => p.authors.split(',').map(a => a.trim())).reduce((acc, author) => {
+        papers.flatMap(p => typeof p.authors === 'string' && p.authors ? p.authors.split(',').map(a => a.trim()) : (p.authorList?.map(a => a.name) || [])).reduce((acc, author) => {
             if (author) {
                 acc[author] = acc[author] || { author, count: 0, totalCitations: 0 };
                 acc[author].count++;
-                const paper = papers.find(p => p.authors.includes(author));
+                const paper = papers.find(p => typeof p.authors === 'string' ? p.authors.includes(author) : p.authorList?.some(a => a.name === author));
                 acc[author].totalCitations += paper?.citations || 0;
             }
             return acc;

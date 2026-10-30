@@ -18,6 +18,7 @@ import {
   getPackById 
 } from "./marketplaceService.js";
 import { registerCapabilityToolInAgent } from "./agentService.js";
+import { recordClaim, linkClaimEvidence, getClaimProvenance, getResearchGraph } from "../server/provenanceDatabase.js";
 
 /**
  * Scholar Explorer Workspace MCP Server
@@ -169,6 +170,26 @@ export class WorkspaceMcpServer {
           }
         },
         {
+          name: "record_research_claim",
+          description: "Record an atomic scholarly claim in the Scholar Explorer provenance graph. Use before attaching evidence or synthesizing a literature review.",
+          inputSchema: { type: "object", properties: { sessionUuid: {type:"string"}, workspaceId:{type:"string"}, claimText:{type:"string"}, status:{type:"string"}, confidence:{type:"number"}, createdBy:{type:"string"} }, required:["sessionUuid","claimText"] }
+        },
+        {
+          name: "link_claim_evidence",
+          description: "Link a DOI, OpenAlex work, PMID, arXiv record, dataset, or other scholarly source to a claim as supporting, contradicting, inconclusive, or contextual evidence.",
+          inputSchema: { type: "object", properties: { claimId:{type:"string"}, sourceId:{type:"string"}, sourceType:{type:"string"}, relation:{type:"string",enum:["supports","contradicts","inconclusive","contextual"]}, strength:{type:"number"}, evidenceNote:{type:"string"}, locator:{type:"string"}, verified:{type:"boolean"} }, required:["claimId","sourceId","relation"] }
+        },
+        {
+          name: "get_claim_provenance",
+          description: "Retrieve a claim and every linked evidence record so an agent or reviewer can reconstruct why the claim is supported or challenged.",
+          inputSchema: { type:"object", properties:{ claimId:{type:"string"} }, required:["claimId"] }
+        },
+        {
+          name: "export_research_graph",
+          description: "Export the claim-level evidence graph for one research session for review, audit, or literature-review synthesis.",
+          inputSchema: { type:"object", properties:{ sessionUuid:{type:"string"} }, required:["sessionUuid"] }
+        },
+        {
           name: "learnmcp_get_status",
           description: "Retrieve health, statement metrics, and database engine statuses for Yet SQL LRS and DuckDB Vertical LRS.",
           inputSchema: {
@@ -183,6 +204,21 @@ export class WorkspaceMcpServer {
     this.server.setRequestHandler(CallToolRequestSchema, async (request) => {
       const { name, arguments: args } = request.params;
 
+      if (name === "record_research_claim") {
+        try { return { content: [{ type: "text", text: JSON.stringify(recordClaim(args || {}), null, 2) }] }; }
+        catch (err: any) { return { isError: true, content: [{ type: "text", text: err.message }] }; }
+      }
+      if (name === "link_claim_evidence") {
+        try { return { content: [{ type: "text", text: JSON.stringify(linkClaimEvidence(args || {}), null, 2) }] }; }
+        catch (err: any) { return { isError: true, content: [{ type: "text", text: err.message }] }; }
+      }
+      if (name === "get_claim_provenance") {
+        const result = getClaimProvenance(String((args as any)?.claimId || ""));
+        return { content: [{ type: "text", text: JSON.stringify(result || { error: "Claim not found" }, null, 2) }] };
+      }
+      if (name === "export_research_graph") {
+        return { content: [{ type: "text", text: JSON.stringify(getResearchGraph(String((args as any)?.sessionUuid || "")), null, 2) }] };
+      }
       if (name === "publish_capability_pack") {
         try {
           const rawArgs = args as any;
@@ -425,13 +461,7 @@ export class WorkspaceMcpServer {
           lrsTarget
         };
 
-        if (lrsTarget === "duckdb-vertical-lrs") {
-          const { insertDuckDbStatement } = await import("../server/lrsDatabase.js");
-          await insertDuckDbStatement(stmt);
-        } else {
-          const { insertSqlLrsStatement } = await import("../server/lrsDatabase.js");
-          insertSqlLrsStatement(stmt);
-        }
+        // S3A snapshot is the authoritative ledger and single source of truth
 
         return {
           content: [{
@@ -439,8 +469,8 @@ export class WorkspaceMcpServer {
             text: JSON.stringify({
               status: "success",
               id: stmt.id,
-              target: lrsTarget,
-              message: `Statement recorded to ${lrsTarget}`
+              target: "s3a-authoritative",
+              message: "Statement acknowledged (S3A snapshot is single source of truth)"
             }, null, 2)
           }]
         };

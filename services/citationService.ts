@@ -40,18 +40,56 @@ const getCiteConstructor = (): Promise<any> => {
 };
 
 /**
- * NEW: Generates professional-grade BibTeX entries.
+ * Generates professional-grade BibTeX entries.
  */
-const generateBibTeX = (paper: ResearchPaper): string => {
-    const citeKey = (paper.authorList?.[0]?.name.split(' ').pop() || 'Unknown').toLowerCase() + paper.year;
-    return `@article{${citeKey},\n` +
-           `  title={${paper.title}},\n` +
-           `  author={${paper.authors}},\n` +
-           `  year={${paper.year}},\n` +
-           `  journal={${paper.journal || 'Institutional Repository'}},\n` +
-           `  doi={${paper.doi || ''}},\n` +
-           `  url={${paper.sourceURL || ''}}\n` +
-           `}`;
+export const generateBibTeX = (paper: ResearchPaper): string => {
+    const firstAuthor = paper.authorList?.[0]?.name || (typeof paper.authors === 'string' && paper.authors ? paper.authors.split(',')[0] : 'Unknown');
+    const primaryAuthor = firstAuthor.trim().split(' ').pop() || 'Unknown';
+    const citeKey = `${primaryAuthor.toLowerCase().replace(/[^a-z0-9]/g, '')}${paper.year || new Date().getFullYear()}`;
+    return `@article{${citeKey},
+  title = {${(paper.title || 'Untitled').replace(/[{}]/g, '')}},
+  author = {${typeof paper.authors === 'string' ? paper.authors : firstAuthor}},
+  year = {${paper.year || new Date().getFullYear()}},
+  journal = {${paper.journal || paper.enrichmentSource || 'Scholarly Repository'}},
+  doi = {${paper.doi || ''}},
+  url = {${paper.sourceURL || (paper.doi ? `https://doi.org/${paper.doi}` : '')}}
+}`;
+};
+
+/**
+ * Instant deterministic citation generator for zero-latency scholar copying.
+ */
+export const formatInstantCitation = (paper: ResearchPaper, style: 'apa' | 'chicago' | 'mla' | 'harvard' | 'bibtex'): string => {
+    if (style === 'bibtex') {
+        return generateBibTeX(paper);
+    }
+
+    const authors = (paper.authors || 'Unknown Author').trim();
+    const year = paper.year || new Date().getFullYear();
+    const title = paper.title.trim().replace(/\.$/, '');
+    const venue = paper.journal || paper.enrichmentSource || 'Peer-Reviewed Literature';
+    const doiUrl = paper.doi ? `https://doi.org/${paper.doi}` : (paper.sourceURL || '');
+
+    switch (style) {
+        case 'apa':
+            // APA 7th Edition: Author, A. A. (Year). Title. Journal. https://doi.org/...
+            return `${authors} (${year}). ${title}. ${venue}.${doiUrl ? ` ${doiUrl}` : ''}`;
+        
+        case 'chicago':
+            // Chicago 17th: Author. Year. "Title." Journal. https://doi.org/...
+            return `${authors}. ${year}. "${title}." ${venue}.${doiUrl ? ` ${doiUrl}` : ''}`;
+        
+        case 'mla':
+            // MLA 9th: Author. "Title." Journal, Year. doi:...
+            return `${authors}. "${title}." ${venue}, ${year}.${paper.doi ? ` https://doi.org/${paper.doi}` : (doiUrl ? ` ${doiUrl}` : '')}`;
+
+        case 'harvard':
+            // Harvard: Author, Year. Title. Journal. Available at: URL.
+            return `${authors}, ${year}. ${title}. ${venue}.${doiUrl ? ` Available at: ${doiUrl}` : ''}`;
+
+        default:
+            return `${authors} (${year}). ${title}. ${venue}.`;
+    }
 };
 
 const sanitizeCslData = (data: any): any => {
@@ -137,23 +175,86 @@ export const generateCitations = async (papers: ResearchPaper[], style: Citation
     }
 };
 
-export const generateRIS = async (papers: ResearchPaper[], model: ModelDefinition): Promise<string> => {
-    try {
-        const Cite = await getCiteConstructor();
-        if (!Cite) throw new Error("Citation.js library not loaded.");
-        const cslDataPromises = papers.map(async paper => {
-            try {
-                return await getPaperCslData(paper, model);
-            } catch {
-                return { title: paper.title, type: 'article-journal' };
-            }
-        });
-        const cslData = await Promise.all(cslDataPromises);
-        const cite = new Cite(cslData);
-        return cite.format('ris');
-    } catch (error) {
-        throw new Error(`Failed to generate RIS file.`);
+export const generateRIS = async (papers: ResearchPaper[], model?: ModelDefinition): Promise<string> => {
+    // Deterministic offline RIS generation from metadata
+    return generateDeterministicRIS(papers);
+};
+
+export const generateDeterministicRIS = (papers: ResearchPaper[]): string => {
+    return papers.map(paper => {
+        const lines: string[] = ['TY  - JOUR'];
+        lines.push(`TI  - ${paper.title.replace(/\n/g, ' ')}`);
+        
+        if (paper.authorList && paper.authorList.length > 0) {
+            paper.authorList.forEach(a => lines.push(`AU  - ${a.name}`));
+        } else if (typeof paper.authors === 'string' && paper.authors) {
+            paper.authors.split(',').forEach(a => lines.push(`AU  - ${a.trim()}`));
+        } else if (Array.isArray(paper.authors)) {
+            (paper.authors as string[]).forEach(a => lines.push(`AU  - ${String(a).trim()}`));
+        }
+        
+        if (paper.year) lines.push(`PY  - ${paper.year}`);
+        if (paper.journal) lines.push(`JO  - ${paper.journal}`);
+        if (paper.doi) lines.push(`DO  - ${paper.doi}`);
+        const url = paper.sourceURL || (paper.doi ? `https://doi.org/${paper.doi}` : (paper.openalex_id ? `https://openalex.org/${paper.openalex_id}` : ''));
+        if (url) lines.push(`UR  - ${url}`);
+        lines.push('ER  - ');
+        return lines.join('\n');
+    }).join('\n\n');
+};
+
+export const generateMetadataCSV = (papers: ResearchPaper[]): string => {
+    const header = ['Title', 'Authors', 'Year', 'Journal', 'DOI', 'OpenAlex_ID', 'URL'];
+    const rows = papers.map(p => {
+        const title = `"${(p.title || '').replace(/"/g, '""')}"`;
+        const authors = `"${(p.authors || '').replace(/"/g, '""')}"`;
+        const year = p.year || '';
+        const journal = `"${(p.journal || p.enrichmentSource || '').replace(/"/g, '""')}"`;
+        const doi = `"${(p.doi || '').replace(/"/g, '""')}"`;
+        const openalexId = `"${(p.openalex_id || p.id || '').replace(/"/g, '""')}"`;
+        const url = `"${(p.sourceURL || (p.doi ? `https://doi.org/${p.doi}` : '')).replace(/"/g, '""')}"`;
+        return [title, authors, year, journal, doi, openalexId, url].join(',');
+    });
+    return [header.join(','), ...rows].join('\n');
+};
+
+/**
+ * Downloads exported OpenAlex metadata in BibTeX, RIS, or CSV format.
+ */
+export const downloadMetadataExport = (
+    papers: ResearchPaper[], 
+    format: 'bibtex' | 'ris' | 'csv',
+    filename = 'scholar-explorer-export'
+): void => {
+    if (!papers || papers.length === 0) return;
+
+    let content = '';
+    let mimeType = 'text/plain';
+    let ext: string = format;
+
+    if (format === 'bibtex') {
+        content = papers.map(generateBibTeX).join('\n\n');
+        mimeType = 'application/x-bibtex';
+        ext = 'bib';
+    } else if (format === 'ris') {
+        content = generateDeterministicRIS(papers);
+        mimeType = 'application/x-research-info-systems';
+        ext = 'ris';
+    } else if (format === 'csv') {
+        content = generateMetadataCSV(papers);
+        mimeType = 'text/csv';
+        ext = 'csv';
     }
+
+    const blob = new Blob([content], { type: `${mimeType};charset=utf-8` });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `${filename}.${ext}`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
 };
 
 export async function analyzeCitations(doi: string): Promise<CitationStats> {

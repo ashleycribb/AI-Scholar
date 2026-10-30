@@ -136,8 +136,8 @@ export const ProjectWorkspace: React.FC<ProjectWorkspaceProps> = (props) => {
                     </div>
                 ) : (
                     <div className="grid grid-cols-1 gap-2">
-                        {workspacePapers.map(paper => (
-                            <div key={paper.id} className="p-3 bg-white border border-border rounded-lg shadow-sm hover:shadow-md transition-all">
+                        {workspacePapers.map((paper, idx) => (
+                            <div key={paper.id ? `${paper.id}-${idx}` : idx} className="p-3 bg-white border border-border rounded-lg shadow-sm hover:shadow-md transition-all">
                                 <div className="flex justify-between items-start gap-2">
                                     <h4 className="text-sm font-bold text-foreground line-clamp-2">{paper.title}</h4>
                                     <div className="flex items-center gap-1">

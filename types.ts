@@ -10,6 +10,8 @@ export interface UserSession {
   displayName: string;    // e.g., "Participant #88A" or "Dr. Young Baek (Committee)"
   role: UserRole;
   sessionId: string;      // Shared interactionSessionId for xAPI telemetry
+  actor_uuid?: string;    // Dual UUIDv7: Human Student Actor
+  agent_uuid?: string;    // Dual UUIDv7: AI Assistant Instance
   inviteCode?: string;    // Associated study invite token
   createdAt: string;
 
@@ -31,18 +33,24 @@ export interface UserSettings {
   mcpServerUrl?: string;
   isMcpEnabled?: boolean;
   isHarvardLibraryEnabled?: boolean;
-  // Scholar Bridge Integration (Legacy)
+  // Scholar Bridge Integration (Reference Manager)
   scholarBridgeApiKey?: string;
   scholarBridgeUserId?: string;
   isScholarBridgeEnabled?: boolean;
-  // GNO Integration
-  isGnoEnabled?: boolean;
-  gnoBaseUrl?: string;
+  // S3A Local Research Lab Bridge
+  s3aDaemonUrl?: string;
+  s3aTargetDb?: string;
+  isS3AAutoSyncEnabled?: boolean;
   // Google Scholar (SerpApi) Integration
   serpApiKey?: string;
   isSerpApiEnabled?: boolean;
   // Snapshot Save Settings
   autoSaveSnapshot?: boolean;
+  // Institutional & ORCID Researcher Identity
+  orcidId?: string;
+  departmentName?: string;
+  advisorName?: string;
+  grantAwardNumber?: string;
 }
 
 export interface AdvancedSearchOptions {
@@ -76,6 +84,26 @@ export interface SemanticSpan {
     score: number;
 }
 
+export interface MatchedTermLocation {
+    term: string;
+    locations: ('title' | 'abstract' | 'passage')[];
+}
+
+export interface ScoreInputItem {
+    label: string;
+    value: string;
+    weight: string;
+    isLoading?: boolean;
+}
+
+export interface ScoreExplanation {
+    method: string; // e.g., "Embedding similarity + keyword boost"
+    matchedTerms: MatchedTermLocation[];
+    topPassage?: string;
+    topPassageScore?: number;
+    inputs?: ScoreInputItem[];
+}
+
 export interface SciteTally {
     doi: string;
     supporting: number;
@@ -92,9 +120,15 @@ export interface ResearchPaper {
   abstract: string;
   sourceURL?: string;
   pdfURL?: string;
+  openalex_id?: string;
   citations?: number;
   semanticScore?: number; // 0-100 score based on vector similarity
+  rawSemanticSimilarity?: number; // 0-100 normalized embedding/lexical similarity before rerank
+  rawKeywordScore?: number; // 0-9 keyword/phrase/proximity/title points
+  rawRecencyScore?: number; // 0-1 recency points
   semanticHighlights?: SemanticSpan[]; // Top matching passages
+  scoreExplanation?: ScoreExplanation;
+  researcherScoreDecision?: 'keep' | 'drop';
   
   // Extended metadata
   doi?: string;

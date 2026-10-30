@@ -15,7 +15,6 @@ import { LocalNanobotPanel } from './LocalNanobotPanel';
 import { Library } from 'lucide-react';
 import { InnovationEngine } from './InnovationEngine';
 import type { InnovationResult } from '../types';
-import { GnoPanel } from './GnoPanel';
 
 
 interface RefinedQueriesProps {
@@ -150,7 +149,7 @@ export const WorkspacePanel: React.FC<WorkspacePanelProps> = (props) => {
         userSettings,
         onSynthesizeWorkspace, onAnalyzeGaps
     } = props;
-    const [activeTab, setActiveTab] = useState<'details' | 'analysis' | 'workspace' | 'library' | 'bibliography' | 'innovation' | 'gno' | 'logician'>('analysis');
+    const [activeTab, setActiveTab] = useState<'details' | 'analysis' | 'workspace' | 'library' | 'bibliography' | 'innovation' | 'logician'>('analysis');
     const [showPaperAnalysisDrawer, setShowPaperAnalysisDrawer] = useState(false);
 
     // Innovation Engine State
@@ -240,8 +239,6 @@ export const WorkspacePanel: React.FC<WorkspacePanelProps> = (props) => {
                 return <LocalLibraryPanel userSettings={userSettings} onUpdateSettings={() => {}} />;
             case 'logician':
                 return <LocalNanobotPanel />;
-            case 'gno':
-                return <GnoPanel userSettings={userSettings} />;
             case 'innovation':
                 return (
                     <InnovationEngine
@@ -291,9 +288,6 @@ export const WorkspacePanel: React.FC<WorkspacePanelProps> = (props) => {
                     </TabButton>
                     <TabButton onClick={() => setActiveTab('library')} isActive={activeTab === 'library'}>
                        Local Library
-                    </TabButton>
-                    <TabButton onClick={() => setActiveTab('gno')} isActive={activeTab === 'gno'}>
-                       Local GNO
                     </TabButton>
                     <TabButton onClick={() => setActiveTab('logician')} isActive={activeTab === 'logician'}>
                        Logician

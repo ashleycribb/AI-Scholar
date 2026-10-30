@@ -28,6 +28,20 @@ export default defineConfig(({ mode }) => {
         alias: {
           '@': path.resolve(process.cwd(), '.'),
         }
+      },
+      build: {
+        rollupOptions: {
+          external: [/^https?:\/\//],
+          onwarn(warning, warn) {
+            if (
+              warning.code === 'MISSING_EXPORT' ||
+              (typeof warning.message === 'string' && warning.message.includes('is not exported'))
+            ) {
+              throw new Error(warning.message);
+            }
+            warn(warning);
+          }
+        }
       }
     };
 });

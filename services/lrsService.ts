@@ -1,6 +1,7 @@
 // services/lrsService.ts
 // Handles Yet SQL LRS, learnmcp-xapi, and DuckDB Vertical LRS xAPI statement tracking.
 import { authService } from './authService';
+import { getResearchLoggingConsent, getStoredConsentState } from './lrsCredentialsService';
 
 export interface xAPIActor {
   objectType?: 'Agent' | 'Group';
@@ -99,7 +100,15 @@ export const recordUserStatement = async (
   objectId: string,
   objectName: string,
   contextData?: { sessionUuid?: string; [key: string]: any }
-): Promise<xAPIStatement> => {
+): Promise<xAPIStatement | null> => {
+  const [consented, consentState] = await Promise.all([
+    getResearchLoggingConsent(),
+    getStoredConsentState()
+  ]);
+  if (!consented || consentState !== 'granted') {
+    return null;
+  }
+
   const activeUser = authService.getUser();
   const resolvedActorName = activeUser?.displayName || activeUser?.name || actorName || 'Scholar Explorer Participant';
   const resolvedUserId = activeUser?.userId || activeUser?.id || 'participant-anonymous';
@@ -142,18 +151,7 @@ export const recordUserStatement = async (
   };
 
   localSqlLrsStatements.unshift(statement);
-
-  // Send to backend API
-  try {
-    await fetch('/api/lrs/sql-lrs/statements', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(statement)
-    });
-  } catch (err) {
-    console.warn('[Yet SQL LRS] Server endpoint sync notice:', err);
-  }
-
+  // S3A snapshot is the single source of truth; SQLite statement writes removed.
   return statement;
 };
 
@@ -168,7 +166,15 @@ export const recordAgentStatement = async (
   objectId: string,
   objectName: string,
   resultDetails?: Record<string, any>
-): Promise<xAPIStatement> => {
+): Promise<xAPIStatement | null> => {
+  const [consented, consentState] = await Promise.all([
+    getResearchLoggingConsent(),
+    getStoredConsentState()
+  ]);
+  if (!consented || consentState !== 'granted') {
+    return null;
+  }
+
   const statement: xAPIStatement = {
     id: generateSessionUuid('agent-stmt'),
     actor: {
@@ -206,18 +212,7 @@ export const recordAgentStatement = async (
   };
 
   localDuckDbLrsStatements.unshift(statement);
-
-  // Send to backend API
-  try {
-    await fetch('/api/lrs/duckdb-lrs/statements', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(statement)
-    });
-  } catch (err) {
-    console.warn('[DuckDB Vertical LRS] Server endpoint sync notice:', err);
-  }
-
+  // S3A snapshot is the single source of truth; DuckDB writes removed.
   return statement;
 };
 

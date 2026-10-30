@@ -13,7 +13,7 @@ const checkTitleSimilarity = (title1: string, title2: string): boolean => {
 
 // A simple author match check focusing on the first author's last name.
 const checkAuthorMatch = (paperAuthors: string, crossrefAuthors: CrossrefWork['author']): boolean => {
-    if (!crossrefAuthors || crossrefAuthors.length === 0) return false;
+    if (!crossrefAuthors || crossrefAuthors.length === 0 || !paperAuthors || typeof paperAuthors !== 'string') return false;
     const firstPaperAuthorLastName = paperAuthors.split(',')[0].trim().split(' ').pop()?.toLowerCase();
     if (!firstPaperAuthorLastName) return false;
     return crossrefAuthors.some(author => {

@@ -1,55 +1,60 @@
 
 import type { ResearchPaper } from '../types';
+import { getCache, setCache } from '../utils/cache';
 
 /**
  * Unpaywall API Service
- * Endpoint: https://api.unpaywall.org/v2/{doi}?email={email}
+ * Uses backend proxy /api/registries/unpaywall/:doi and caches results per DOI.
+ * A 404 for a DOI (for example Zenodo DOIs) means "no open-access copy":
+ * treated as a normal result, never logged as an error, and cached so the same DOI isn't requested again.
  */
 
-const EMAIL = 'contact@scholar-explorer.com';
-
-interface UnpaywallResponse {
-    doi: string;
-    is_oa: boolean;
-    best_oa_location?: {
-        url_for_pdf: string;
-        url_for_landing_page: string;
-        version: string;
-        license: string;
-    };
-    oa_locations: Array<{
-        url_for_pdf: string;
-        url_for_landing_page: string;
-        version: string;
-        license: string;
-    }>;
-}
+const UNPAYWALL_CACHE_TTL_MS = 48 * 60 * 60 * 1000; // 48 hours
+const inFlightUnpaywall = new Map<string, Promise<string | null>>();
 
 export const fetchOALink = async (doi: string): Promise<string | null> => {
     if (!doi) return null;
-    
-    // Clean DOI
-    const cleanDoi = doi.startsWith('http') ? doi.split('doi.org/')[1] : doi;
-    
+
+    const cleanDoi = doi.replace(/^(https?:\/\/doi\.org\/|doi:)/i, '').trim().toLowerCase();
+    if (!cleanDoi) return null;
+
+    const cacheKey = `unpaywall_oa_${cleanDoi}`;
+    const cached = getCache<{ oaLink: string | null }>(cacheKey);
+    if (cached !== null && typeof cached === 'object' && 'oaLink' in cached) {
+        return cached.oaLink;
+    }
+
+    const existing = inFlightUnpaywall.get(cleanDoi);
+    if (existing) return existing;
+
+    const lookupPromise = (async (): Promise<string | null> => {
+        try {
+            const response = await fetch(`/api/registries/unpaywall/${encodeURIComponent(cleanDoi)}`);
+            if (response.status === 404) {
+                setCache(cacheKey, { oaLink: null }, UNPAYWALL_CACHE_TTL_MS);
+                return null;
+            }
+            if (!response.ok) {
+                setCache(cacheKey, { oaLink: null }, UNPAYWALL_CACHE_TTL_MS);
+                return null;
+            }
+
+            const data = await response.json();
+            const oaLink: string | null = data?.oaLink || null;
+            setCache(cacheKey, { oaLink }, UNPAYWALL_CACHE_TTL_MS);
+            return oaLink;
+        } catch {
+            // Cache null so repeated requests for unreachable or non-OA DOIs do not re-trigger
+            setCache(cacheKey, { oaLink: null }, UNPAYWALL_CACHE_TTL_MS);
+            return null;
+        }
+    })();
+
+    inFlightUnpaywall.set(cleanDoi, lookupPromise);
     try {
-        const response = await fetch(`https://api.unpaywall.org/v2/${encodeURIComponent(cleanDoi)}?email=${EMAIL}`);
-        if (!response.ok) return null;
-        
-        const data: UnpaywallResponse = await response.json();
-        
-        if (data.is_oa && data.best_oa_location?.url_for_pdf) {
-            return data.best_oa_location.url_for_pdf;
-        }
-        
-        // Fallback to landing page if no PDF
-        if (data.is_oa && data.best_oa_location?.url_for_landing_page) {
-            return data.best_oa_location.url_for_landing_page;
-        }
-        
-        return null;
-    } catch (error) {
-        console.error("[Unpaywall] Error fetching DOI:", doi, error);
-        return null;
+        return await lookupPromise;
+    } finally {
+        inFlightUnpaywall.delete(cleanDoi);
     }
 };
 
@@ -77,3 +82,4 @@ export const enrichWithUnpaywall = async (papers: ResearchPaper[]): Promise<Rese
         return enriched || p;
     });
 };
+

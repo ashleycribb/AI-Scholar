@@ -378,40 +378,12 @@ export const DeepResearchModal: React.FC<DeepResearchModalProps> = ({ isOpen, on
                                                         <h2 className="text-3xl font-black text-foreground tracking-tight">{section.heading}</h2>
                                                     </div>
                                                     
-                                                    {section.claims ? (
-                                                        <div className="space-y-4">
-                                                            {section.claims.map((claim, cIdx) => (
-                                                                <div key={cIdx} className="flex gap-4 p-4 rounded-xl hover:bg-muted/30 transition-colors">
-                                                                    <div className={`w-1.5 rounded-full shrink-0 ${
-                                                                        claim.confidence > 0.8 ? 'bg-green-500' : 
-                                                                        claim.confidence > 0.5 ? 'bg-yellow-500' : 'bg-red-400'
-                                                                    }`} title={`Confidence: ${Math.round(claim.confidence * 100)}%`} />
-                                                                    <div>
-                                                                        <p className="text-lg text-foreground leading-relaxed">
-                                                                            {claim.text}
-                                                                            {claim.citationIds.map(id => {
-                                                                                // Extract index from ID #1 -> 1
-                                                                                const paperIdx = parseInt(id.replace('#', '')) - 1;
-                                                                                // Only show if valid
-                                                                                if(paperIdx >= 0 && paperIdx < report.references.length) {
-                                                                                    return (
-                                                                                        <sup key={id} className="ml-1 text-xs font-bold text-primary cursor-help" title={report.references[paperIdx].title}>
-                                                                                            [{paperIdx + 1}]
-                                                                                        </sup>
-                                                                                    )
-                                                                                }
-                                                                                return null;
-                                                                            })}
-                                                                        </p>
-                                                                    </div>
-                                                                </div>
-                                                            ))}
-                                                        </div>
-                                                    ) : (
-                                                        <div className="text-foreground leading-relaxed text-lg prose prose-slate max-w-none">
-                                                            <FormattedReport text={section.content} />
-                                                        </div>
-                                                    )}
+                                                    <FormattedReport 
+                                                        text={section.content} 
+                                                        claims={section.claims} 
+                                                        references={report.references} 
+                                                        showConfidenceLegend={idx === 0}
+                                                    />
                                                 </section>
                                             ))}
                                         </div>

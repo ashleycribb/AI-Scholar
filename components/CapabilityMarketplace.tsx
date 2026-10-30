@@ -145,17 +145,17 @@ export const CapabilityMarketplace: React.FC = () => {
             <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-100 pb-6">
                 <div className="space-y-1.5 max-w-3xl">
                     <div className="flex items-center gap-2">
-                        <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black tracking-widest bg-emerald-100 text-emerald-800 uppercase">
-                            Semantic Guardrail Registry
+                        <span className="px-2.5 py-0.5 rounded-full text-[10px] font-semibold tracking-wider bg-emerald-100 text-emerald-800 uppercase">
+                            Methodology &amp; Guardrail Registry
                         </span>
-                        <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black tracking-widest bg-slate-100 text-slate-700 uppercase">
-                            v0.1.0 Catalog
+                        <span className="px-2.5 py-0.5 rounded-full text-[10px] font-semibold tracking-wider bg-slate-100 text-slate-700 uppercase">
+                            S3A Reproducibility
                         </span>
                     </div>
-                    <h2 className="text-3xl font-black tracking-tight text-slate-900">Capability Marketplace</h2>
-                    <p className="text-sm text-slate-500 font-semibold leading-relaxed">
-                        Academic researchers can inspect, download, and install reusable security <span className="text-slate-800 font-bold font-semibold text-slate-600">Guardrail Packs</span> based on the open-source <a href="https://github.com/HKUDS/OpenHarness" target="_blank" rel="noopener noreferrer" className="text-indigo-600 hover:text-indigo-800 font-bold underline underline-offset-2 hover:bg-indigo-50 px-1 rounded transition-colors inline-flex items-center gap-0.5">OpenHarness</a> framework (HKUDS/OpenHarness) to control autonomous research pipelines. 
-                        Scholar Explorer publishes public definitions; private tool executions, studies, and LRS vaults belong strictly inside your local <strong className="text-slate-800 font-extrabold">Scholar Explorer Local Lab</strong>.
+                    <h2 className="text-2xl font-bold tracking-tight text-slate-900">Methodology &amp; Capability Registry</h2>
+                    <p className="text-xs text-slate-600 font-normal leading-relaxed">
+                        Academic researchers can inspect, download, and configure verifiable methodological workflows and reproducibility protocol packs based on the S3A framework. 
+                        Scholar Explorer publishes public protocol definitions; sensitive dataset executions and thesis data remain strictly inside your authenticated <strong className="text-slate-800 font-semibold">Scholar Explorer Local Lab</strong> S3A database.
                     </p>
                 </div>
             </div>
@@ -255,7 +255,7 @@ export const CapabilityMarketplace: React.FC = () => {
                                     <option value="all">All Runtimes</option>
                                     <option value="scholar-explorer-local-lab">Scholar Explorer Local Lab</option>
                                     <option value="local-python">Local Python</option>
-                                    <option value="MCP">MCP Server</option>
+                                    <option value="MCP">Local Tool Bridge</option>
                                     <option value="WASM future">WASM Target</option>
                                 </select>
                             </div>
@@ -650,7 +650,7 @@ export const CapabilityMarketplace: React.FC = () => {
                                             <span className="text-xs font-extrabold text-amber-800 uppercase tracking-wider">Scholar Explorer vs Scholar Explorer Local Lab Boundary Contract</span>
                                             <p className="text-xs text-amber-700 leading-normal font-semibold">
                                                 To ensure data privacy and institutional boundaries, Scholar Explorer serves strictly as a public publication channel. 
-                                                All execution of tool policies, accessing private local source packages, writing to GNO Vaults, recording local xAPI statements, and updating DuckDB occurs purely inside your locally scoped <strong className="font-extrabold">Scholar Explorer Local Lab</strong> environment.
+                                                All execution of tool policies, accessing private local source packages, writing to S3A databases, recording local xAPI statements, and updating local verification tables occurs purely inside your locally scoped <strong className="font-extrabold">Scholar Explorer Local Lab</strong> environment.
                                             </p>
                                         </div>
                                     </div>

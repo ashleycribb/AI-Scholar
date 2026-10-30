@@ -62,7 +62,7 @@ export const LocalLibraryPanel: React.FC<LocalLibraryPanelProps> = ({ userSettin
                         <div className="flex items-center gap-2">
                             <div className={`w-2.5 h-2.5 rounded-full ${status.isConnected ? 'bg-green-500 animate-pulse' : 'bg-slate-300'}`} />
                             <span className="text-sm font-bold text-indigo-950">
-                                Local Plugin (MCP): {status.isConnected ? 'Connected' : 'Offline'}
+                                Local Lab Plugin: {status.isConnected ? 'Connected' : 'Offline'}
                             </span>
                         </div>
                         {status.isConnected && <CheckIcon className="w-4 h-4 text-green-600" />}

@@ -14,7 +14,7 @@ const mapPaperToLibraryItem = (paper: ResearchPaper) => {
             firstName: parts.slice(0, -1).join(' '),
             lastName: parts.slice(-1).join(' ')
         };
-    }) || [{ creatorType: 'author', lastName: paper.authors.split(',')[0] }];
+    }) || [{ creatorType: 'author', lastName: typeof paper.authors === 'string' && paper.authors ? paper.authors.split(',')[0] : 'Unknown' }];
 
     return {
         itemType: 'journalArticle',

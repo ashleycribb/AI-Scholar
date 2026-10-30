@@ -29,7 +29,7 @@ export async function fetchMetadataByDOI(doi: string): Promise<Metadata> {
     const meta: Metadata = {
         doi: doi,
         title: paper.title,
-        authors: paper.authorList ? paper.authorList.map(a => a.name) : paper.authors.split(', '),
+        authors: paper.authorList ? paper.authorList.map(a => a.name) : (typeof paper.authors === 'string' ? paper.authors.split(', ') : []),
         journal: paper.journal,
         year: paper.year,
         citations: paper.citations,
@@ -60,7 +60,7 @@ export function createMetadataFromPaper(paper: ResearchPaper): Metadata {
     return {
         doi: paper.doi,
         title: paper.title,
-        authors: paper.authors.split(', '),
+        authors: typeof paper.authors === 'string' ? paper.authors.split(', ') : (paper.authorList ? paper.authorList.map(a => a.name) : []),
         journal: paper.journal,
         year: paper.year,
         citations: paper.citations,

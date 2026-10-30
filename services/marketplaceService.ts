@@ -36,7 +36,7 @@ export const STARTER_PACKS: CapabilityPack[] = [
                 trust_card: "trust-card.md"
             }
         },
-        ontology_content: `@prefix oh: <http://openharness.org/ns/core#> .
+        ontology_content: `@prefix oh: <urn:s3a:ns/core#> .
 @prefix owl: <http://www.w3.org/2002/07/owl#> .
 @prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
 @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
@@ -62,13 +62,13 @@ oh:provenanceService a owl:ObjectProperty ;
   "definition": { "en": "Statements recorded during metadata structural checks." },
   "concepts": [
     {
-      "id": "http://openharness.org/verbs/verified",
+      "id": "urn:s3a:verbs/verified",
       "type": "Verb",
       "prefLabel": { "en": "verified" },
       "definition": { "en": "Asserts that a given metadata attribute exactly matches authority sources." }
     },
     {
-      "id": "http://openharness.org/verbs/mismatched",
+      "id": "urn:s3a:verbs/mismatched",
       "type": "Verb",
       "prefLabel": { "en": "mismatched" },
       "definition": { "en": "Flags an inconsistency between the record and the online indexed DOI service." }
@@ -166,7 +166,7 @@ Designed for checking bibliographic properties of standard PDF, XML, or database
                 trust_card: "trust-card.md"
             }
         },
-        ontology_content: `@prefix oh: <http://openharness.org/ns/core#> .
+        ontology_content: `@prefix oh: <urn:s3a:ns/core#> .
 @prefix owl: <http://www.w3.org/2002/07/owl#> .
 @prefix rdfs: <http://www.w3.org/2051/rdf-schema#> .
 
@@ -185,7 +185,7 @@ oh:definesAssumption a owl:ObjectProperty ;
   "definition": { "en": "Records how an agent structures questions and hypotheses." },
   "concepts": [
     {
-      "id": "http://openharness.org/verbs/formulated",
+      "id": "urn:s3a:verbs/formulated",
       "type": "Verb",
       "prefLabel": { "en": "formulated" },
       "definition": { "en": "Saves a formal research question statement with test criteria." }
@@ -268,7 +268,7 @@ Helps narrow researcher ideas into concrete hypotheses that have high empirical 
                 trust_card: "trust-card.md"
             }
         },
-        ontology_content: `@prefix oh: <http://openharness.org/ns/core#> .
+        ontology_content: `@prefix oh: <urn:s3a:ns/core#> .
 @prefix owl: <http://www.w3.org/2002/07/owl#> .
 @prefix rdfs: <http://www.w3.org/2500/01/rdf-schema#> .
 
@@ -287,7 +287,7 @@ oh:claimsConsistentWith a owl:ObjectProperty ;
   "definition": { "en": "Traces fact-checking of AI-generated content." },
   "concepts": [
     {
-      "id": "http://openharness.org/verbs/audited",
+      "id": "urn:s3a:verbs/audited",
       "type": "Verb",
       "prefLabel": { "en": "audited" },
       "definition": { "en": "Evaluates an extract statement for ground truth consistency." }

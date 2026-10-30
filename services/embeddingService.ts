@@ -4,7 +4,7 @@ import { generateHypotheticalAnswer, getEmbedding } from './geminiService';
 import { cosineSimilarity } from '../utils/math';
 import { batchEmbedText } from '../utils/embeddings';
 import { scorePapersLexical } from '../utils/bm25';
-import { rerankResults } from './rerankService';
+import { rerankResults, buildPaperScoreExplanation } from './rerankService';
 
 /**
  * Splits text into overlapping chunks (passages) to improve retrieval context.
@@ -133,6 +133,7 @@ export const computeScores = async (papers: ResearchPaper[], queryEmbedding: num
                 return {
                     ...paper,
                     semanticScore: score / 100, // Normalize to 0-1 for reranker
+                    rawSemanticSimilarity: score,
                     semanticHighlights: highlights
                 };
             });
@@ -142,14 +143,24 @@ export const computeScores = async (papers: ResearchPaper[], queryEmbedding: num
 
         // 5. Local Reranking Step
         if (queryFallback) {
-            return await rerankResults(scoredPapers, queryFallback);
+            return await rerankResults(scoredPapers, queryFallback, 'Embedding similarity + keyword boost');
         }
 
         // Fallback: convert back to 0-100 if no reranking happened
-        return scoredPapers.map(p => ({
-            ...p,
-            semanticScore: Math.round((p.semanticScore || 0) * 100)
-        }));
+        return scoredPapers.map(p => {
+            const finalScore = Math.round((p.semanticScore || 0) * 100);
+            const finalPaper: ResearchPaper = {
+                ...p,
+                semanticScore: finalScore,
+                rawSemanticSimilarity: p.rawSemanticSimilarity !== undefined ? p.rawSemanticSimilarity : finalScore
+            };
+            finalPaper.scoreExplanation = buildPaperScoreExplanation(
+                finalPaper,
+                queryFallback || '',
+                'Embedding similarity + keyword boost'
+            );
+            return finalPaper;
+        });
     } catch (e) {
         console.error("[SemanticSearch] Error computing passage-level scores:", e);
         return papers.map(p => ({ ...p, semanticScore: 0 }));
@@ -163,7 +174,8 @@ const computeLexicalScores = (papers: ResearchPaper[], query: string): ResearchP
     const scores = scorePapersLexical(papers, query);
     return papers.map((paper, i) => ({
         ...paper,
-        semanticScore: scores[i]
+        semanticScore: scores[i],
+        rawSemanticSimilarity: Math.round((scores[i] || 0) * 100)
     }));
 };
 

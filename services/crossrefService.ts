@@ -1,7 +1,7 @@
 import type { ResearchPaper } from '../types';
 import { getCache, setCache } from '../utils/cache';
 
-const CROSSREF_API = 'https://api.crossref.org/works';
+const CROSSREF_API = 'https://api.crossref.org/v1/works';
 const CACHE_TTL_MS = 5 * 60 * 1000;
 
 export interface CrossrefItem {
@@ -34,7 +34,7 @@ export const searchCrossref = async (
     const url = `/api/registries/crossref/search?query=${encodeURIComponent(query)}&rows=${limit}&sort=relevance`;
     const res = await fetch(url).catch(() =>
       fetch(`${CROSSREF_API}?query=${encodeURIComponent(query)}&rows=${limit}&sort=relevance`, {
-        headers: { 'User-Agent': 'ScholarExplorer/1.0 (mailto:scholar-explorer@gmail.com)' }
+        headers: { 'User-Agent': 'ScholarExplorer/1.0' }
       })
     );
 
@@ -92,8 +92,8 @@ export const fetchWorkByDoi = async (doi: string): Promise<CrossrefWork | null> 
   try {
     const url = `/api/registries/crossref/works/${encodeURIComponent(cleanDoi)}`;
     const res = await fetch(url).catch(() =>
-      fetch(`https://api.crossref.org/works/${encodeURIComponent(cleanDoi)}`, {
-        headers: { 'User-Agent': 'ScholarExplorer/1.0 (mailto:scholar-explorer@gmail.com)' }
+      fetch(`https://api.crossref.org/v1/works/${encodeURIComponent(cleanDoi)}`, {
+        headers: { 'User-Agent': 'ScholarExplorer/1.0' }
       })
     );
     if (!res.ok) return null;
@@ -127,10 +127,10 @@ export const fetchCslFromCrossref = async (doi: string): Promise<any> => {
   if (cached) return cached;
 
   try {
-    const res = await fetch(`https://api.crossref.org/works/${encodeURIComponent(cleanDoi)}/transform/application/vnd.citationstyles.csl+json`, {
+    const res = await fetch(`https://api.crossref.org/v1/works/${encodeURIComponent(cleanDoi)}/transform/application/vnd.citationstyles.csl+json`, {
       headers: {
         'Accept': 'application/vnd.citationstyles.csl+json',
-        'User-Agent': 'ScholarExplorer/1.0 (mailto:scholar-explorer@gmail.com)'
+        'User-Agent': 'ScholarExplorer/1.0'
       }
     });
     if (!res.ok) return null;

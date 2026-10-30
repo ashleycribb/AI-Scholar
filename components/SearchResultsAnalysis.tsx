@@ -1,10 +1,9 @@
-
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import type { AnalysisResult, ResearchPaper } from '../types';
 import { PublicationYearChart } from './PublicationYearChart';
 import { TopAuthorsChart } from './TopAuthorsChart';
 import { FormattedSummary } from './FormattedSummary';
-import { SparklesIcon, ThumbsUp, MessageSquare, ThumbsDown, ShieldCheck, ChevronDown, ChevronUp } from 'lucide-react';
+import { SparklesIcon, ThumbsUp, MessageSquare, ThumbsDown, ShieldCheck, ChevronDown, ChevronUp, RefreshCw } from 'lucide-react';
 
 interface SearchResultsAnalysisProps {
   analysis: AnalysisResult | null;
@@ -12,13 +11,33 @@ interface SearchResultsAnalysisProps {
   isSummaryLoading: boolean;
   isAnalysisLoading: boolean;
   papers: ResearchPaper[];
+  onRetrySynthesis?: () => void;
 }
 
-export const SearchResultsAnalysis: React.FC<SearchResultsAnalysisProps> = ({ analysis, summary, isSummaryLoading, isAnalysisLoading, papers }) => {
-    const [isSummaryExpanded, setIsSummaryExpanded] = React.useState(true);
-    const [isSciteExpanded, setIsSciteExpanded] = React.useState(false);
-    const [isThematicExpanded, setIsThematicExpanded] = React.useState(false);
-    const [isBibliometricExpanded, setIsBibliometricExpanded] = React.useState(false);
+export const SearchResultsAnalysis: React.FC<SearchResultsAnalysisProps> = ({
+    analysis,
+    summary,
+    isSummaryLoading,
+    isAnalysisLoading,
+    papers,
+    onRetrySynthesis
+}) => {
+    const [isSummaryExpanded, setIsSummaryExpanded] = useState(true);
+    const [isSciteExpanded, setIsSciteExpanded] = useState(false);
+    const [isThematicExpanded, setIsThematicExpanded] = useState(false);
+    const [isBibliometricExpanded, setIsBibliometricExpanded] = useState(false);
+    const [isSynthesisTakingLong, setIsSynthesisTakingLong] = useState(false);
+
+    useEffect(() => {
+        if (!isSummaryLoading) {
+            setIsSynthesisTakingLong(false);
+            return;
+        }
+        const timer = setTimeout(() => {
+            setIsSynthesisTakingLong(true);
+        }, 30000);
+        return () => clearTimeout(timer);
+    }, [isSummaryLoading]);
 
     const sciteAggregate = React.useMemo(() => {
         const tallies = papers.map(p => p.sciteTally).filter(Boolean);
@@ -55,13 +74,38 @@ export const SearchResultsAnalysis: React.FC<SearchResultsAnalysisProps> = ({ an
             {isSummaryExpanded && (
                 <div className="mt-4 pt-4 border-t border-slate-100">
                     {isSummaryLoading ? (
-                        <div className="bg-slate-50 border border-slate-100 p-6 rounded-xl animate-pulse">
-                             <div className="space-y-3">
-                                 <div className="h-4 bg-slate-200/60 rounded w-full"></div>
-                                 <div className="h-4 bg-slate-200/60 rounded w-5/6"></div>
-                                 <div className="h-4 bg-slate-200/60 rounded w-4/6"></div>
-                             </div>
-                        </div>
+                        isSynthesisTakingLong ? (
+                            <div className="bg-amber-50/70 border border-amber-200 p-4 rounded-xl flex items-center justify-between gap-3 text-xs text-amber-900">
+                                <span className="font-medium">Taking longer than usual</span>
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        setIsSynthesisTakingLong(false);
+                                        if (onRetrySynthesis) {
+                                            onRetrySynthesis();
+                                        } else if (typeof window !== 'undefined') {
+                                            window.dispatchEvent(new CustomEvent('scholar:retry-synthesis'));
+                                        }
+                                    }}
+                                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white hover:bg-amber-100 text-amber-900 border border-amber-300 font-semibold transition-colors shadow-2xs"
+                                >
+                                    <RefreshCw className="w-3.5 h-3.5" />
+                                    <span>Retry</span>
+                                </button>
+                            </div>
+                        ) : (
+                            <div className="bg-slate-50 border border-slate-100 p-6 rounded-xl animate-pulse space-y-3">
+                                <div className="text-xs font-medium text-indigo-600 flex items-center gap-2">
+                                    <span className="w-2 h-2 rounded-full bg-indigo-500 animate-ping" />
+                                    <span>Synthesizing…</span>
+                                </div>
+                                <div className="space-y-3">
+                                    <div className="h-4 bg-slate-200/60 rounded w-full"></div>
+                                    <div className="h-4 bg-slate-200/60 rounded w-5/6"></div>
+                                    <div className="h-4 bg-slate-200/60 rounded w-4/6"></div>
+                                </div>
+                            </div>
+                        )
                     ) : summary && (
                         <div className="bg-white border border-slate-200 p-6 rounded-2xl shadow-sm relative overflow-hidden group">
                             <div className="absolute top-0 left-0 w-1 h-full bg-slate-900"></div>

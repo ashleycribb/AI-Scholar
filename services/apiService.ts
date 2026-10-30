@@ -58,6 +58,7 @@ export interface SearchProgressCallbacks {
     onInitialPapers?: (papers: ResearchPaper[], hasMore: boolean) => void;
     onFederatedBatch?: (papers: ResearchPaper[], newCount: number) => void;
     onStatusChange?: (message: string) => void;
+    onSourceNotice?: (notice: string | null) => void;
 }
 
 // Deduplicate and merge research paper lists preserving richest metadata
@@ -152,11 +153,21 @@ export const searchPapers = async (
                 .catch(() => [])
         );
 
-        // STEM Pre-Prints
+        // STEM Pre-Prints (via backend proxy; shows quiet notice if unavailable)
         federatedPromises.push(
             arxivService.searchArxiv(query)
-                .then(res => res.papers)
-                .catch(() => [])
+                .then(res => {
+                    if (res.unavailable) {
+                        callbacks?.onSourceNotice?.('arXiv unavailable');
+                    } else {
+                        callbacks?.onSourceNotice?.(null);
+                    }
+                    return res.papers;
+                })
+                .catch(() => {
+                    callbacks?.onSourceNotice?.('arXiv unavailable');
+                    return [];
+                })
         );
 
         // Hugging Face AI Papers
@@ -320,14 +331,144 @@ export const fetchMetadataByDOI = async (doi: string): Promise<Metadata> => {
     return metadataService.fetchMetadataByDOI(doi);
 };
 
-export const findConnectedPapers = async (paper: ResearchPaper, model: ModelDefinition): Promise<ConnectedPaper[]> => {
-    if (paper.doi) {
-        const graphData = await semanticScholarService.getPaperGraphData(paper.doi);
-        if (graphData && graphData.connections) {
-            return graphData.connections;
+export interface CitationGraphLookupResult {
+    connections: ConnectedPaper[];
+    citedByCount: number;
+    referencedWorksCount: number;
+    citingLinks: OpenCitationsLink[];
+    referencedLinks: OpenCitationsLink[];
+    openalexConcepts: string[];
+    primarySource: 'OpenAlex' | 'Semantic Scholar' | 'OpenCitations';
+    sourceErrors: string[];
+}
+
+/**
+ * Primary citation and reference lookup using OpenAlex referenced_works and cited_by_count / filter=cites:<id>,
+ * with Semantic Scholar and OpenCitations as fallbacks. Surfaces clear errors when a source fails or rate-limits.
+ */
+export const fetchPaperCitationGraphWithFallbacks = async (
+    paper: ResearchPaper
+): Promise<CitationGraphLookupResult> => {
+    const sourceErrors: string[] = [];
+    const connections: ConnectedPaper[] = [];
+    const citingLinks: OpenCitationsLink[] = [];
+    const referencedLinks: OpenCitationsLink[] = [];
+    let citedByCount = paper.citations || 0;
+    let referencedWorksCount = 0;
+    let openalexConcepts: string[] = [];
+    let primarySource: 'OpenAlex' | 'Semantic Scholar' | 'OpenCitations' = 'OpenAlex';
+
+    const cleanDoi = paper.doi ? paper.doi.replace(/^(https?:\/\/doi\.org\/|doi:)/i, '').trim() : '';
+
+    // 1. Primary Source: OpenAlex referenced_works & cited_by_count / filter=cites:<id>
+    const oaGraph = await openalexService.fetchOpenAlexCitationGraph(paper);
+    if (oaGraph.error) {
+        sourceErrors.push(`OpenAlex: ${oaGraph.error}`);
+    }
+    if (oaGraph.concepts && oaGraph.concepts.length > 0) {
+        openalexConcepts = oaGraph.concepts;
+    }
+
+    if (oaGraph.citedByCount > 0 || oaGraph.referencedWorksCount > 0 || oaGraph.citingWorks.length > 0 || oaGraph.referencedWorks.length > 0) {
+        citedByCount = Math.max(citedByCount, oaGraph.citedByCount);
+        referencedWorksCount = oaGraph.referencedWorksCount || oaGraph.referencedWorks.length;
+
+        oaGraph.citingWorks.slice(0, 12).forEach(cw => {
+            connections.push({
+                title: cw.title,
+                authors: cw.authors,
+                year: cw.year,
+                connection: 'Cited by this work (OpenAlex)',
+                summary: `Citing work indexed in OpenAlex (${cw.citations} citations).`,
+                sourceURL: cw.sourceURL
+            });
+            citingLinks.push({
+                citingDoi: cw.doi || cw.id,
+                citedDoi: cleanDoi || paper.openalex_id || paper.id,
+                creationDate: cw.year ? String(cw.year) : '',
+                timespan: '',
+                journalScind: false,
+                authorScind: false
+            });
+        });
+
+        oaGraph.referencedWorks.slice(0, 12).forEach(rw => {
+            connections.push({
+                title: rw.title,
+                authors: rw.authors,
+                year: rw.year,
+                connection: 'This paper cites (OpenAlex)',
+                summary: `Referenced work resolved via OpenAlex referenced_works (${rw.citations} citations).`,
+                sourceURL: rw.sourceURL
+            });
+            referencedLinks.push({
+                citingDoi: cleanDoi || paper.openalex_id || paper.id,
+                citedDoi: rw.doi || rw.id,
+                creationDate: rw.year ? String(rw.year) : '',
+                timespan: '',
+                journalScind: false,
+                authorScind: false
+            });
+        });
+    }
+
+    // 2. Fallback 1: Semantic Scholar (if OpenAlex had no connections or failed)
+    if (connections.length === 0 && cleanDoi) {
+        try {
+            const s2Graph = await semanticScholarService.getPaperGraphData(cleanDoi);
+            if (s2Graph && s2Graph.connections && s2Graph.connections.length > 0) {
+                primarySource = 'Semantic Scholar';
+                connections.push(...s2Graph.connections);
+                if (typeof s2Graph.influence?.citations === 'number') {
+                    citedByCount = Math.max(citedByCount, s2Graph.influence.citations);
+                }
+            } else {
+                sourceErrors.push('Semantic Scholar: Rate-limited or returned 0 graph edges for this DOI.');
+            }
+        } catch (err: any) {
+            sourceErrors.push(`Semantic Scholar: ${err?.message || 'Graph request failed'}`);
         }
     }
-    return [];
+
+    // 3. Fallback 2: OpenCitations COCI (if citingLinks / referencedLinks still empty)
+    if ((citingLinks.length === 0 || referencedLinks.length === 0) && cleanDoi) {
+        const [ocCitSettled, ocRefSettled] = await Promise.allSettled([
+            openCitationsService.fetchCitationsByDoi(cleanDoi),
+            openCitationsService.fetchReferencesByDoi(cleanDoi)
+        ]);
+        if (ocCitSettled.status === 'fulfilled' && ocCitSettled.value.length > 0) {
+            if (citingLinks.length === 0) {
+                citingLinks.push(...ocCitSettled.value);
+                if (connections.length === 0) primarySource = 'OpenCitations';
+            }
+        } else if (ocCitSettled.status === 'rejected') {
+            sourceErrors.push(`OpenCitations (citations): ${ocCitSettled.reason?.message || 'Request failed'}`);
+        }
+        if (ocRefSettled.status === 'fulfilled' && ocRefSettled.value.length > 0) {
+            if (referencedLinks.length === 0) {
+                referencedLinks.push(...ocRefSettled.value);
+                referencedWorksCount = Math.max(referencedWorksCount, ocRefSettled.value.length);
+            }
+        } else if (ocRefSettled.status === 'rejected') {
+            sourceErrors.push(`OpenCitations (references): ${ocRefSettled.reason?.message || 'Request failed'}`);
+        }
+    }
+
+    return {
+        connections,
+        citedByCount,
+        referencedWorksCount,
+        citingLinks,
+        referencedLinks,
+        openalexConcepts,
+        primarySource,
+        sourceErrors
+    };
+};
+
+export const findConnectedPapers = async (paper: ResearchPaper, _model: ModelDefinition): Promise<ConnectedPaper[]> => {
+    const graph = await fetchPaperCitationGraphWithFallbacks(paper);
+    return graph.connections;
 };
 
 export const handlePdfUpload = async (base64: string): Promise<ResearchPaper> => {

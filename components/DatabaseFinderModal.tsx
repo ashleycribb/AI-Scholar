@@ -476,14 +476,14 @@ export const DatabaseFinderModal: React.FC<DatabaseFinderModalProps> = ({
             <div>
               <div className="flex items-center gap-2">
                 <h2 id="db-finder-modal-title" className="text-xl font-black text-slate-900 tracking-tight">
-                  Scholarly Databases & Library MCP Hub
+                  Institutional Literature Catalog & Directory
                 </h2>
                 <span className="px-2 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-indigo-50 text-indigo-700 border border-indigo-200">
                   Doctoral Literature System
                 </span>
               </div>
               <p className="text-xs text-slate-500 mt-1 max-w-2xl leading-relaxed">
-                Expand student literature search by connecting global open databases, discovering new repositories with automated email approvals, and connecting institutional campus libraries via the Model Context Protocol (MCP).
+                Expand doctoral literature discovery by connecting global academic indices, evaluating candidate repositories with scholarly review workflows, and integrating campus library subscriptions via standardized Library Protocol Bridges.
               </p>
             </div>
           </div>
@@ -552,7 +552,7 @@ export const DatabaseFinderModal: React.FC<DatabaseFinderModalProps> = ({
             }`}
           >
             <Building2 className="w-4 h-4 text-emerald-600" />
-            <span>University Library MCP Connector</span>
+            <span>University Library Protocol Bridge</span>
             <span className="px-1.5 py-0.5 rounded-full text-[9px] bg-emerald-100 text-emerald-800 font-bold">
               Prospectus
             </span>
@@ -972,10 +972,10 @@ export const DatabaseFinderModal: React.FC<DatabaseFinderModalProps> = ({
               <div>
                 <h3 className="text-sm font-black uppercase tracking-wider text-slate-900 flex items-center gap-2">
                   <Building2 className="w-4 h-4 text-emerald-600" />
-                  Institutional University Library MCP Prospectus
+                  Institutional University Library Protocol Prospectus
                 </h3>
                 <p className="text-xs text-slate-500 mt-0.5">
-                  Generate formal integration proposals for University, College, and School Libraries to connect campus electronic subscriptions (JSTOR, ProQuest, EBSCO) via Model Context Protocol (MCP).
+                  Generate formal integration proposals for University, College, and School Libraries to connect campus electronic subscriptions (JSTOR, ProQuest, EBSCO) via institutional Library Protocol Bridges.
                 </p>
               </div>
 
@@ -1014,7 +1014,7 @@ export const DatabaseFinderModal: React.FC<DatabaseFinderModalProps> = ({
                   className="px-3 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-xs font-bold flex items-center gap-1.5 shadow-sm"
                 >
                   <Download className="w-3.5 h-3.5 text-indigo-400" />
-                  <span>Download MCP JSON Config</span>
+                  <span>Download Protocol JSON Config</span>
                 </button>
               </div>
             </div>

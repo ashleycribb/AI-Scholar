@@ -5,6 +5,8 @@ import { AboutIcon } from './icons/AboutIcon';
 import type { SummaryLength, AdvancedSearchOptions, SummaryStyle, ModelDefinition, SearchSourceInfo } from '../types';
 import { DatabaseIcon } from './icons/DatabaseIcon';
 
+import { isRecordingActive } from '../services/s3aWasmService';
+
 interface InitialSearchScreenProps {
   query: string;
   onQueryChange: (query: string) => void;
@@ -32,6 +34,11 @@ interface InitialSearchScreenProps {
 
 export const InitialSearchScreen: React.FC<InitialSearchScreenProps> = (props) => {
   const { onSearch, onOpenDbFinder, searchSources, ...searchFormProps } = props;
+  const [recordingActive, setRecordingActive] = React.useState<boolean>(false);
+
+  React.useEffect(() => {
+    isRecordingActive().then(setRecordingActive).catch(() => {});
+  }, []);
 
   const handleSearch = (query: string, options: AdvancedSearchOptions) => {
       props.onSearch(query, options);
@@ -39,7 +46,7 @@ export const InitialSearchScreen: React.FC<InitialSearchScreenProps> = (props) =
 
   return (
     <div className="flex flex-col items-start justify-center min-h-[calc(100vh-150px)] px-4 py-20 max-w-5xl mx-auto">
-        <div className="flex flex-col items-start gap-6 mb-12 text-left animate-in fade-in slide-in-from-bottom-4 duration-700">
+        <div className="flex flex-col items-start gap-6 mb-8 text-left animate-in fade-in slide-in-from-bottom-4 duration-700">
             <div>
                 <h1 className="text-5xl sm:text-7xl font-extrabold tracking-tight text-slate-900 leading-[1.1] mb-6">
                     All the world's research, <br className="hidden sm:block" /> connected and open.
@@ -47,6 +54,16 @@ export const InitialSearchScreen: React.FC<InitialSearchScreenProps> = (props) =
                 <p className="text-xl sm:text-2xl text-slate-500 max-w-3xl font-medium leading-relaxed">
                     Scholar Explorer leverages AI to synthesize millions of scholarly works, linking authors, institutions, and insights across every field of research—all fully open.
                 </p>
+            </div>
+
+            {/* Live Recording Indicator (Requirement 2) */}
+            <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-medium border shadow-2xs transition-colors bg-white">
+                <span className={`w-2 h-2 rounded-full shrink-0 ${recordingActive ? 'bg-emerald-500 animate-pulse' : 'bg-slate-400'}`} />
+                <span className={recordingActive ? 'text-emerald-800' : 'text-slate-600'}>
+                    {recordingActive
+                        ? 'Recording on — your research activity is being traced for this study.'
+                        : 'Recording off — your papers and claims still save, but your activity is not being traced.'}
+                </span>
             </div>
         </div>
         

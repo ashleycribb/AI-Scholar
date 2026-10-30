@@ -227,7 +227,7 @@ export const LrsTelemetryModal: React.FC<LrsTelemetryModalProps> = ({
                     Integrates xAPI Research Traceability Profile verbs and statements directly into Model Context Protocol tools.
                   </p>
                   <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-xs">
-                    <span className="text-slate-500 font-bold">MCP Tools Active:</span>
+                    <span className="text-slate-500 font-bold">Bridge Tools Active:</span>
                     <span className="font-black text-slate-900 font-mono">{status?.learnMcpXapi.mcpToolsRegistered ?? 3}</span>
                   </div>
                 </div>

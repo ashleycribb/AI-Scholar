@@ -207,7 +207,7 @@ export const ConnectionsDashboard: React.FC<ConnectionsDashboardProps> = ({ isOp
                                                             </span>
                                                         </div>
                                                         <p className="text-xs text-slate-400 font-medium mt-0.5">
-                                                            Autonomous Watchdog & GNO Vault Intercept • Local Lab Assistant
+                                                            Autonomous Watchdog & S3A Local Engine • Local Lab Assistant
                                                         </p>
                                                     </div>
                                                 </div>
@@ -259,7 +259,7 @@ export const ConnectionsDashboard: React.FC<ConnectionsDashboardProps> = ({ isOp
                                             <ConnectionRow 
                                                 icon={<RobotIcon className="w-6 h-6 text-indigo-600" />}
                                                 name="Scholar Desktop Plugin"
-                                                description="Connected via Desktop MCP"
+                                                description="Connected via Research Desktop Protocol"
                                                 onDisconnect={() => onSave({...settings, isMcpEnabled: false})}
                                             />
                                         )}
@@ -268,57 +268,21 @@ export const ConnectionsDashboard: React.FC<ConnectionsDashboardProps> = ({ isOp
 
                                 {/* Discover Section */}
                                 <section className="space-y-6">
-                                    {/* Doctoral Library MCP Banner */}
-                                    <div className="bg-gradient-to-r from-indigo-900 via-slate-900 to-indigo-950 text-white p-5 rounded-2xl border border-indigo-800/50 shadow-md flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-                                        <div className="flex items-start gap-3.5">
-                                            <div className="w-10 h-10 rounded-xl bg-indigo-500/20 border border-indigo-400/30 text-indigo-300 flex items-center justify-center shrink-0">
-                                                <GraduationCap className="w-5 h-5" />
-                                            </div>
-                                            <div>
-                                                <div className="flex items-center gap-2">
-                                                    <h4 className="text-sm font-extrabold text-white">
-                                                        Doctoral Student Guide: University Library MCP Connection
-                                                    </h4>
-                                                    <span className="px-2 py-0.5 rounded text-[9px] font-black uppercase tracking-wider bg-indigo-400/20 text-indigo-200 border border-indigo-400/30">
-                                                        Dissertation Research
-                                                    </span>
-                                                </div>
-                                                <p className="text-xs text-slate-300 mt-1 max-w-xl leading-relaxed">
-                                                    Invite your home university or college library to connect their electronic subscriptions (ProQuest, JSTOR, ScienceDirect, EBSCOhost) via the Model Context Protocol (MCP) for unified literature search.
-                                                </p>
-                                            </div>
-                                        </div>
-
-                                        <button
-                                            onClick={() => {
-                                                if (onOpenLibraryGuide) {
-                                                    onOpenLibraryGuide();
-                                                }
-                                            }}
-                                            className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold rounded-xl transition-all shadow-md shrink-0 flex items-center gap-1.5"
-                                        >
-                                            <Library className="w-3.5 h-3.5" />
-                                            <span>Open Student Guide</span>
-                                        </button>
-                                    </div>
-
                                     <div>
                                         <h3 className="text-xs font-black text-gray-400 uppercase tracking-[0.2em] mb-4">Discover new connections</h3>
                                         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                                             <DiscoverCard 
                                                 icon={<Library className="w-7 h-7" />}
-                                                title="Campus Library MCP Connector"
-                                                description="Connect your home university library's electronic subscriptions via Model Context Protocol for unified search."
-                                                actionText="Read Doctoral Guide"
+                                                title="Institutional Library Bridge"
+                                                description="Connect your university library's electronic catalog and subscription databases for unified federated inquiry."
+                                                actionText="Configure Bridge"
                                                 colorClass="bg-indigo-50 text-indigo-700"
-                                                onAction={() => {
-                                                    if (onOpenLibraryGuide) onOpenLibraryGuide();
-                                                }}
+                                                onAction={() => {}}
                                             />
                                             <DiscoverCard 
                                                 icon={<BookOpen className="w-7 h-7" />}
-                                                title="Harvard Library MCP"
-                                                description="Connect to the Harvard University Library catalog API via Model Context Protocol. Search over 20M records natively."
+                                                title="Harvard Library Catalog"
+                                                description="Connect to the Harvard University Library catalog API. Search over 20M records natively within Scholar Explorer."
                                                 actionText={settings.isHarvardLibraryEnabled ? "Active" : "Enable"}
                                                 colorClass={settings.isHarvardLibraryEnabled ? "bg-emerald-50 text-emerald-700" : "bg-red-50 text-red-900"}
                                                 onAction={() => onSave({...settings, isHarvardLibraryEnabled: !settings.isHarvardLibraryEnabled})}
@@ -333,9 +297,9 @@ export const ConnectionsDashboard: React.FC<ConnectionsDashboardProps> = ({ isOp
                                             />
                                             <DiscoverCard 
                                                 icon={<NetworkIcon className="w-7 h-7" />}
-                                                title="Local Lab Core (Port 5050)"
-                                                description="Connect your local lab core assistant for autonomous watchdog snapshot processing into GNO Vault."
-                                                actionText="Explore Setup"
+                                                title="Scholar Explorer Local Lab Core (S3A)"
+                                                description="Connect your local S3A database daemon (127.0.0.1:8080) for streaming persistence into scholar_live_lab.s3a."
+                                                actionText="Configure S3A"
                                                 colorClass="bg-slate-100 text-slate-700"
                                                 onAction={() => onSave({...settings, isMcpEnabled: true})}
                                             />
@@ -397,12 +361,12 @@ export const ConnectionsDashboard: React.FC<ConnectionsDashboardProps> = ({ isOp
                                             </div>
                                         </div>
 
-                                        {/* Desktop MCP Proxy Pipeline */}
+                                        {/* Desktop Proxy Pipeline */}
                                         <div className="flex items-start justify-between gap-6 pt-2">
                                             <div className="space-y-1.5 flex-grow">
-                                                <span className="text-sm font-extrabold text-slate-900">Immediate MCP Library Indexing</span>
+                                                <span className="text-sm font-extrabold text-slate-900">Immediate Local Library Indexing</span>
                                                 <p className="text-xs text-slate-400 leading-relaxed font-semibold">
-                                                    Forwards verified papers directly to local Desktop MCP servers as soon as they are added to the workspace. Enables instant reference lookups.
+                                                    Forwards verified papers directly to your local desktop research database as soon as they are added to the workspace. Enables instant reference lookups.
                                                 </p>
                                             </div>
                                             <div className="flex items-center shrink-0">

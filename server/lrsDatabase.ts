@@ -28,30 +28,20 @@ sqliteDb.exec(`
   );
   CREATE INDEX IF NOT EXISTS idx_sql_lrs_timestamp ON xapi_statements (timestamp);
   CREATE INDEX IF NOT EXISTS idx_sql_lrs_actor ON xapi_statements (actor_name);
+
+  CREATE TABLE IF NOT EXISTS xapi_states (
+    activity_id TEXT,
+    state_id TEXT,
+    etag TEXT,
+    data TEXT,
+    updated_at TEXT,
+    PRIMARY KEY (activity_id, state_id)
+  );
 `);
 
-export function insertSqlLrsStatement(stmt: any): void {
-  try {
-    const id = stmt.id || `stmt-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
-    const timestamp = stmt.timestamp || new Date().toISOString();
-    const stored = stmt.stored || new Date().toISOString();
-    const actorName = stmt.actor?.name || 'Scholar Explorer User';
-    const actorMbox = stmt.actor?.mbox || stmt.actor?.account?.name || '';
-    const verbId = stmt.verb?.id || 'http://adlnet.gov/expapi/verbs/interacted';
-    const verbName = stmt.verb?.display?.['en-US'] || 'interacted';
-    const objectId = stmt.object?.id || 'urn:scholarexplorer:action';
-    const objectName = stmt.object?.definition?.name?.['en-US'] || stmt.object?.id || 'Scholarly Action';
-    const payload = JSON.stringify(stmt);
-
-    const insertStmt = sqliteDb.prepare(`
-      INSERT OR REPLACE INTO xapi_statements 
-      (id, timestamp, stored, actor_name, actor_mbox, verb_id, verb_name, object_id, object_name, payload)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `);
-    insertStmt.run(id, timestamp, stored, actorName, actorMbox, verbId, verbName, objectId, objectName, payload);
-  } catch (err) {
-    console.error('[SQL LRS] Failed to write statement to SQLite:', err);
-  }
+export function insertSqlLrsStatement(_stmt: any): void {
+  // S3A WASM Snapshot is the single source of truth.
+  // SQLite statement writing is disabled to consolidate storage on S3A.
 }
 
 export function getSqlLrsStatements(filter: {
@@ -105,64 +95,133 @@ export function getSqlLrsCount(): number {
   }
 }
 
-// 2. DuckDB Database for AI & AI Agent xAPI Profile Documentation (Columnar Vertical LRS)
-const duckDbPath = path.join(localEngineDir, 'tensor_lrs.duckdb');
-const duckDbInstance = new duckdb.Database(duckDbPath);
+export function deleteSqlLrsStatementsByActor(actorIdentifier: string): number {
+  try {
+    if (!actorIdentifier || !actorIdentifier.trim()) return 0;
+    const actor = actorIdentifier.trim();
+    const query = `
+      DELETE FROM xapi_statements 
+      WHERE actor_mbox = ? 
+         OR actor_name = ? 
+         OR payload LIKE ? 
+         OR payload LIKE ?
+    `;
+    const pattern1 = `%"name":"${actor}"%`;
+    const pattern2 = `%"name": "${actor}"%`;
+    const result = sqliteDb.prepare(query).run(actor, actor, pattern1, pattern2);
 
-// Initialize DuckDB Audit Trail Table
-duckDbInstance.run(`
-  CREATE TABLE IF NOT EXISTS xapi_audit_trail (
-    statement_id VARCHAR PRIMARY KEY,
-    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    session_uuid VARCHAR,
-    agent_name VARCHAR,
-    verb_id VARCHAR,
-    verb_name VARCHAR,
-    object_id VARCHAR,
-    object_name VARCHAR,
-    xapi_payload JSON
-  );
-  CREATE INDEX IF NOT EXISTS idx_audit_timestamp ON xapi_audit_trail (timestamp);
-  CREATE INDEX IF NOT EXISTS idx_audit_session ON xapi_audit_trail (session_uuid);
-`, (err) => {
-  if (err) {
-    console.warn('[DuckDB Vertical LRS] Notice on schema setup:', err.message);
-  } else {
-    console.log('[DuckDB Vertical LRS] xapi_audit_trail ready at:', duckDbPath);
-  }
-});
-
-export function insertDuckDbStatement(stmt: any): Promise<void> {
-  return new Promise((resolve) => {
     try {
-      const id = stmt.id || `agent-stmt-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
-      const timestamp = stmt.timestamp ? new Date(stmt.timestamp).toISOString() : new Date().toISOString();
-      const sessionUuid = stmt.context?.sessionUuid || stmt.context?.extensions?.sessionUuid || 'default-session';
-      const agentName = stmt.actor?.name || 'AI Source Scout';
-      const verbId = stmt.verb?.id || '/ontologies/agent_traceability.owl#executed';
-      const verbName = stmt.verb?.display?.['en-US'] || 'executed';
-      const objectId = stmt.object?.id || 'urn:scholarexplorer:agent-activity';
-      const objectName = stmt.object?.definition?.name?.['en-US'] || stmt.object?.id || 'Agent Task';
-      const payloadStr = JSON.stringify(stmt);
+      duckDbInstance.run(`DELETE FROM xapi_audit_trail WHERE xapi_payload LIKE '%${actor.replace(/'/g, "''")}%'`, () => {});
+    } catch {}
 
-      const prep = duckDbInstance.prepare(
-        `INSERT INTO xapi_audit_trail 
-         (statement_id, timestamp, session_uuid, agent_name, verb_id, verb_name, object_id, object_name, xapi_payload)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-         ON CONFLICT (statement_id) DO UPDATE SET xapi_payload = EXCLUDED.xapi_payload`
-      );
+    console.log(`[S3A LRS] Deleted statements for actor: ${actor}`);
+    return Number(result.changes || 0);
+  } catch (err) {
+    console.error('[SQL LRS] Failed to delete statements by actor:', err);
+    return 0;
+  }
+}
 
-      prep.run(id, timestamp, sessionUuid, agentName, verbId, verbName, objectId, objectName, payloadStr, (err) => {
-        if (err) {
-          console.error('[DuckDB Vertical LRS] Insert error:', err);
-        }
-        prep.finalize(() => resolve());
-      });
-    } catch (e) {
-      console.error('[DuckDB Vertical LRS] Exception inserting statement:', e);
-      resolve();
+export function getXapiState(activityId: string, stateId: string): { data: any; etag: string } | null {
+  try {
+    const row = sqliteDb.prepare(`SELECT data, etag FROM xapi_states WHERE activity_id = ? AND state_id = ?`).get(activityId, stateId) as { data: string; etag: string } | undefined;
+    if (!row) return null;
+    return {
+      data: JSON.parse(row.data),
+      etag: row.etag
+    };
+  } catch (err) {
+    console.error('[xAPI State] Error getting state:', err);
+    return null;
+  }
+}
+
+export function putXapiState(activityId: string, stateId: string, data: any, ifMatch?: string | null): { etag: string; conflict?: boolean } {
+  try {
+    const existing = sqliteDb.prepare(`SELECT etag FROM xapi_states WHERE activity_id = ? AND state_id = ?`).get(activityId, stateId) as { etag: string } | undefined;
+    if (ifMatch && existing && existing.etag !== ifMatch) {
+      return { etag: existing.etag, conflict: true };
     }
-  });
+    const newEtag = `"${Date.now()}-${Math.random().toString(36).slice(2, 8)}"`;
+    const dataStr = JSON.stringify(data);
+    const updatedAt = new Date().toISOString();
+    sqliteDb.prepare(`
+      INSERT OR REPLACE INTO xapi_states (activity_id, state_id, etag, data, updated_at)
+      VALUES (?, ?, ?, ?, ?)
+    `).run(activityId, stateId, newEtag, dataStr, updatedAt);
+    return { etag: newEtag };
+  } catch (err) {
+    console.error('[xAPI State] Error putting state:', err);
+    const fallbackEtag = `"${Date.now()}"`;
+    return { etag: fallbackEtag };
+  }
+}
+
+export function queryConformingStatements(params: {
+  registration?: string;
+  verb?: string;
+  limit?: number;
+  since?: string;
+}): any[] {
+  try {
+    let sql = `SELECT payload FROM xapi_statements`;
+    const where: string[] = [];
+    const args: any[] = [];
+
+    if (params.verb) {
+      where.push(`verb_id = ?`);
+      args.push(params.verb);
+    }
+    if (params.since) {
+      where.push(`timestamp >= ?`);
+      args.push(params.since);
+    }
+
+    if (where.length > 0) {
+      sql += ` WHERE ` + where.join(' AND ');
+    }
+    sql += ` ORDER BY timestamp ASC LIMIT ?`;
+    args.push(params.limit || 500);
+
+    const rows = sqliteDb.prepare(sql).all(...args) as { payload: string }[];
+    const list: any[] = [];
+    for (const r of rows) {
+      try {
+        const stmt = JSON.parse(r.payload);
+        if (params.registration) {
+          const reg = stmt.context?.registration || stmt.context?.extensions?.sessionUuid;
+          if (reg && reg.toLowerCase() !== params.registration.toLowerCase()) {
+            continue;
+          }
+        }
+        list.push(stmt);
+      } catch {}
+    }
+    return list;
+  } catch (err) {
+    console.error('[xAPI Statements] Error querying statements:', err);
+    return [];
+  }
+}
+
+// 2. DuckDB Optional Read-Only Analytics Export (Off by default)
+export const ENABLE_DUCKDB_ANALYTICS = process.env.ENABLE_DUCKDB_ANALYTICS === 'true';
+const duckDbPath = path.join(localEngineDir, 'tensor_lrs.duckdb');
+let duckDbInstance: any = null;
+
+if (ENABLE_DUCKDB_ANALYTICS) {
+  try {
+    duckDbInstance = new duckdb.Database(duckDbPath);
+    console.log('[DuckDB Analytics] Read-only analytics engine enabled at:', duckDbPath);
+  } catch (err: any) {
+    console.warn('[DuckDB Analytics] Failed to initialize analytics engine:', err.message);
+  }
+}
+
+export function insertDuckDbStatement(_stmt: any): Promise<void> {
+  // S3A WASM Snapshot is the single source of truth.
+  // DuckDB writes are removed to consolidate storage on S3A.
+  return Promise.resolve();
 }
 
 export function getDuckDbStatements(filter: {
@@ -172,6 +231,10 @@ export function getDuckDbStatements(filter: {
   role?: string;
   userName?: string;
 }): Promise<any[]> {
+  if (!ENABLE_DUCKDB_ANALYTICS || !duckDbInstance) {
+    return Promise.resolve([]);
+  }
+
   return new Promise((resolve) => {
     try {
       const isResearcher = filter.role === 'researcher';
@@ -184,7 +247,6 @@ export function getDuckDbStatements(filter: {
           whereClauses.push(`session_uuid = ?`);
           params.push(filter.sessionUuid);
         } else {
-          // In participant / non-researcher mode without session UUID, return empty
           return resolve([]);
         }
       } else {
@@ -208,7 +270,6 @@ export function getDuckDbStatements(filter: {
       const prep = duckDbInstance.prepare(sql);
       prep.all(...params, (err: any, rows: any[]) => {
         if (err) {
-          console.error('[DuckDB Vertical LRS] Query error:', err);
           prep.finalize(() => resolve([]));
           return;
         }
@@ -222,13 +283,16 @@ export function getDuckDbStatements(filter: {
         prep.finalize(() => resolve(statements));
       });
     } catch (e) {
-      console.error('[DuckDB Vertical LRS] Query exception:', e);
       resolve([]);
     }
   });
 }
 
 export function getDuckDbStats(): Promise<{ totalStatements: number; activeSessionsCount: number }> {
+  if (!ENABLE_DUCKDB_ANALYTICS || !duckDbInstance) {
+    return Promise.resolve({ totalStatements: 0, activeSessionsCount: 0 });
+  }
+
   return new Promise((resolve) => {
     duckDbInstance.all(
       `SELECT COUNT(*) as total, COUNT(DISTINCT session_uuid) as sessions FROM xapi_audit_trail`,
@@ -243,4 +307,15 @@ export function getDuckDbStats(): Promise<{ totalStatements: number; activeSessi
       }
     );
   });
+}
+
+/**
+ * Optional read-only analytics export
+ */
+export async function exportDuckDbAnalytics(): Promise<{ enabled: boolean; count: number; statements: any[] }> {
+  if (!ENABLE_DUCKDB_ANALYTICS) {
+    return { enabled: false, count: 0, statements: [] };
+  }
+  const statements = await getDuckDbStatements({ role: 'researcher', limit: 1000 });
+  return { enabled: true, count: statements.length, statements };
 }

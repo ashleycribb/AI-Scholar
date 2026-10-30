@@ -390,3 +390,40 @@ export const createWorkspaceChatSession = (papers: ResearchPaper[], modelId: str
         history: history
     });
 };
+
+export const extractKeyConcepts = async (text: string, model?: ModelDefinition): Promise<string[]> => {
+    if (!text || text.trim().length < 10) {
+        throw new Error('Insufficient text to extract key concepts.');
+    }
+    const prompt = `Extract 5 to 8 concise academic key concepts or domain terms from the following research text.
+Return ONLY a JSON array of strings (for example: ["causal inference", "human-AI trust", "literature review"]).
+
+Text:
+${text.slice(0, 4000)}`;
+
+    const response = await runWithRetry<GenerateContentResponse>(() => ai.models.generateContent({
+        model: model?.id || "gemini-2.5-flash",
+        contents: prompt,
+        config: {
+            responseMimeType: "application/json",
+            responseSchema: {
+                type: Type.ARRAY,
+                items: { type: Type.STRING }
+            }
+        }
+    }));
+
+    const raw = response.text?.trim();
+    if (!raw) {
+        throw new Error('Empty response from concept extraction model.');
+    }
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed) || parsed.length === 0) {
+        throw new Error('No key concepts returned.');
+    }
+    return parsed
+        .map((item: any) => String(item || '').trim())
+        .filter((item: string) => item.length > 0)
+        .slice(0, 8);
+};
+

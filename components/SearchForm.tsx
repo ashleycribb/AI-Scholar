@@ -1,6 +1,21 @@
 
 import React, { useState, useEffect, useRef } from 'react';
-import { Search, ChevronDown, Filter, Building2, X, Cpu, MoreVertical, Sparkles, SlidersHorizontal, Trash2 } from 'lucide-react';
+import { 
+  Search, 
+  ChevronDown, 
+  Filter, 
+  Building2, 
+  X, 
+  Cpu, 
+  Sparkles, 
+  SlidersHorizontal, 
+  Trash2,
+  BookOpen,
+  Hash,
+  User,
+  ArrowRight,
+  Sliders
+} from 'lucide-react';
 import type { SummaryLength, AdvancedSearchOptions, SummaryStyle, ModelDefinition } from '../types';
 import { SearchSuggestions } from './SearchSuggestions';
 import { CustomDropdown } from './CustomDropdown';
@@ -35,7 +50,7 @@ interface SearchFormProps {
   selectedPaperCount?: number;
 }
 
-type SearchMode = 'topic' | 'doi';
+type SearchMode = 'topic' | 'doi' | 'author';
 
 const summaryStyles: { id: SummaryStyle; name: string }[] = [
     { id: 'paragraph', name: 'Paragraph' },
@@ -52,7 +67,7 @@ const studyDesigns = [
 ];
 
 const researchDomains = [
-    { id: 'all', name: 'All Domains' },
+    { id: 'all', name: 'All Research Domains' },
     { id: 'medicine', name: 'Medicine & Health' },
     { id: 'computer_science', name: 'Computer Science' },
     { id: 'engineering', name: 'Engineering & Tech' },
@@ -61,6 +76,29 @@ const researchDomains = [
     { id: 'physical_sciences', name: 'Physical Sciences' },
     { id: 'humanities', name: 'Humanities' },
     { id: 'economics', name: 'Business & Economics' },
+];
+
+const exampleQueries = [
+  {
+    type: 'Question',
+    query: 'How do GLP-1 receptor agonists impact neuroprotection in Parkinson models?',
+    mode: 'topic' as SearchMode
+  },
+  {
+    type: 'Keywords',
+    query: 'transformer self-attention interpretability sparse models',
+    mode: 'topic' as SearchMode
+  },
+  {
+    type: 'DOI',
+    query: '10.1038/s41586-020-2649-2',
+    mode: 'doi' as SearchMode
+  },
+  {
+    type: 'Author',
+    query: 'Bengio Y deep learning representations',
+    mode: 'topic' as SearchMode
+  }
 ];
 
 export const SearchForm: React.FC<SearchFormProps> = ({ 
@@ -86,6 +124,7 @@ export const SearchForm: React.FC<SearchFormProps> = ({
     selectedPaperCount = 0
 }) => {
   const [isRefineOpen, setIsRefineOpen] = useState(false);
+  const [showSynthesisOptions, setShowSynthesisOptions] = useState(false);
   const [searchMode, setSearchMode] = useState<SearchMode>('topic');
   
   const [localQuery, setLocalQuery] = useState(query);
@@ -94,7 +133,6 @@ export const SearchForm: React.FC<SearchFormProps> = ({
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
   const [autocompleteWorks, setAutocompleteWorks] = useState<OpenAlexAutocompleteItem[]>([]);
   const [isAutocompleteLoading, setIsAutocompleteLoading] = useState(false);
-  const [moreMenuOpen, setMoreMenuOpen] = useState(false);
 
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -124,7 +162,6 @@ export const SearchForm: React.FC<SearchFormProps> = ({
     const handleClickOutside = (e: MouseEvent) => {
       if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
         setIsDropdownOpen(false);
-        setMoreMenuOpen(false);
       }
     };
     document.addEventListener('mousedown', handleClickOutside);
@@ -196,24 +233,27 @@ export const SearchForm: React.FC<SearchFormProps> = ({
     }
   };
 
-  const handleSubmit = (e?: React.FormEvent) => {
+  const handleSubmit = (e?: React.FormEvent, directQuery?: string, directMode?: SearchMode) => {
     if (e) e.preventDefault();
     setIsDropdownOpen(false);
-    setMoreMenuOpen(false);
-    if (searchMode === 'topic') {
-        if (localQuery !== query) onQueryChange(localQuery);
-        onSearch(localQuery, { ...advancedOptions, doi: '' });
+
+    const effectiveMode = directMode || searchMode;
+    const effectiveVal = directQuery !== undefined ? directQuery : (effectiveMode === 'doi' ? localDoi : localQuery);
+
+    if (effectiveMode === 'doi') {
+        onSearch('', { ...advancedOptions, doi: effectiveVal.trim() });
     } else {
-        onSearch('', { ...advancedOptions, doi: localDoi });
+        if (effectiveVal !== query) onQueryChange(effectiveVal);
+        onSearch(effectiveVal.trim(), { ...advancedOptions, doi: '' });
     }
   };
 
   const handleClearQuery = () => {
-    if (searchMode === 'topic') {
+    if (searchMode === 'doi') {
+      setLocalDoi('');
+    } else {
       setLocalQuery('');
       onQueryChange('');
-    } else {
-      setLocalDoi('');
     }
     setAutocompleteWorks([]);
     setIsDropdownOpen(false);
@@ -233,12 +273,46 @@ export const SearchForm: React.FC<SearchFormProps> = ({
     setIsDropdownOpen(true);
   };
 
-  const currentInputValue = searchMode === 'topic' ? localQuery : localDoi;
-  const currentPlaceholder = searchMode === 'topic' 
-    ? "Search 480M scholarly works..." 
-    : "Enter DOI for direct retrieval...";
+  const handleApplyExample = (example: typeof exampleQueries[0]) => {
+    setSearchMode(example.mode);
+    if (example.mode === 'doi') {
+      setLocalDoi(example.query);
+      handleSubmit(undefined, example.query, 'doi');
+    } else {
+      setLocalQuery(example.query);
+      onQueryChange(example.query);
+      handleSubmit(undefined, example.query, 'topic');
+    }
+  };
 
-  // Count active filter parameters to show the OpenAlex style red badge
+  const handleResetFilters = () => {
+    setAdvancedOptions({
+      startYear: '',
+      endYear: '',
+      authors: '',
+      excludeKeywords: '',
+      inclusionCriteria: '',
+      exclusionCriteria: '',
+      studyDesign: 'any',
+      journal: '',
+      minCitations: '',
+      titleKeywords: '',
+      abstractKeywords: '',
+      isOpenAccess: false,
+      doi: '',
+      domain: 'all',
+    });
+    if (selectedInstitution) {
+      onClearInstitution();
+    }
+  };
+
+  const currentInputValue = searchMode === 'doi' ? localDoi : localQuery;
+  const currentPlaceholder = searchMode === 'doi'
+    ? "Enter DOI (e.g. 10.1038/s41586-020-2649-2)..."
+    : "Search by research question, keywords, author, or topic...";
+
+  // Count active filter parameters
   const activeFiltersCount = [
     advancedOptions.startYear,
     advancedOptions.endYear,
@@ -252,204 +326,121 @@ export const SearchForm: React.FC<SearchFormProps> = ({
   ].filter(Boolean).length;
 
   return (
-    <div ref={containerRef} className="relative w-full">
-      <form onSubmit={handleSubmit} className="flex flex-col gap-6">
-        {/* OpenAlex Search Card */}
-        <div className="relative bg-white border border-slate-200 rounded-[2rem] shadow-sm focus-within:border-slate-400 focus-within:shadow-md transition-all duration-300">
-          
-          {/* Input Area with Status Pill & Clear Button */}
-          <div className="p-3 sm:p-4 pb-0 flex items-start justify-between gap-2">
-            <textarea
-                value={currentInputValue}
-                onFocus={() => {
-                  if (searchMode === 'topic') setIsDropdownOpen(true);
+    <div ref={containerRef} className="relative w-full space-y-4">
+      <form onSubmit={handleSubmit} className="space-y-4">
+        {/* Dominant Search Input Card */}
+        <div className="relative bg-white border border-slate-200/90 rounded-2xl shadow-sm hover:border-slate-300 focus-within:border-slate-900 focus-within:shadow-md transition-all">
+          {/* Top subtle mode selector bar */}
+          <div className="px-4 pt-3 pb-1 flex items-center justify-between border-b border-slate-100/80">
+            <div className="flex items-center gap-1">
+              <button
+                type="button"
+                onClick={() => {
+                  setSearchMode('topic');
+                  setIsDropdownOpen(false);
                 }}
-                onChange={(e) => {
-                    if (searchMode === 'topic') {
-                      setLocalQuery(e.target.value);
-                      setIsDropdownOpen(true);
-                    } else {
-                      setLocalDoi(e.target.value);
-                    }
-                }}
-                onKeyDown={(e) => {
-                    if (e.key === 'Enter' && !e.shiftKey) {
-                        e.preventDefault();
-                        handleSubmit(e);
-                    } else if (e.key === 'Escape') {
-                        setIsDropdownOpen(false);
-                    }
-                }}
-                placeholder={currentPlaceholder}
-                rows={searchMode === 'topic' ? 2 : 1}
-                className="flex-1 pl-4 pr-2 bg-transparent border-none focus:ring-0 text-xl sm:text-2xl text-slate-900 placeholder:text-slate-300 font-medium resize-none py-2 min-h-[60px]"
-                disabled={isLoading}
-                autoComplete="off"
-            />
-
-            {/* Top Right: OpenAlex Style Indicators & Clear Button */}
-            <div className="flex items-center gap-1.5 pt-2 pr-3">
-              {/* Status Badge */}
-              <div 
-                className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-slate-100 border border-slate-200"
-                title={selectedPaperCount > 0 ? `${selectedPaperCount} papers in selection queue` : 'Scholar Explorer Live Index'}
+                className={`px-2.5 py-1 text-xs font-semibold rounded-md transition-colors ${
+                  searchMode === 'topic'
+                    ? 'bg-slate-100 text-slate-900'
+                    : 'text-slate-500 hover:text-slate-800'
+                }`}
               >
-                <div className="w-2 h-2 rounded-full bg-teal-500 animate-pulse" />
-                {(selectedPaperCount > 0 || activeFiltersCount > 0) && (
-                  <span className="px-1.5 py-0.2 rounded-full text-[10px] font-black bg-rose-600 text-white shadow-2xs">
-                    {selectedPaperCount > 0 ? selectedPaperCount : activeFiltersCount}
-                  </span>
-                )}
-              </div>
+                Topics & Questions
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setSearchMode('doi');
+                  setIsDropdownOpen(false);
+                }}
+                className={`px-2.5 py-1 text-xs font-semibold rounded-md transition-colors ${
+                  searchMode === 'doi'
+                    ? 'bg-slate-100 text-slate-900'
+                    : 'text-slate-500 hover:text-slate-800'
+                }`}
+              >
+                DOI Lookup
+              </button>
+            </div>
 
-              {/* Clear Button */}
-              {currentInputValue.trim() && (
-                <button
-                  type="button"
-                  onClick={handleClearQuery}
-                  className="p-1 rounded-full text-slate-400 hover:text-slate-900 hover:bg-slate-100 transition-colors"
-                  title="Clear input"
-                  aria-label="Clear search input"
-                >
-                  <X className="w-4 h-4" />
-                </button>
+            {/* Right side status / active queue count */}
+            <div className="flex items-center gap-2 text-xs text-slate-400">
+              <div className="flex items-center gap-1.5">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                <span className="text-[11px] font-medium text-slate-500">480M+ Works</span>
+              </div>
+              {selectedPaperCount > 0 && (
+                <span className="px-2 py-0.5 text-[10px] font-semibold bg-slate-100 text-slate-700 rounded-full border border-slate-200">
+                  {selectedPaperCount} in Workspace
+                </span>
               )}
             </div>
           </div>
 
-          <div className="h-px bg-slate-100 mx-6"></div>
+          {/* Core Input Field Area */}
+          <div className="p-3 sm:p-4 flex items-center gap-3">
+            <Search className="w-5 h-5 text-slate-400 shrink-0 ml-1" />
+            <input
+              type="text"
+              value={currentInputValue}
+              onFocus={() => {
+                if (searchMode === 'topic') setIsDropdownOpen(true);
+              }}
+              onChange={(e) => {
+                if (searchMode === 'doi') {
+                  setLocalDoi(e.target.value);
+                } else {
+                  setLocalQuery(e.target.value);
+                  setIsDropdownOpen(true);
+                }
+              }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  handleSubmit(e);
+                } else if (e.key === 'Escape') {
+                  setIsDropdownOpen(false);
+                }
+              }}
+              placeholder={currentPlaceholder}
+              className="flex-1 bg-transparent border-none text-base sm:text-lg text-slate-900 placeholder:text-slate-400 font-normal focus:outline-none focus:ring-0"
+              disabled={isLoading}
+              autoComplete="off"
+            />
 
-          {/* Controls Footer */}
-          <div className="px-6 py-4 flex flex-wrap items-center justify-between gap-4">
-            <div className="flex items-center gap-2 sm:gap-4">
-                {/* Search Mode */}
-                <CustomDropdown
-                    value={searchMode}
-                    options={[
-                        { id: 'topic', name: 'works' },
-                        { id: 'doi', name: 'doi' }
-                    ]}
-                    onChange={(val) => {
-                      setSearchMode(val as SearchMode);
-                      setIsDropdownOpen(false);
-                    }}
-                    triggerClassName="bg-transparent hover:bg-slate-100 text-slate-500 hover:text-slate-900 border-none px-0 font-medium"
-                />
+            {/* Clear Input Button */}
+            {currentInputValue.trim() && (
+              <button
+                type="button"
+                onClick={handleClearQuery}
+                className="p-1.5 rounded-md text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors"
+                title="Clear input"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            )}
 
-                {/* Domain Selector */}
-                {searchMode === 'topic' && (
-                    <div className="flex items-center gap-1.5 border-l border-slate-100 pl-3 sm:pl-4">
-                        <CustomDropdown
-                            value={advancedOptions.domain}
-                            options={researchDomains.map(d => ({ id: d.id, name: d.name.toLowerCase() }))}
-                            onChange={(val) => handleAdvancedChange({ target: { name: 'domain', value: val } } as any)}
-                            triggerClassName="bg-transparent hover:bg-slate-100 text-slate-500 hover:text-slate-900 border-none px-0"
-                        />
-                    </div>
-                )}
-
-                {/* Expand Filters */}
-                <button
-                    type="button"
-                    onClick={() => setIsRefineOpen(!isRefineOpen)}
-                    className={`flex items-center gap-2 px-3 py-1.5 rounded-lg transition-all duration-200 border-l border-slate-100 pl-3 sm:pl-4 group ${
-                        isRefineOpen ? 'text-slate-900 font-black' : 'text-slate-400 hover:text-slate-900'
-                    }`}
-                >
-                    <Filter className="w-3.5 h-3.5" />
-                    <span className="text-[12px] font-bold uppercase tracking-wide">filters</span>
-                    {activeFiltersCount > 0 && (
-                      <span className="px-1.5 py-0.2 rounded-full text-[9px] font-black bg-slate-900 text-white">
-                        {activeFiltersCount}
-                      </span>
-                    )}
-                </button>
-
-                {/* OpenAlex style three-dots menu */}
-                <div className="relative">
-                  <button
-                    type="button"
-                    onClick={() => setMoreMenuOpen(!moreMenuOpen)}
-                    className="p-1.5 text-slate-400 hover:text-slate-900 rounded-lg hover:bg-slate-100 transition-colors"
-                    title="More options"
-                    aria-label="More options"
-                  >
-                    <MoreVertical className="w-4 h-4" />
-                  </button>
-
-                  {moreMenuOpen && (
-                    <div className="absolute left-0 bottom-full mb-2 w-48 bg-white border border-slate-200 rounded-xl shadow-xl py-1.5 z-40 animate-slide-up text-xs font-semibold">
-                      <button
-                        type="button"
-                        onClick={() => { setIsRefineOpen(true); setMoreMenuOpen(false); }}
-                        className="w-full text-left px-3.5 py-2 hover:bg-slate-50 text-slate-700 flex items-center gap-2"
-                      >
-                        <SlidersHorizontal className="w-3.5 h-3.5 text-slate-400" />
-                        <span>Advanced Parameters</span>
-                      </button>
-                      {onOpenDeepResearch && (
-                        <button
-                          type="button"
-                          onClick={() => { onOpenDeepResearch(); setMoreMenuOpen(false); }}
-                          className="w-full text-left px-3.5 py-2 hover:bg-slate-50 text-indigo-700 flex items-center gap-2"
-                        >
-                          <Sparkles className="w-3.5 h-3.5 text-indigo-500" />
-                          <span>Deep Research AI</span>
-                        </button>
-                      )}
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setAdvancedOptions({
-                            startYear: '',
-                            endYear: '',
-                            authors: '',
-                            excludeKeywords: '',
-                            inclusionCriteria: '',
-                            exclusionCriteria: '',
-                            studyDesign: 'any',
-                            journal: '',
-                            minCitations: '',
-                            titleKeywords: '',
-                            abstractKeywords: '',
-                            isOpenAccess: false,
-                            doi: '',
-                            domain: 'all',
-                          });
-                          setMoreMenuOpen(false);
-                        }}
-                        className="w-full text-left px-3.5 py-2 hover:bg-rose-50 text-rose-600 flex items-center gap-2 border-t border-slate-100"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                        <span>Reset Parameters</span>
-                      </button>
-                    </div>
-                  )}
-                </div>
-            </div>
-
-            {/* Submit Button (Matching OpenAlex Pill) */}
+            {/* Primary Search Action Button */}
             <button
-                type="submit"
-                disabled={isLoading || !currentInputValue.trim()}
-                className={`flex items-center justify-center h-10 sm:h-11 px-7 text-[13px] font-bold tracking-wide rounded-full transition-all shadow-md cursor-pointer ${
-                    isLoading 
-                        ? 'bg-indigo-600 text-white animate-pulse cursor-wait' 
-                        : 'bg-slate-900 text-white hover:bg-slate-800 active:scale-95 disabled:opacity-30 disabled:cursor-not-allowed'
-                }`}
+              type="submit"
+              disabled={isLoading || !currentInputValue.trim()}
+              className="px-5 py-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white font-medium text-xs sm:text-sm transition-all shadow-xs disabled:opacity-40 disabled:cursor-not-allowed shrink-0 flex items-center gap-2"
             >
-                {isLoading ? (
-                    <div className="flex items-center gap-2">
-                        <div className="w-3.5 h-3.5 border-2 border-white/40 border-t-white rounded-full animate-spin" />
-                        <span>Searching...</span>
-                    </div>
-                ) : (
-                    <span>Search</span>
-                )}
+              {isLoading ? (
+                <>
+                  <div className="w-3.5 h-3.5 border-2 border-white/40 border-t-white rounded-full animate-spin" />
+                  <span>Searching...</span>
+                </>
+              ) : (
+                <>
+                  <span>Search</span>
+                  <ArrowRight className="w-3.5 h-3.5" />
+                </>
+              )}
             </button>
           </div>
 
-          {/* OpenAlex Dropdown: Suggestions & Abstract Keywords */}
+          {/* Search Autocomplete Suggestions */}
           <SearchSuggestions
             query={localQuery}
             autocompleteWorks={autocompleteWorks}
@@ -463,166 +454,340 @@ export const SearchForm: React.FC<SearchFormProps> = ({
           />
         </div>
 
-        {/* Intelligence / Model Selector */}
-        <div className="flex justify-end">
-            <div className="relative inline-flex items-center bg-slate-50 border border-slate-200 rounded-full px-4 py-1.5 focus-within:ring-2 focus-within:ring-indigo-500/20 transition-all">
-                <Cpu className="w-3.5 h-3.5 text-slate-400 mr-2" />
-                <span className="text-[10px] font-black uppercase tracking-widest text-slate-400 mr-2">Using</span>
-                <CustomDropdown
-                    value={model.id}
-                    options={availableModels.map(m => ({ id: m.id, name: m.name }))}
-                    onChange={(val) => {
-                        const selectedModel = availableModels.find(m => m.id === val);
-                        if (selectedModel) onModelChange(selectedModel);
-                    }}
-                    triggerClassName="bg-transparent hover:bg-slate-100 border-none px-0 text-[10px] font-black uppercase tracking-widest text-slate-900"
-                />
-            </div>
+        {/* Example Queries Pill Row */}
+        <div className="flex flex-wrap items-center gap-2 pt-1">
+          <span className="text-xs font-semibold text-slate-400 mr-1">Examples:</span>
+          {exampleQueries.map((ex, idx) => (
+            <button
+              key={idx}
+              type="button"
+              onClick={() => handleApplyExample(ex)}
+              className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium text-slate-600 bg-white hover:bg-slate-50 border border-slate-200/80 rounded-lg transition-colors hover:border-slate-300 shadow-2xs group"
+            >
+              <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider group-hover:text-slate-700">
+                {ex.type}:
+              </span>
+              <span className="truncate max-w-[220px] sm:max-w-[280px]">
+                {ex.query}
+              </span>
+            </button>
+          ))}
         </div>
-        
-        {isRefineOpen && (
-          <div className="p-8 bg-white border-2 border-slate-200 rounded-3xl animate-slide-up shadow-xl space-y-8">
-            <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                    <div className="w-2 h-2 bg-slate-900 rounded-full"></div>
-                    <h3 className="text-[10px] font-black uppercase tracking-widest text-slate-900">Advanced Parameters</h3>
-                </div>
-                <button type="button" onClick={() => setIsRefineOpen(false)} className="text-[10px] font-black uppercase tracking-widest text-slate-400 hover:text-slate-900 transition-colors">Close</button>
-            </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
-                <div className="space-y-4">
-                    <div className="grid grid-cols-2 gap-4">
-                        <div className="space-y-1.5">
-                            <label htmlFor="startYear" className="micro-label ml-1">Start Year</label>
-                            <input type="number" name="startYear" id="startYear" value={advancedOptions.startYear} onChange={handleAdvancedChange} placeholder="2018" className="w-full h-12 px-4 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:border-slate-900 focus:ring-0 transition-all"/>
-                        </div>
-                        <div className="space-y-1.5">
-                            <label htmlFor="endYear" className="micro-label ml-1">End Year</label>
-                            <input type="number" name="endYear" id="endYear" value={advancedOptions.endYear} onChange={handleAdvancedChange} placeholder="2024" className="w-full h-12 px-4 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:border-slate-900 focus:ring-0 transition-all"/>
-                        </div>
-                    </div>
-                    <div className="space-y-1.5">
-                        <label htmlFor="authors" className="micro-label ml-1">Authors</label>
-                        <input type="text" name="authors" id="authors" value={advancedOptions.authors} onChange={handleAdvancedChange} placeholder="e.g., Bengio Y" className="w-full h-12 px-4 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:border-slate-900 focus:ring-0 transition-all"/>
-                    </div>
-                </div>
+        {/* Secondary Toolbar: Filters Toggle & Synthesis Preferences */}
+        <div className="flex flex-wrap items-center justify-between gap-3 pt-2">
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setIsRefineOpen(!isRefineOpen)}
+              className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors border ${
+                isRefineOpen || activeFiltersCount > 0
+                  ? 'bg-slate-900 text-white border-slate-900'
+                  : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'
+              }`}
+            >
+              <SlidersHorizontal className="w-3.5 h-3.5" />
+              <span>Filters</span>
+              {activeFiltersCount > 0 && (
+                <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-bold ${
+                  isRefineOpen ? 'bg-white text-slate-900' : 'bg-slate-900 text-white'
+                }`}>
+                  {activeFiltersCount}
+                </span>
+              )}
+            </button>
 
-                <div className="space-y-4">
-                    <div className="space-y-1.5">
-                        <label htmlFor="journal" className="micro-label ml-1">Journal / Conference</label>
-                        <input type="text" name="journal" id="journal" value={advancedOptions.journal || ''} onChange={handleAdvancedChange} placeholder="e.g., Nature, NeurIPS" className="w-full h-12 px-4 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:border-slate-900 focus:ring-0 transition-all"/>
-                    </div>
-                    <div className="space-y-1.5">
-                        <label htmlFor="institution" className="micro-label ml-1">Institution</label>
-                        {selectedInstitution ? (
-                            <div className="flex items-center justify-between h-12 px-4 bg-slate-50 border border-slate-200 rounded-xl">
-                                <span className="text-sm text-slate-900 truncate font-bold">{selectedInstitution.name}</span>
-                                <button type="button" onClick={onClearInstitution} className="p-1 text-slate-400 hover:text-rose-600 transition-colors">
-                                    <X className="w-4 h-4" />
-                                </button>
-                            </div>
-                        ) : (
-                            <button
-                                type="button"
-                                onClick={onOpenOrgFinder}
-                                className="w-full h-12 px-4 text-sm bg-slate-50 border border-slate-200 rounded-xl text-left text-slate-400 hover:border-slate-900 flex items-center gap-3 transition-all"
-                            >
-                                <Building2 className="w-4 h-4" /> <span>Find Institution (ROR)</span>
-                            </button>
-                        )}
-                    </div>
-                </div>
+            {/* Active Institution Badge if selected */}
+            {selectedInstitution && (
+              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs bg-indigo-50 border border-indigo-100 text-indigo-700 font-medium">
+                <Building2 className="w-3.5 h-3.5" />
+                <span className="truncate max-w-[160px]">{selectedInstitution.name}</span>
+                <button
+                  type="button"
+                  onClick={onClearInstitution}
+                  className="hover:text-indigo-950 p-0.5"
+                  title="Remove institution filter"
+                >
+                  <X className="w-3 h-3" />
+                </button>
+              </span>
+            )}
 
-                <div className="space-y-4">
-                    <div className="space-y-1.5">
-                        <label className="micro-label ml-1">Access Type</label>
-                        <div className="flex items-center gap-3 h-12 px-4 bg-slate-50 border border-slate-200 rounded-xl">
-                            <input type="checkbox" name="isOpenAccess" id="isOpenAccess" checked={advancedOptions.isOpenAccess || false} onChange={handleAdvancedChange} className="h-5 w-5 rounded border-slate-300 text-slate-900 focus:ring-slate-900"/>
-                            <label htmlFor="isOpenAccess" className="text-xs font-bold text-slate-600">Open Access Only</label>
-                        </div>
-                    </div>
-                    <div className="space-y-1.5">
-                        <label className="micro-label ml-1">Study Design</label>
-                        <CustomDropdown
-                            value={advancedOptions.studyDesign}
-                            options={studyDesigns.map(d => ({ id: d.id, name: d.name }))}
-                            onChange={(val) => handleAdvancedChange({ target: { name: 'studyDesign', value: val } } as any)}
-                            formatLabel={(n) => n}
-                            triggerClassName="w-full h-12 px-4 bg-slate-50 border border-slate-200 rounded-xl justify-between"
-                        />
-                    </div>
-                    <div className="space-y-1.5">
-                        <label className="micro-label ml-1">Research Domain</label>
-                        <CustomDropdown
-                            value={advancedOptions.domain}
-                            options={researchDomains.map(d => ({ id: d.id, name: d.name }))}
-                            onChange={(val) => handleAdvancedChange({ target: { name: 'domain', value: val } } as any)}
-                            formatLabel={(n) => n}
-                            triggerClassName="w-full h-12 px-4 bg-slate-50 border border-slate-200 rounded-xl justify-between"
-                        />
-                    </div>
-                </div>
-            </div>
+            {/* Quick Deep Research trigger if available */}
+            {onOpenDeepResearch && (
+              <button
+                type="button"
+                onClick={onOpenDeepResearch}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-indigo-700 bg-indigo-50/70 hover:bg-indigo-50 border border-indigo-200/60 transition-colors"
+              >
+                <Sparkles className="w-3.5 h-3.5 text-indigo-600" />
+                <span>Deep Research</span>
+              </button>
+            )}
+          </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-8 pt-4 border-t border-slate-100">
-                <div className="space-y-1.5">
-                    <label htmlFor="inclusionCriteria" className="micro-label ml-1">Inclusion Logic</label>
-                    <textarea name="inclusionCriteria" id="inclusionCriteria" value={advancedOptions.inclusionCriteria} onChange={handleAdvancedChange} rows={2} placeholder="Must focus on specific methodologies or populations..." className="w-full p-4 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:border-slate-900 focus:ring-0 transition-all resize-none"/>
+          {/* Synthesis & AI Engine Settings (Understated, quiet) */}
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setShowSynthesisOptions(!showSynthesisOptions)}
+              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs text-slate-500 hover:text-slate-800 transition-colors"
+            >
+              <Cpu className="w-3.5 h-3.5 text-slate-400" />
+              <span>Synthesis Settings</span>
+              <ChevronDown className={`w-3 h-3 transition-transform ${showSynthesisOptions ? 'rotate-180' : ''}`} />
+            </button>
+          </div>
+        </div>
+
+        {/* Collapsible Synthesis Options */}
+        {showSynthesisOptions && (
+          <div className="p-4 bg-slate-50 border border-slate-200/80 rounded-xl space-y-3 animate-fade-in">
+            <div className="flex flex-wrap items-center justify-between gap-4">
+              <div className="flex items-center gap-3">
+                <span className="text-xs font-semibold text-slate-600">Summary Depth:</span>
+                <div className="inline-flex bg-white p-0.5 rounded-lg border border-slate-200">
+                  {(['short', 'medium', 'detailed'] as SummaryLength[]).map((len) => (
+                    <button
+                      key={len}
+                      type="button"
+                      onClick={() => onLengthChange(len)}
+                      className={`px-2.5 py-1 rounded text-xs font-medium capitalize transition-colors ${
+                        summaryLength === len
+                          ? 'bg-slate-900 text-white'
+                          : 'text-slate-600 hover:text-slate-900'
+                      }`}
+                    >
+                      {len}
+                    </button>
+                  ))}
                 </div>
-                <div className="space-y-1.5">
-                    <label htmlFor="exclusionCriteria" className="micro-label ml-1">Exclusion Logic</label>
-                    <textarea name="exclusionCriteria" id="exclusionCriteria" value={advancedOptions.exclusionCriteria} onChange={handleAdvancedChange} rows={2} placeholder="Ignore studies that are purely theoretical or animal-based..." className="w-full p-4 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:border-slate-900 focus:ring-0 transition-all resize-none"/>
+              </div>
+
+              <div className="flex items-center gap-3">
+                <span className="text-xs font-semibold text-slate-600">Style:</span>
+                <div className="inline-flex bg-white p-0.5 rounded-lg border border-slate-200">
+                  {summaryStyles.map((style) => (
+                    <button
+                      key={style.id}
+                      type="button"
+                      onClick={() => onStyleChange(style.id)}
+                      className={`px-2.5 py-1 rounded text-xs font-medium transition-colors ${
+                        summaryStyle === style.id
+                          ? 'bg-slate-900 text-white'
+                          : 'text-slate-600 hover:text-slate-900'
+                      }`}
+                    >
+                      {style.name}
+                    </button>
+                  ))}
                 </div>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-semibold text-slate-600">Model:</span>
+                <select
+                  value={model.id}
+                  onChange={(e) => {
+                    const found = availableModels.find(m => m.id === e.target.value);
+                    if (found) onModelChange(found);
+                  }}
+                  className="bg-white border border-slate-200 text-slate-800 text-xs rounded-lg px-2.5 py-1 focus:outline-none font-medium"
+                >
+                  {availableModels.map(m => (
+                    <option key={m.id} value={m.id}>{m.name}</option>
+                  ))}
+                </select>
+              </div>
             </div>
           </div>
         )}
 
-        {/* Action Row */}
-        <div className="flex flex-col lg:flex-row justify-between items-center gap-6">
-            <div className="flex flex-wrap items-center justify-center gap-4">
-                <div className="flex items-center bg-white p-1 rounded-xl border border-slate-200 shadow-sm">
-                    <span className="micro-label ml-3 mr-2 opacity-60">Depth</span>
-                    <div className="flex gap-0.5">
-                        {(['short', 'medium', 'detailed'] as SummaryLength[]).map((len) => (
-                            <button
-                            key={len}
-                            type="button"
-                            onClick={() => onLengthChange(len)}
-                            className={`px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all ${
-                                summaryLength === len
-                                ? 'bg-slate-900 text-white shadow-sm'
-                                : 'text-slate-400 hover:text-slate-900 hover:bg-slate-50'
-                            }`}
-                            >
-                            {len}
-                            </button>
-                        ))}
-                    </div>
-                </div>
-
-                 <div className="flex items-center bg-white p-1 rounded-xl border border-slate-200 shadow-sm">
-                    <span className="micro-label ml-3 mr-2 opacity-60">Style</span>
-                    <div className="flex gap-0.5">
-                        {summaryStyles.map((style) => (
-                            <button
-                            key={style.id}
-                            type="button"
-                            onClick={() => onStyleChange(style.id)}
-                            className={`px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all ${
-                                summaryStyle === style.id
-                                ? 'bg-slate-900 text-white shadow-sm'
-                                : 'text-slate-400 hover:text-slate-900 hover:bg-slate-50'
-                            }`}
-                            >
-                            {style.name}
-                            </button>
-                        ))}
-                    </div>
-                </div>
+        {/* Collapsible Advanced Parameters Panel */}
+        {isRefineOpen && (
+          <div className="p-6 bg-white border border-slate-200/90 rounded-2xl shadow-xs space-y-6 animate-slide-up">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+              <div className="flex items-center gap-2">
+                <SlidersHorizontal className="w-4 h-4 text-slate-700" />
+                <h3 className="text-sm font-semibold text-slate-900">Advanced Research Filters</h3>
+              </div>
+              <div className="flex items-center gap-3">
+                {activeFiltersCount > 0 && (
+                  <button
+                    type="button"
+                    onClick={handleResetFilters}
+                    className="text-xs text-rose-600 hover:text-rose-800 font-medium inline-flex items-center gap-1"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>Reset Filters</span>
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => setIsRefineOpen(false)}
+                  className="text-xs text-slate-400 hover:text-slate-700 font-medium"
+                >
+                  Close
+                </button>
+              </div>
             </div>
-        </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
+              {/* Publication Year Range */}
+              <div className="space-y-1.5">
+                <label className="text-xs font-semibold text-slate-700">Publication Year Range</label>
+                <div className="grid grid-cols-2 gap-2">
+                  <input
+                    type="number"
+                    name="startYear"
+                    value={advancedOptions.startYear}
+                    onChange={handleAdvancedChange}
+                    placeholder="From (e.g. 2019)"
+                    className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:border-slate-400 focus:bg-white transition-all"
+                  />
+                  <input
+                    type="number"
+                    name="endYear"
+                    value={advancedOptions.endYear}
+                    onChange={handleAdvancedChange}
+                    placeholder="To (e.g. 2024)"
+                    className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:border-slate-400 focus:bg-white transition-all"
+                  />
+                </div>
+              </div>
+
+              {/* Author Query */}
+              <div className="space-y-1.5">
+                <label className="text-xs font-semibold text-slate-700">Authors</label>
+                <input
+                  type="text"
+                  name="authors"
+                  value={advancedOptions.authors}
+                  onChange={handleAdvancedChange}
+                  placeholder="e.g. Bengio Y, LeCun Y"
+                  className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:border-slate-400 focus:bg-white transition-all"
+                />
+              </div>
+
+              {/* Journal / Venue */}
+              <div className="space-y-1.5">
+                <label className="text-xs font-semibold text-slate-700">Journal or Conference</label>
+                <input
+                  type="text"
+                  name="journal"
+                  value={advancedOptions.journal || ''}
+                  onChange={handleAdvancedChange}
+                  placeholder="e.g. Nature, NeurIPS, Lancet"
+                  className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:border-slate-400 focus:bg-white transition-all"
+                />
+              </div>
+
+              {/* Research Domain */}
+              <div className="space-y-1.5">
+                <label className="text-xs font-semibold text-slate-700">Research Domain</label>
+                <select
+                  name="domain"
+                  value={advancedOptions.domain}
+                  onChange={handleAdvancedChange}
+                  className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:border-slate-400 focus:bg-white transition-all"
+                >
+                  {researchDomains.map(d => (
+                    <option key={d.id} value={d.id}>{d.name}</option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Study Design */}
+              <div className="space-y-1.5">
+                <label className="text-xs font-semibold text-slate-700">Study Design</label>
+                <select
+                  name="studyDesign"
+                  value={advancedOptions.studyDesign}
+                  onChange={handleAdvancedChange}
+                  className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:border-slate-400 focus:bg-white transition-all"
+                >
+                  {studyDesigns.map(s => (
+                    <option key={s.id} value={s.id}>{s.name}</option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Institution (ROR) & Open Access */}
+              <div className="space-y-1.5">
+                <label className="text-xs font-semibold text-slate-700">Institution & Access</label>
+                <div className="flex items-center gap-2">
+                  {selectedInstitution ? (
+                    <div className="flex-1 flex items-center justify-between px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs">
+                      <span className="truncate font-medium text-slate-800">{selectedInstitution.name}</span>
+                      <button type="button" onClick={onClearInstitution} className="text-slate-400 hover:text-slate-600">
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={onOpenOrgFinder}
+                      className="flex-1 px-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-lg text-slate-600 hover:border-slate-400 flex items-center gap-2 text-left"
+                    >
+                      <Building2 className="w-3.5 h-3.5 text-slate-400" />
+                      <span>Find Institution (ROR)</span>
+                    </button>
+                  )}
+
+                  <label className="flex items-center gap-1.5 px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg cursor-pointer hover:bg-slate-100/60 text-xs">
+                    <input
+                      type="checkbox"
+                      name="isOpenAccess"
+                      checked={advancedOptions.isOpenAccess || false}
+                      onChange={handleAdvancedChange}
+                      className="h-3.5 w-3.5 rounded border-slate-300 text-slate-900 focus:ring-0"
+                    />
+                    <span className="font-medium text-slate-700 whitespace-nowrap">OA Only</span>
+                  </label>
+                </div>
+              </div>
+            </div>
+
+            {/* Systematic Review Inclusion / Exclusion Logic */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-3 border-t border-slate-100">
+              <div className="space-y-1.5">
+                <label className="text-xs font-semibold text-slate-700">Methodological Inclusion Criteria</label>
+                <textarea
+                  name="inclusionCriteria"
+                  value={advancedOptions.inclusionCriteria}
+                  onChange={handleAdvancedChange}
+                  rows={2}
+                  placeholder="e.g. Focus on human clinical trials, randomized control trials..."
+                  className="w-full p-2.5 text-xs bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:border-slate-400 focus:bg-white resize-none"
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-xs font-semibold text-slate-700">Methodological Exclusion Criteria</label>
+                <textarea
+                  name="exclusionCriteria"
+                  value={advancedOptions.exclusionCriteria}
+                  onChange={handleAdvancedChange}
+                  rows={2}
+                  placeholder="e.g. Exclude purely theoretical notes, animal-only cohorts..."
+                  className="w-full p-2.5 text-xs bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:border-slate-400 focus:bg-white resize-none"
+                />
+              </div>
+            </div>
+
+            <div className="flex justify-end pt-2">
+              <button
+                type="submit"
+                onClick={() => handleSubmit()}
+                className="px-4 py-2 text-xs font-semibold rounded-lg bg-slate-900 text-white hover:bg-slate-800 transition-colors"
+              >
+                Apply Filters & Search
+              </button>
+            </div>
+          </div>
+        )}
       </form>
     </div>
   );
 };
+

@@ -2,11 +2,12 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import type { ResearchPaper, CitationStyle, ModelDefinition } from '../types';
 import * as citationService from '../services/citationService';
+import { trackExplorerExport } from '../services/explorerTrackingService';
 import { ErrorMessage } from './ErrorMessage';
 import { LoadingSpinner } from './LoadingSpinner';
 import { CitationIcon } from './icons/CitationIcon';
 import { CopyIcon } from './icons/CopyIcon';
-import { Library } from 'lucide-react';
+import { Library, Download } from 'lucide-react';
 import { CustomDropdown } from './CustomDropdown';
 
 interface CitationModalProps {
@@ -151,24 +152,54 @@ export const CitationModal: React.FC<CitationModalProps> = ({ isOpen, onClose, p
             </div>
         </main>
         
-        <footer className="p-4 border-t border-border bg-muted/50 rounded-b-xl flex justify-end gap-2">
-            <button
-                onClick={handleExportRIS}
-                disabled={isExporting || !citation}
-                title="Export as .ris for Scholar Bridge, Mendeley, etc."
-                className="h-9 px-4 text-sm font-semibold rounded-md bg-secondary text-secondary-foreground hover:bg-accent disabled:opacity-50 flex items-center gap-2"
-            >
-                <Library className="w-4 h-4" />
-                <span>{isExporting ? 'Exporting...' : 'Export .ris'}</span>
-            </button>
-            <button
-                onClick={handleCopy}
-                disabled={!citation}
-                className="h-9 w-28 text-sm font-semibold rounded-md bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50 flex items-center justify-center gap-2"
-            >
-                <CopyIcon className="w-4 h-4" />
-                <span>{copied ? 'Copied!' : 'Copy'}</span>
-            </button>
+        <footer className="p-4 border-t border-border bg-muted/50 rounded-b-xl flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center gap-1.5 text-xs">
+                <span className="text-muted-foreground mr-1">Export Metadata:</span>
+                <button
+                    type="button"
+                    onClick={() => {
+                        if (!paper) return;
+                        citationService.downloadMetadataExport([paper], 'bibtex');
+                        trackExplorerExport('bibtex', [{ id: paper.openalex_id || paper.id, title: paper.title }]);
+                    }}
+                    className="px-2.5 py-1 text-xs font-semibold rounded-md border border-border bg-background hover:bg-accent text-foreground transition-colors"
+                >
+                    .bib
+                </button>
+                <button
+                    type="button"
+                    onClick={() => {
+                        if (!paper) return;
+                        citationService.downloadMetadataExport([paper], 'ris');
+                        trackExplorerExport('ris', [{ id: paper.openalex_id || paper.id, title: paper.title }]);
+                    }}
+                    className="px-2.5 py-1 text-xs font-semibold rounded-md border border-border bg-background hover:bg-accent text-foreground transition-colors"
+                >
+                    .ris
+                </button>
+                <button
+                    type="button"
+                    onClick={() => {
+                        if (!paper) return;
+                        citationService.downloadMetadataExport([paper], 'csv');
+                        trackExplorerExport('csv', [{ id: paper.openalex_id || paper.id, title: paper.title }]);
+                    }}
+                    className="px-2.5 py-1 text-xs font-semibold rounded-md border border-border bg-background hover:bg-accent text-foreground transition-colors"
+                >
+                    .csv
+                </button>
+            </div>
+
+            <div className="flex items-center gap-2">
+                <button
+                    onClick={handleCopy}
+                    disabled={!citation}
+                    className="h-9 w-28 text-sm font-semibold rounded-md bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50 flex items-center justify-center gap-2 shadow-xs"
+                >
+                    <CopyIcon className="w-4 h-4" />
+                    <span>{copied ? 'Copied!' : 'Copy'}</span>
+                </button>
+            </div>
         </footer>
       </div>
     </div>

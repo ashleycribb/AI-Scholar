@@ -4,6 +4,31 @@ import { UserSession, UserRole, User } from '../types';
 export const USER_STORAGE_KEY = 'are_current_user';
 const STORAGE_KEY = USER_STORAGE_KEY;
 
+export function generateUuidV7(): string {
+  const now = Date.now();
+  const timeHex = now.toString(16).padStart(12, '0');
+  
+  const rand = new Uint8Array(10);
+  if (typeof crypto !== 'undefined' && crypto.getRandomValues) {
+    crypto.getRandomValues(rand);
+  } else {
+    for (let i = 0; i < 10; i++) rand[i] = Math.floor(Math.random() * 256);
+  }
+  
+  const rand12 = ((rand[0] << 8) | rand[1]) & 0x0fff;
+  const versionAndRand = (0x7000 | rand12).toString(16).padStart(4, '0');
+  
+  const rand14 = ((rand[2] << 8) | rand[3]) & 0x3fff;
+  const variantAndRand = (0x8000 | rand14).toString(16).padStart(4, '0');
+  
+  let node = '';
+  for (let i = 4; i < 10; i++) {
+    node += rand[i].toString(16).padStart(2, '0');
+  }
+  
+  return `${timeHex.slice(0, 8)}-${timeHex.slice(8, 12)}-${versionAndRand}-${variantAndRand}-${node}`.toLowerCase();
+}
+
 function uuidv4(): string {
   if (typeof crypto !== 'undefined' && crypto.randomUUID) {
     return crypto.randomUUID();
@@ -32,7 +57,9 @@ class AuthService {
                     userId: parsed.userId || parsed.id || `participant-uuid-${uuidv4()}`,
                     displayName: parsed.displayName || parsed.name || 'Participant',
                     role: parsed.role === 'researcher' ? 'pi_researcher' : (parsed.role || 'participant'),
-                    sessionId: parsed.sessionId || uuidv4(),
+                    sessionId: parsed.sessionId || generateUuidV7(),
+                    actor_uuid: parsed.actor_uuid || generateUuidV7(),
+                    agent_uuid: parsed.agent_uuid || generateUuidV7(),
                     inviteCode: parsed.inviteCode,
                     createdAt: parsed.createdAt || new Date().toISOString(),
                     id: parsed.id || parsed.userId,
@@ -57,7 +84,9 @@ class AuthService {
             userId: anonymousUserId,
             displayName: `Participant #${randomSuffix}`,
             role: 'participant',
-            sessionId: uuidv4(),
+            sessionId: generateUuidV7(),
+            actor_uuid: generateUuidV7(),
+            agent_uuid: generateUuidV7(),
             inviteCode: cleanCode,
             createdAt: new Date().toISOString(),
             id: anonymousUserId,
@@ -75,7 +104,9 @@ class AuthService {
             userId: uId,
             displayName,
             role,
-            sessionId: uuidv4(),
+            sessionId: generateUuidV7(),
+            actor_uuid: generateUuidV7(),
+            agent_uuid: generateUuidV7(),
             createdAt: new Date().toISOString(),
             id: uId,
             name: displayName
@@ -92,7 +123,9 @@ class AuthService {
             userId: uId,
             displayName,
             role: 'committee_member',
-            sessionId: uuidv4(),
+            sessionId: generateUuidV7(),
+            actor_uuid: generateUuidV7(),
+            agent_uuid: generateUuidV7(),
             createdAt: new Date().toISOString(),
             id: uId,
             name: displayName
@@ -108,7 +141,9 @@ class AuthService {
             userId: uId,
             displayName: 'Guest Scholar',
             role: 'guest',
-            sessionId: uuidv4(),
+            sessionId: generateUuidV7(),
+            actor_uuid: generateUuidV7(),
+            agent_uuid: generateUuidV7(),
             createdAt: new Date().toISOString(),
             id: uId,
             name: 'Guest Scholar'

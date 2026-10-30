@@ -29,9 +29,14 @@ import * as scholarBridgeService from '../services/scholarBridgeService';
 import { LoadingSpinner } from './LoadingSpinner';
 import { SciteBadge } from './SciteBadge';
 import { ShieldCheck, ThumbsUp, MessageSquare, ThumbsDown, Share2, Award, Database, ExternalLink, RefreshCw } from 'lucide-react';
+import { BibliographicCopyBar } from './BibliographicCopyBar';
 import * as openCitationsService from '../services/openCitationsService';
 import * as dataciteService from '../services/dataciteService';
 import * as openaireService from '../services/openaireService';
+import { S3AClaimGovernanceCard } from './S3AClaimGovernanceCard';
+import { SourceCheckBadge } from './SourceCheckBadge';
+import { SemanticScoreIndicator } from './SemanticScoreIndicator';
+import * as geminiService from '../services/geminiService';
 
 interface PaperDetailsProps {
     paper: ResearchPaper;
@@ -48,6 +53,53 @@ interface PaperDetailsProps {
     isFindingSimilar: boolean;
     userSettings: UserSettings;
     onGenerateLaymanSummary?: (paper: ResearchPaper) => void;
+    searchQuery?: string;
+}
+
+interface ErrorBoundaryState {
+    hasError: boolean;
+    errorMessage: string | null;
+}
+
+class PaperDetailsErrorBoundary extends React.Component<{ paperId: string; children: React.ReactNode }, ErrorBoundaryState> {
+    constructor(props: { paperId: string; children: React.ReactNode }) {
+        super(props);
+        this.state = { hasError: false, errorMessage: null };
+    }
+
+    static getDerivedStateFromError(error: Error): ErrorBoundaryState {
+        return {
+            hasError: true,
+            errorMessage: error?.message || 'An unexpected error occurred while rendering paper details.'
+        };
+    }
+
+    componentDidUpdate(prevProps: { paperId: string }) {
+        if (prevProps.paperId !== this.props.paperId && this.state.hasError) {
+            this.setState({ hasError: false, errorMessage: null });
+        }
+    }
+
+    render() {
+        if (this.state.hasError) {
+            return (
+                <div className="p-5 bg-rose-50 border border-rose-200 rounded-xl text-rose-900 space-y-3">
+                    <div className="flex items-center justify-between gap-3">
+                        <div className="font-bold text-sm">Could not render paper detail view</div>
+                        <button
+                            type="button"
+                            onClick={() => this.setState({ hasError: false, errorMessage: null })}
+                            className="px-3 py-1 bg-white hover:bg-rose-100 text-rose-800 border border-rose-300 rounded-md text-xs font-semibold"
+                        >
+                            Retry
+                        </button>
+                    </div>
+                    <p className="text-xs text-rose-800">{this.state.errorMessage}</p>
+                </div>
+            );
+        }
+        return this.props.children;
+    }
 }
 
 const citationStyles: { id: CitationStyle; name: string }[] = [
@@ -182,9 +234,9 @@ const AuthorList: React.FC<{
 };
 
 
-export const PaperDetails: React.FC<PaperDetailsProps> = (props) => {
-    const { paper, isInWorkspace, onToggleWorkspacePaper, onConceptClick, onFindDoi, logAnalyticsEvent, model, onOpenAnalysis, onCitePaper, onAuthorClick, onFindSimilar, isFindingSimilar, userSettings, onGenerateLaymanSummary } = props;
-    const [activeTab, setActiveTab] = useState<'overview' | 'metadata' | 'registries'>('overview');
+const PaperDetailsInner: React.FC<PaperDetailsProps> = (props) => {
+    const { paper, isInWorkspace, onToggleWorkspacePaper, onConceptClick, onFindDoi, logAnalyticsEvent, model, onOpenAnalysis, onCitePaper, onAuthorClick, onFindSimilar, isFindingSimilar, userSettings, onGenerateLaymanSummary, searchQuery = '' } = props;
+    const [activeTab, setActiveTab] = useState<'overview' | 'citations' | 'metadata' | 'registries'>('overview');
     
     const [enrichedAbstract, setEnrichedAbstract] = useState<string | null>(null);
     const [isAbstractLoading, setIsAbstractLoading] = useState(false);
@@ -193,6 +245,10 @@ export const PaperDetails: React.FC<PaperDetailsProps> = (props) => {
     const [registryCitations, setRegistryCitations] = useState<any[]>([]);
     const [registryReferences, setRegistryReferences] = useState<any[]>([]);
     const [registryProjects, setRegistryProjects] = useState<any[]>([]);
+    const [registrySourceUsed, setRegistrySourceUsed] = useState<string>('OpenAlex');
+    const [registryLookupErrors, setRegistryLookupErrors] = useState<string[]>([]);
+    const [registryTotalCitedBy, setRegistryTotalCitedBy] = useState<number>(paper.citations || 0);
+    const [registryTotalReferenced, setRegistryTotalReferenced] = useState<number>(0);
     const [isRegistryLoading, setIsRegistryLoading] = useState(false);
     const [registryAudited, setRegistryAudited] = useState(false);
     
@@ -200,10 +256,20 @@ export const PaperDetails: React.FC<PaperDetailsProps> = (props) => {
     const [scholarBridgeSyncStatus, setScholarBridgeSyncStatus] = useState<'idle' | 'syncing' | 'synced' | 'error'>('idle');
     const [scholarBridgeError, setScholarBridgeError] = useState<string | null>(null);
 
-    // Connected Papers State
+    // Connected Papers / Citation Graph State (with 8s timeout & Retry)
     const [connectedPapers, setConnectedPapers] = useState<ConnectedPaper[] | null>(null);
+    const [connectionsSource, setConnectionsSource] = useState<string>('OpenAlex');
+    const [connectionsErrors, setConnectionsErrors] = useState<string[]>([]);
+    const [connectionsHardError, setConnectionsHardError] = useState<string | null>(null);
     const [isLoadingConnections, setIsLoadingConnections] = useState(false);
     const [isConnectionsExpanded, setIsConnectionsExpanded] = useState(false);
+
+    // Key Concepts State with Timeout & Error Recovery
+    const [localConcepts, setLocalConcepts] = useState<string[]>(paper.keyConcepts || []);
+    const [conceptsState, setConceptsState] = useState<'idle' | 'loading' | 'loaded' | 'error'>(
+        paper.keyConcepts && paper.keyConcepts.length > 0 ? 'loaded' : 'idle'
+    );
+    const [conceptsErrorMsg, setConceptsErrorMsg] = useState<string | null>(null);
 
     // Citation style selection
     const [selectedStyle, setSelectedStyle] = useState<CitationStyle>('apa');
@@ -216,6 +282,58 @@ export const PaperDetails: React.FC<PaperDetailsProps> = (props) => {
     const [mcpMessage, setMcpMessage] = useState<string | null>(null);
     const [auditRefreshKey, setAuditRefreshKey] = useState(0);
 
+    const extractConceptsWithTimeout = async () => {
+        if (paper.keyConcepts && paper.keyConcepts.length > 0) {
+            setLocalConcepts(paper.keyConcepts);
+            setConceptsState('loaded');
+            setConceptsErrorMsg(null);
+            return;
+        }
+
+        setConceptsState('loading');
+        setConceptsErrorMsg(null);
+
+        let timeoutHandle: any;
+        const timeoutPromise = new Promise<never>((_, reject) => {
+            timeoutHandle = setTimeout(() => {
+                reject(new Error('Key concept extraction timed out after 8 seconds.'));
+            }, 8000);
+        });
+
+        try {
+            const extractionTask = (async (): Promise<string[]> => {
+                // 1. Try OpenAlex concepts/topics first via citation graph / work lookup
+                try {
+                    const graphRes = await apiService.fetchPaperCitationGraphWithFallbacks(paper);
+                    if (graphRes.openalexConcepts && graphRes.openalexConcepts.length > 0) {
+                        return graphRes.openalexConcepts;
+                    }
+                } catch (_e) {
+                    // Proceed to fallback
+                }
+
+                // 2. Try AI concept extraction via geminiService.extractKeyConcepts
+                const textToExtract = (paper.abstract && paper.abstract.length >= 20 && !paper.abstract.includes('No abstract'))
+                    ? paper.abstract
+                    : `${paper.title || ''}. ${paper.abstract || ''}`;
+                const aiConcepts = await geminiService.extractKeyConcepts(textToExtract, model);
+                if (Array.isArray(aiConcepts) && aiConcepts.length > 0) {
+                    return aiConcepts;
+                }
+                throw new Error('Could not extract key concepts for this paper.');
+            })();
+
+            const resolvedConcepts = await Promise.race([extractionTask, timeoutPromise]);
+            clearTimeout(timeoutHandle);
+            setLocalConcepts(resolvedConcepts);
+            setConceptsState('loaded');
+        } catch (err: any) {
+            clearTimeout(timeoutHandle);
+            setConceptsState('error');
+            setConceptsErrorMsg(err?.message || 'Could not extract concepts (request failed or timed out).');
+        }
+    };
+
     // Reset local state when selected paper changes
     useEffect(() => {
         setEnrichedAbstract(null);
@@ -224,6 +342,8 @@ export const PaperDetails: React.FC<PaperDetailsProps> = (props) => {
         setQuickCitation(null);
         setIsCiting(false);
         setConnectedPapers(null);
+        setConnectionsErrors([]);
+        setConnectionsHardError(null);
         setIsLoadingConnections(false);
         setIsConnectionsExpanded(false);
         setScholarBridgeSyncStatus('idle');
@@ -234,27 +354,34 @@ export const PaperDetails: React.FC<PaperDetailsProps> = (props) => {
         setRegistryCitations([]);
         setRegistryReferences([]);
         setRegistryProjects([]);
+        setRegistryLookupErrors([]);
+        setRegistryTotalCitedBy(paper.citations || 0);
+        setRegistryTotalReferenced(0);
         setRegistryAudited(false);
         setIsRegistryLoading(false);
+
+        extractConceptsWithTimeout();
     }, [paper.id]);
 
     const handleAuditRegistries = async () => {
         setIsRegistryLoading(true);
+        setRegistryLookupErrors([]);
         try {
-            if (paper.doi) {
-                const [citations, refs] = await Promise.all([
-                    openCitationsService.fetchCitationsByDoi(paper.doi).catch(() => []),
-                    openCitationsService.fetchReferencesByDoi(paper.doi).catch(() => [])
-                ]);
-                setRegistryCitations(citations);
-                setRegistryReferences(refs);
-            }
-            
-            const grantRes = await openaireService.searchOpenAireProjects(paper.title.slice(0, 40), 5).catch(() => ({ projects: [] }));
+            const graphResult = await apiService.fetchPaperCitationGraphWithFallbacks(paper);
+            setRegistryCitations(graphResult.citingLinks);
+            setRegistryReferences(graphResult.referencedLinks);
+            setRegistryTotalCitedBy(graphResult.citedByCount);
+            setRegistryTotalReferenced(graphResult.referencedWorksCount);
+            setRegistrySourceUsed(graphResult.primarySource);
+            setRegistryLookupErrors(graphResult.sourceErrors);
+
+            const titleStr = typeof paper.title === 'string' ? paper.title : String(paper.title || '');
+            const grantRes = await openaireService.searchOpenAireProjects(titleStr.slice(0, 40), 5).catch(() => ({ projects: [] }));
             setRegistryProjects(grantRes.projects || []);
             setRegistryAudited(true);
-        } catch (e) {
+        } catch (e: any) {
             console.warn("Registry audit failed:", e);
+            setRegistryLookupErrors([e?.message || 'Registry lookup failed or timed out.']);
         } finally {
             setIsRegistryLoading(false);
         }
@@ -263,7 +390,7 @@ export const PaperDetails: React.FC<PaperDetailsProps> = (props) => {
     const handleMcpSync = async () => {
         const status = mcpService.getStatus();
         if (!status.isConnected) {
-            alert("MCP Workspace Bridge is not connected. Please enable it in the Library config.");
+            alert("Local Lab Bridge is not connected. Please enable it in the Tools menu.");
             return;
         }
 
@@ -280,13 +407,13 @@ export const PaperDetails: React.FC<PaperDetailsProps> = (props) => {
             }
         } catch (e) {
             setMcpSyncStatus('error');
-            setMcpMessage(e instanceof Error ? e.message : 'MCP Sync failed');
+            setMcpMessage(e instanceof Error ? e.message : 'Local Lab sync failed');
         }
     };
 
     const handleScholarBridgeSync = async () => {
         if (!userSettings.isScholarBridgeEnabled) {
-            alert("Please enable Scholar Bridge in the Library Config (Globe Icon) first.");
+            alert("Please enable Reference Library Sync in Settings first.");
             return;
         }
         setScholarBridgeSyncStatus('syncing');
@@ -350,36 +477,64 @@ export const PaperDetails: React.FC<PaperDetailsProps> = (props) => {
         }
     };
 
-    const handleLoadConnections = async () => {
-        if (connectedPapers) {
-            setIsConnectionsExpanded(!isConnectionsExpanded);
+    const fetchCitationGraphWithTimeout = async (forceReload = false) => {
+        if (connectedPapers && !forceReload) {
+            setIsConnectionsExpanded(true);
             return;
         }
 
         setIsLoadingConnections(true);
         setIsConnectionsExpanded(true);
+        setConnectionsErrors([]);
+        setConnectionsHardError(null);
+
+        let timeoutHandle: any;
+        const timeoutPromise = new Promise<never>((_, reject) => {
+            timeoutHandle = setTimeout(() => {
+                reject(new Error('Citation graph lookup timed out after 8 seconds.'));
+            }, 8000);
+        });
+
         try {
-            const results = await apiService.findConnectedPapers(paper, model);
-            setConnectedPapers(results);
-            logAnalyticsEvent('connections_loaded_in_details', { paperId: paper.id, count: results.length });
-        } catch (error) {
-            console.error("Failed to load connections:", error);
+            const graphResult = await Promise.race([
+                apiService.fetchPaperCitationGraphWithFallbacks(paper),
+                timeoutPromise
+            ]);
+            clearTimeout(timeoutHandle);
+            setConnectedPapers(graphResult.connections);
+            setConnectionsSource(graphResult.primarySource);
+            setConnectionsErrors(graphResult.sourceErrors);
+            setRegistryCitations(graphResult.citingLinks);
+            setRegistryReferences(graphResult.referencedLinks);
+            setRegistryTotalCitedBy(graphResult.citedByCount);
+            setRegistryTotalReferenced(graphResult.referencedWorksCount);
+            setRegistrySourceUsed(graphResult.primarySource);
+            if (graphResult.openalexConcepts.length > 0 && localConcepts.length === 0) {
+                setLocalConcepts(graphResult.openalexConcepts);
+                setConceptsState('loaded');
+            }
+            logAnalyticsEvent('connections_loaded_in_details', { paperId: paper.id, count: graphResult.connections.length });
+        } catch (error: any) {
+            clearTimeout(timeoutHandle);
+            const msg = error?.message || 'Citation graph lookup failed or timed out.';
+            setConnectionsHardError(msg);
+            setConnectionsErrors([msg]);
+            setConnectedPapers([]);
         } finally {
             setIsLoadingConnections(false);
         }
     };
 
+    const handleLoadConnections = async () => {
+        if (connectedPapers && !connectionsHardError) {
+            setIsConnectionsExpanded(!isConnectionsExpanded);
+            return;
+        }
+        await fetchCitationGraphWithTimeout(true);
+    };
+
     const renderKeyConcepts = () => {
-        if (!paper.keyConceptsState || paper.keyConceptsState === 'idle') {
-            if (paper.abstract.length < 150) return null; 
-            return (
-                <div className="py-2">
-                    <LoadingSpinner message="Extracting concepts..." />
-                </div>
-            );
-        }
-        
-        if (paper.keyConceptsState === 'loading') {
+        if (conceptsState === 'loading') {
             return (
                 <div className="py-2">
                     <LoadingSpinner message="Extracting concepts..." />
@@ -387,14 +542,25 @@ export const PaperDetails: React.FC<PaperDetailsProps> = (props) => {
             );
         }
     
-        if (paper.keyConceptsState === 'error') {
-            return <p className="text-sm text-destructive">Could not extract concepts.</p>;
+        if (conceptsState === 'error') {
+            return (
+                <div className="p-3 bg-rose-50 border border-rose-200 rounded-lg flex items-center justify-between gap-2 text-xs text-rose-800">
+                    <span>{conceptsErrorMsg || 'Could not extract concepts (request timed out or failed).'}</span>
+                    <button
+                        type="button"
+                        onClick={extractConceptsWithTimeout}
+                        className="px-2.5 py-1 bg-white border border-rose-300 hover:bg-rose-100 text-rose-800 font-semibold rounded-md shrink-0"
+                    >
+                        Retry
+                    </button>
+                </div>
+            );
         }
     
-        if (paper.keyConceptsState === 'loaded' && paper.keyConcepts && paper.keyConcepts.length > 0) {
+        if (conceptsState === 'loaded' && localConcepts.length > 0) {
             return (
                 <div className="flex flex-wrap gap-2">
-                    {paper.keyConcepts.map((concept) => (
+                    {localConcepts.map((concept) => (
                         <button
                             key={concept}
                             onClick={() => onConceptClick(concept)}
@@ -413,19 +579,23 @@ export const PaperDetails: React.FC<PaperDetailsProps> = (props) => {
     }
 
     const tldrHighlight = paper.highlights?.find(h => h.category === 'TLDR');
-    const references = connectedPapers?.filter(cp => cp.connection === 'This paper cites') || [];
-    const citations = connectedPapers?.filter(cp => cp.connection === 'Cited by this paper') || [];
-    const otherRelated = connectedPapers?.filter(cp => cp.connection !== 'This paper cites' && cp.connection !== 'Cited by this paper') || [];
+    const references = connectedPapers?.filter(cp => cp.connection.startsWith('This paper cites')) || [];
+    const citations = connectedPapers?.filter(cp => cp.connection.startsWith('Cited by this')) || [];
+    const otherRelated = connectedPapers?.filter(cp => !cp.connection.startsWith('This paper cites') && !cp.connection.startsWith('Cited by this')) || [];
 
     return (
         <div className="flex flex-col h-full space-y-4">
              <div>
                 <div className="flex justify-between items-start gap-4">
-                    <div className="flex-grow pr-2">
+                    <div className="flex-grow pr-2 space-y-2.5">
                         <h3 className="text-lg font-bold text-foreground leading-tight">{paper.title}</h3>
-                        <div className="flex flex-wrap items-center gap-x-3 gap-y-2 mt-2">
-                            <span className="text-sm text-muted-foreground font-medium">{paper.authors.split(',')[0]} et al. ({paper.year})</span>
+                        <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+                            <span className="text-sm text-muted-foreground font-medium">{paper.authors ? `${paper.authors.split(',')[0]} et al.` : (paper.authorList?.[0]?.name ? `${paper.authorList[0].name} et al.` : 'Scholarly Authors')} ({paper.year || 'n.d.'})</span>
                             <DoiDisplay paper={paper} onFindDoi={onFindDoi} />
+                        </div>
+                        <SourceCheckBadge paper={paper} />
+                        <div className="pt-1 max-w-md">
+                            <SemanticScoreIndicator score={paper.semanticScore} paper={paper} searchQuery={searchQuery} />
                         </div>
                     </div>
                     <div className="flex-shrink-0 flex flex-col gap-2">
@@ -476,7 +646,7 @@ export const PaperDetails: React.FC<PaperDetailsProps> = (props) => {
                             ) : (
                                 <DatabaseIcon className="w-4 h-4" />
                             )}
-                            <span>{mcpSyncStatus === 'synced' ? 'Vaulted OK' : 'Vault Ingest'}</span>
+                            <span>{mcpSyncStatus === 'synced' ? 'In Local Lab' : 'Stage for Local Lab'}</span>
                         </button>
                     </div>
                 </div>
@@ -485,6 +655,17 @@ export const PaperDetails: React.FC<PaperDetailsProps> = (props) => {
             <div className="border-b border-border overflow-x-auto">
                 <nav className="-mb-px flex space-x-6" aria-label="Tabs">
                     <TabButton isActive={activeTab === 'overview'} onClick={() => setActiveTab('overview')}>Overview</TabButton>
+                    <TabButton
+                        isActive={activeTab === 'citations'}
+                        onClick={() => {
+                            setActiveTab('citations');
+                            if (!connectedPapers && !isLoadingConnections) {
+                                fetchCitationGraphWithTimeout(false);
+                            }
+                        }}
+                    >
+                        Citations ({paper.citations ?? registryTotalCitedBy ?? 0})
+                    </TabButton>
                     <TabButton isActive={activeTab === 'metadata'} onClick={() => setActiveTab('metadata')}>Metadata</TabButton>
                     <TabButton isActive={activeTab === 'registries'} onClick={() => { setActiveTab('registries'); if (!registryAudited) handleAuditRegistries(); }}>
                         Open Registries & PIDs
@@ -497,17 +678,20 @@ export const PaperDetails: React.FC<PaperDetailsProps> = (props) => {
                     <div className="space-y-6 animate-fade-in pb-4">
                         {scholarBridgeError && (
                             <div className="bg-red-50 text-red-700 p-3 rounded-lg text-xs font-medium border border-red-100">
-                                <strong>Scholar Bridge Error:</strong> {scholarBridgeError}
+                                <strong>Reference Sync:</strong> {scholarBridgeError}
                             </div>
                         )}
 
                         {mcpMessage && (
                             <div className={`p-3 rounded-lg text-xs font-medium border ${
-                                mcpSyncStatus === 'error' ? 'bg-red-50 text-red-700 border-red-100' : 'bg-green-50 text-green-700 border-green-100'
+                                mcpSyncStatus === 'error' ? 'bg-red-50 text-red-700 border-red-100' : 'bg-emerald-50 text-emerald-800 border-emerald-100'
                             }`}>
-                                <strong>Workspace Bridge:</strong> {mcpMessage}
+                                <strong>Local Lab:</strong> {mcpMessage}
                             </div>
                         )}
+                        
+                        {/* S3A Claim & Epistemic Gate Governance Card */}
+                        <S3AClaimGovernanceCard paper={paper} />
                         
                         <EvidenceBoard 
                             key={auditRefreshKey} 
@@ -564,9 +748,23 @@ export const PaperDetails: React.FC<PaperDetailsProps> = (props) => {
                         {paper.sciteTally && (
                             <div className="bg-slate-900 rounded-xl p-4 text-white shadow-lg relative overflow-hidden">
                                 <div className="absolute top-0 right-0 w-24 h-24 bg-white/5 rounded-full -translate-y-1/2 translate-x-1/2 blur-xl"></div>
-                                <div className="flex items-center gap-2 mb-3">
-                                    <ShieldCheck className="w-4 h-4 text-slate-400" />
-                                    <h4 className="text-[10px] font-black uppercase tracking-widest text-slate-400">Scite Smart Citations</h4>
+                                <div className="flex items-center justify-between gap-2 mb-3">
+                                    <div className="flex items-center gap-2">
+                                        <ShieldCheck className="w-4 h-4 text-slate-400" />
+                                        <h4 className="text-[10px] font-black uppercase tracking-widest text-slate-400">Scite Smart Citations</h4>
+                                    </div>
+                                    <button
+                                        type="button"
+                                        onClick={() => {
+                                            setActiveTab('citations');
+                                            if (!connectedPapers && !isLoadingConnections) {
+                                                fetchCitationGraphWithTimeout(false);
+                                            }
+                                        }}
+                                        className="px-2.5 py-1 rounded-md bg-white/10 hover:bg-white/20 text-[10px] font-bold text-white border border-white/15 transition-colors"
+                                    >
+                                        Open Citations Graph
+                                    </button>
                                 </div>
                                 <div className="grid grid-cols-3 gap-2">
                                     <div className="flex flex-col">
@@ -594,12 +792,15 @@ export const PaperDetails: React.FC<PaperDetailsProps> = (props) => {
                             </div>
                         )}
 
-                        {/* AI Citation Toolkit */}
+                        {/* Instant Bibliographic Copy Bar & Export Toolkit */}
+                        <BibliographicCopyBar paper={paper} />
+
+                        {/* Extended Citation Export */}
                         <div className="bg-muted/40 border border-border rounded-xl shadow-sm">
                             <div className="p-4 border-b border-border bg-muted/20 flex items-center justify-between rounded-t-xl">
                                 <div className="flex items-center gap-2">
                                     <CitationIcon className="w-5 h-5 text-indigo-600" />
-                                    <h4 className="text-sm font-black uppercase tracking-widest text-foreground">AI Citation Toolkit</h4>
+                                    <h4 className="text-sm font-black uppercase tracking-widest text-foreground">Reference Export & Formatting</h4>
                                 </div>
                                 <button 
                                     onClick={() => onCitePaper(paper, selectedStyle)}
@@ -696,7 +897,7 @@ export const PaperDetails: React.FC<PaperDetailsProps> = (props) => {
                                     </div>
                                     <div>
                                         <h4 className="font-bold text-foreground text-sm">Citation Network</h4>
-                                        <p className="text-xs text-muted-foreground">Fetch relationships from Semantic Scholar</p>
+                                        <p className="text-xs text-muted-foreground">Fetch citing & referenced works from OpenAlex (Semantic Scholar & OpenCitations fallback)</p>
                                     </div>
                                 </div>
                                 <div className="flex items-center gap-2">
@@ -707,12 +908,30 @@ export const PaperDetails: React.FC<PaperDetailsProps> = (props) => {
                             
                             {isConnectionsExpanded && (
                                 <div className="p-4 border-t border-border space-y-6 bg-background/50">
+                                    {connectionsErrors.length > 0 && (
+                                        <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-900 space-y-1">
+                                            <div className="font-bold flex items-center gap-1.5">
+                                                <WarningIcon className="w-4 h-4 text-amber-600 shrink-0" />
+                                                <span>Citation Graph Source Notice (Primary: {connectionsSource})</span>
+                                            </div>
+                                            <ul className="list-disc pl-4 space-y-0.5 text-[11px] text-amber-800">
+                                                {connectionsErrors.map((err, i) => (
+                                                    <li key={i}>{err}</li>
+                                                ))}
+                                            </ul>
+                                        </div>
+                                    )}
+
                                     {isLoadingConnections ? (
                                         <div className="py-4 text-center">
-                                            <LoadingSpinner message="Mapping relationships via Semantic Scholar..." />
+                                            <LoadingSpinner message="Mapping relationships via OpenAlex (Semantic Scholar & OpenCitations fallback)..." />
                                         </div>
                                     ) : (connectedPapers && connectedPapers.length > 0) ? (
                                         <div className="space-y-6">
+                                            <div className="flex items-center justify-between text-[11px] text-slate-500 border-b border-slate-100 pb-2">
+                                                <span>Primary Source: <strong className="text-slate-800">{connectionsSource}</strong></span>
+                                                <span>{references.length} references • {citations.length} citing works</span>
+                                            </div>
                                             {references.length > 0 && (
                                                 <section>
                                                     <h5 className="text-[10px] font-black uppercase tracking-[0.15em] text-amber-600 mb-3 ml-1 flex items-center gap-2">
@@ -741,7 +960,7 @@ export const PaperDetails: React.FC<PaperDetailsProps> = (props) => {
                                                 <section>
                                                     <h5 className="text-[10px] font-black uppercase tracking-[0.15em] text-blue-600 mb-3 ml-1 flex items-center gap-2">
                                                         <span className="w-2 h-2 rounded-full bg-blue-500"></span>
-                                                        Most Influential Citations ({citations.length})
+                                                        Citing Works ({citations.length})
                                                     </h5>
                                                     <div className="space-y-3">
                                                         {citations.map((cp, idx) => (
@@ -796,8 +1015,19 @@ export const PaperDetails: React.FC<PaperDetailsProps> = (props) => {
                                             </div>
                                         </div>
                                     ) : (
-                                        <div className="text-center py-6 text-muted-foreground">
-                                            <p className="text-sm">No verified graph data available for this paper yet.</p>
+                                        <div className="text-center py-6 text-muted-foreground space-y-2">
+                                            <p className="text-sm font-medium text-rose-700">
+                                                {connectionsErrors.length > 0
+                                                    ? 'Citation graph lookup encountered errors across upstream sources.'
+                                                    : 'No citing or referenced works returned from OpenAlex, Semantic Scholar, or OpenCitations for this record.'}
+                                            </p>
+                                            <button
+                                                type="button"
+                                                onClick={() => fetchCitationGraphWithTimeout(true)}
+                                                className="px-3 py-1.5 bg-white hover:bg-slate-50 text-slate-800 border border-slate-300 rounded-md text-xs font-semibold"
+                                            >
+                                                Retry
+                                            </button>
                                         </div>
                                     )}
                                 </div>
@@ -815,6 +1045,151 @@ export const PaperDetails: React.FC<PaperDetailsProps> = (props) => {
                                 <span>Open Analysis Dashboard</span>
                             </button>
                         </div>
+                    </div>
+                )}
+
+                {activeTab === 'citations' && (
+                    <div className="space-y-5 animate-fade-in pb-4">
+                        <div className="flex items-center justify-between flex-wrap gap-2 p-3.5 rounded-xl bg-slate-50 border border-slate-200">
+                            <div className="flex items-center gap-2">
+                                <NetworkIcon className="w-4 h-4 text-indigo-600" />
+                                <span className="text-xs font-bold text-slate-900">Citation Graph</span>
+                                <span className="px-2 py-0.5 rounded bg-indigo-50 border border-indigo-200 text-indigo-800 text-[11px] font-semibold">
+                                    Graph source: {connectionsSource}
+                                </span>
+                            </div>
+                            <button
+                                type="button"
+                                onClick={() => fetchCitationGraphWithTimeout(true)}
+                                disabled={isLoadingConnections}
+                                className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg bg-white hover:bg-slate-100 text-slate-800 border border-slate-200 text-xs font-semibold transition-colors"
+                            >
+                                <RefreshCw className={`w-3 h-3 ${isLoadingConnections ? 'animate-spin' : ''}`} />
+                                <span>Retry</span>
+                            </button>
+                        </div>
+
+                        {(connectionsHardError || connectionsErrors.length > 0) && (
+                            <div className="p-3.5 bg-rose-50 border border-rose-200 rounded-xl text-xs text-rose-900 space-y-2">
+                                <div className="flex items-center justify-between gap-2">
+                                    <span className="font-bold">
+                                        {connectionsHardError || `Citation graph notice (source: ${connectionsSource})`}
+                                    </span>
+                                    <button
+                                        type="button"
+                                        onClick={() => fetchCitationGraphWithTimeout(true)}
+                                        className="px-2.5 py-1 bg-white hover:bg-rose-100 text-rose-800 border border-rose-300 rounded-md font-semibold shrink-0"
+                                    >
+                                        Retry
+                                    </button>
+                                </div>
+                                {connectionsErrors.length > 0 && (
+                                    <ul className="list-disc pl-4 space-y-0.5 text-[11px] text-rose-800">
+                                        {connectionsErrors.map((err, i) => (
+                                            <li key={i}>{err}</li>
+                                        ))}
+                                    </ul>
+                                )}
+                            </div>
+                        )}
+
+                        {isLoadingConnections ? (
+                            <div className="py-8 text-center">
+                                <LoadingSpinner message="Loading citation graph from OpenAlex (with Semantic Scholar & OpenCitations fallbacks)..." />
+                            </div>
+                        ) : (connectedPapers && connectedPapers.length > 0) ? (
+                            <div className="space-y-5">
+                                <div className="flex items-center justify-between text-xs text-slate-600 border-b border-slate-100 pb-2">
+                                    <span>Source: <strong className="text-slate-900">{connectionsSource}</strong></span>
+                                    <span>{citations.length} citing works • {references.length} referenced works</span>
+                                </div>
+
+                                {citations.length > 0 && (
+                                    <section className="space-y-2.5">
+                                        <h5 className="text-xs font-bold uppercase tracking-wider text-blue-700">
+                                            Citing Works ({citations.length})
+                                        </h5>
+                                        <div className="space-y-2">
+                                            {citations.map((cp, idx) => (
+                                                <div key={idx} className="p-3 bg-white border border-slate-200 rounded-lg hover:border-blue-300 transition-colors">
+                                                    <div className="flex justify-between items-start gap-2">
+                                                        <h6 className="text-sm font-semibold text-slate-900 leading-snug">{cp.title}</h6>
+                                                        {cp.sourceURL && (
+                                                            <a
+                                                                href={cp.sourceURL}
+                                                                target="_blank"
+                                                                rel="noopener noreferrer"
+                                                                className="text-xs text-blue-600 hover:underline shrink-0"
+                                                            >
+                                                                Open
+                                                            </a>
+                                                        )}
+                                                    </div>
+                                                    <p className="text-xs text-slate-500 mt-1">{cp.authors} ({cp.year || 'n.d.'})</p>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </section>
+                                )}
+
+                                {references.length > 0 && (
+                                    <section className="space-y-2.5">
+                                        <h5 className="text-xs font-bold uppercase tracking-wider text-amber-700">
+                                            Referenced Works ({references.length})
+                                        </h5>
+                                        <div className="space-y-2">
+                                            {references.map((cp, idx) => (
+                                                <div key={idx} className="p-3 bg-white border border-slate-200 rounded-lg hover:border-amber-300 transition-colors">
+                                                    <div className="flex justify-between items-start gap-2">
+                                                        <h6 className="text-sm font-semibold text-slate-900 leading-snug">{cp.title}</h6>
+                                                        {cp.sourceURL && (
+                                                            <a
+                                                                href={cp.sourceURL}
+                                                                target="_blank"
+                                                                rel="noopener noreferrer"
+                                                                className="text-xs text-amber-700 hover:underline shrink-0"
+                                                            >
+                                                                Open
+                                                            </a>
+                                                        )}
+                                                    </div>
+                                                    <p className="text-xs text-slate-500 mt-1">{cp.authors} ({cp.year || 'n.d.'})</p>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </section>
+                                )}
+
+                                {otherRelated.length > 0 && (
+                                    <section className="space-y-2.5">
+                                        <h5 className="text-xs font-bold uppercase tracking-wider text-slate-600">
+                                            Connected Works ({otherRelated.length})
+                                        </h5>
+                                        <div className="space-y-2">
+                                            {otherRelated.map((cp, idx) => (
+                                                <div key={idx} className="p-3 bg-white border border-slate-200 rounded-lg">
+                                                    <h6 className="text-sm font-semibold text-slate-900 leading-snug">{cp.title}</h6>
+                                                    <p className="text-xs text-slate-500 mt-1">{cp.authors} ({cp.year || 'n.d.'})</p>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </section>
+                                )}
+                            </div>
+                        ) : (
+                            <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl text-center space-y-2">
+                                <p className="text-xs text-slate-700">
+                                    No citing or referenced works returned from OpenAlex, Semantic Scholar, or OpenCitations for this paper.
+                                </p>
+                                <button
+                                    type="button"
+                                    onClick={() => fetchCitationGraphWithTimeout(true)}
+                                    className="px-3 py-1 bg-white hover:bg-slate-100 text-slate-800 border border-slate-300 rounded-md text-xs font-semibold"
+                                >
+                                    Retry
+                                </button>
+                            </div>
+                        )}
                     </div>
                 )}
                 
@@ -968,36 +1343,110 @@ export const PaperDetails: React.FC<PaperDetailsProps> = (props) => {
                             </a>
                         </div>
 
-                        {/* OpenCitations Section */}
+                        {/* Citation & Reference Graph Section (OpenAlex primary, Semantic Scholar & OpenCitations fallback) */}
                         <div className="bg-white p-4 rounded-2xl border border-slate-200 space-y-3 shadow-sm">
-                            <div className="flex items-center justify-between">
+                            <div className="flex items-center justify-between flex-wrap gap-2">
                                 <span className="text-xs font-bold text-slate-900 flex items-center gap-1.5">
                                     <Share2 className="w-4 h-4 text-indigo-600" />
-                                    OpenCitations Linked Citations ({registryCitations.length} citing works / {registryReferences.length} references)
+                                    Linked Citations &amp; References ({registryTotalCitedBy || registryCitations.length} citing works / {registryTotalReferenced || registryReferences.length} references)
                                 </span>
                                 <span className="text-[10px] font-black uppercase text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded">
-                                    CC0 Linked Open Data
+                                    Primary: {registrySourceUsed}
                                 </span>
                             </div>
 
-                            {registryCitations.length === 0 && !isRegistryLoading ? (
-                                <p className="text-xs text-slate-400 italic">No citing DOIs indexed in OpenCitations COCI yet for this DOI.</p>
+                            {registryLookupErrors.length > 0 && (
+                                <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-xs text-rose-800 space-y-1">
+                                    <span className="font-bold block">Registry Lookup Warning / Rate-Limit Error:</span>
+                                    <ul className="list-disc pl-4 space-y-0.5 text-[11px]">
+                                        {registryLookupErrors.map((err, idx) => (
+                                            <li key={idx}>{err}</li>
+                                        ))}
+                                    </ul>
+                                </div>
+                            )}
+
+                            {isRegistryLoading ? (
+                                <div className="py-4 text-center">
+                                    <LoadingSpinner message="Resolving citations & references via OpenAlex (with Semantic Scholar & OpenCitations fallbacks)..." />
+                                </div>
                             ) : (
-                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-48 overflow-y-auto">
-                                    {registryCitations.slice(0, 10).map((c, i) => (
-                                        <div key={i} className="p-2.5 bg-slate-50 rounded-xl border border-slate-100 text-xs flex items-center justify-between">
-                                            <span className="font-mono text-[11px] text-slate-700 truncate mr-2">doi:{c.citingDoi}</span>
-                                            <a
-                                                href={`https://doi.org/${c.citingDoi}`}
-                                                target="_blank"
-                                                rel="noreferrer"
-                                                className="text-indigo-600 hover:text-indigo-800 font-bold shrink-0 flex items-center gap-0.5"
-                                            >
-                                                <span>Resolve</span>
-                                                <ExternalLink className="w-3 h-3" />
-                                            </a>
-                                        </div>
-                                    ))}
+                                <div className="space-y-4">
+                                    {/* Citing Works */}
+                                    <div className="space-y-2">
+                                        <span className="text-[11px] font-bold text-slate-700 block">
+                                            Citing Works ({registryTotalCitedBy || registryCitations.length} total, showing {Math.min(registryCitations.length, 10)})
+                                        </span>
+                                        {registryCitations.length === 0 ? (
+                                            <p className="text-xs text-slate-500 italic">
+                                                {registryLookupErrors.length > 0
+                                                    ? 'Citing works could not be retrieved due to upstream error above.'
+                                                    : 'No citing works returned for this work.'}
+                                            </p>
+                                        ) : (
+                                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-48 overflow-y-auto">
+                                                {registryCitations.slice(0, 10).map((c, i) => {
+                                                    const idOrDoi = c.citingDoi || '';
+                                                    const isOpenAlex = idOrDoi.startsWith('W');
+                                                    const href = isOpenAlex ? `https://openalex.org/${idOrDoi}` : `https://doi.org/${idOrDoi}`;
+                                                    return (
+                                                        <div key={i} className="p-2.5 bg-slate-50 rounded-xl border border-slate-100 text-xs flex items-center justify-between">
+                                                            <span className="font-mono text-[11px] text-slate-700 truncate mr-2">
+                                                                {isOpenAlex ? `openalex:${idOrDoi}` : `doi:${idOrDoi}`}
+                                                            </span>
+                                                            <a
+                                                                href={href}
+                                                                target="_blank"
+                                                                rel="noreferrer"
+                                                                className="text-indigo-600 hover:text-indigo-800 font-bold shrink-0 flex items-center gap-0.5"
+                                                            >
+                                                                <span>Resolve</span>
+                                                                <ExternalLink className="w-3 h-3" />
+                                                            </a>
+                                                        </div>
+                                                    );
+                                                })}
+                                            </div>
+                                        )}
+                                    </div>
+
+                                    {/* Referenced Works */}
+                                    <div className="space-y-2 pt-2 border-t border-slate-100">
+                                        <span className="text-[11px] font-bold text-slate-700 block">
+                                            Referenced Works ({registryTotalReferenced || registryReferences.length} total, showing {Math.min(registryReferences.length, 10)})
+                                        </span>
+                                        {registryReferences.length === 0 ? (
+                                            <p className="text-xs text-slate-500 italic">
+                                                {registryLookupErrors.length > 0
+                                                    ? 'Referenced works could not be retrieved due to upstream error above.'
+                                                    : 'No referenced works returned for this work.'}
+                                            </p>
+                                        ) : (
+                                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-48 overflow-y-auto">
+                                                {registryReferences.slice(0, 10).map((r, i) => {
+                                                    const idOrDoi = r.citedDoi || '';
+                                                    const isOpenAlex = idOrDoi.startsWith('W');
+                                                    const href = isOpenAlex ? `https://openalex.org/${idOrDoi}` : `https://doi.org/${idOrDoi}`;
+                                                    return (
+                                                        <div key={i} className="p-2.5 bg-slate-50 rounded-xl border border-slate-100 text-xs flex items-center justify-between">
+                                                            <span className="font-mono text-[11px] text-slate-700 truncate mr-2">
+                                                                {isOpenAlex ? `openalex:${idOrDoi}` : `doi:${idOrDoi}`}
+                                                            </span>
+                                                            <a
+                                                                href={href}
+                                                                target="_blank"
+                                                                rel="noreferrer"
+                                                                className="text-indigo-600 hover:text-indigo-800 font-bold shrink-0 flex items-center gap-0.5"
+                                                            >
+                                                                <span>Resolve</span>
+                                                                <ExternalLink className="w-3 h-3" />
+                                                            </a>
+                                                        </div>
+                                                    );
+                                                })}
+                                            </div>
+                                        )}
+                                    </div>
                                 </div>
                             )}
                         </div>
@@ -1039,3 +1488,10 @@ export const PaperDetails: React.FC<PaperDetailsProps> = (props) => {
         </div>
     );
 };
+
+export const PaperDetails: React.FC<PaperDetailsProps> = (props) => (
+    <PaperDetailsErrorBoundary paperId={props.paper.id}>
+        <PaperDetailsInner {...props} />
+    </PaperDetailsErrorBoundary>
+);
+

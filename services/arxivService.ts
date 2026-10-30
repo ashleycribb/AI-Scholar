@@ -5,6 +5,30 @@ import { getCache, setCache } from '../utils/cache';
 const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes for searches (Standardized)
 const ENRICH_TTL_MS = 48 * 60 * 60 * 1000; // 48 hours for stable metadata
 
+let lastArxivUnavailable = false;
+const statusListeners = new Set<(unavailable: boolean) => void>();
+
+export function isArxivUnavailable(): boolean {
+    return lastArxivUnavailable;
+}
+
+export function subscribeArxivStatus(fn: (unavailable: boolean) => void): () => void {
+    statusListeners.add(fn);
+    fn(lastArxivUnavailable);
+    return () => {
+        statusListeners.delete(fn);
+    };
+}
+
+function setArxivUnavailable(val: boolean) {
+    if (lastArxivUnavailable !== val) {
+        lastArxivUnavailable = val;
+        statusListeners.forEach(fn => {
+            try { fn(val); } catch {}
+        });
+    }
+}
+
 const extractArxivId = (url?: string): string | null => {
     if (!url) return null;
     const match = url.match(/(?:abs|pdf)\/(\d{4}\.\d{4,5}(v\d+)?)/);
@@ -12,30 +36,24 @@ const extractArxivId = (url?: string): string | null => {
 };
 
 /**
- * Attempts to fetch the full text content from ar5iv.labs.arxiv.org.
- * Mirrors the `retrieve_passages` and `parsing_paragraph` logic from OpenScholar.
+ * Attempts to fetch the full text content from ar5iv via backend proxy.
  */
 export const fetchFullTextFromAr5iv = async (arxivId: string): Promise<string | null> => {
     const cacheKey = `ar5iv_text_${arxivId}`;
     const cached = getCache<string>(cacheKey);
     if (cached) return cached;
 
-    // Ar5iv converts arXiv LaTeX to HTML5.
-    const url = `https://ar5iv.labs.arxiv.org/html/${arxivId}`;
-
     try {
-        // Note: Client-side fetching might be blocked by CORS depending on browser/network.
-        // In a production env, this should go through a proxy. 
-        // We use a simple fetch here as requested by the client-side architecture.
-        const response = await fetch(url);
+        const response = await fetch(`/api/registries/arxiv/ar5iv/${encodeURIComponent(arxivId)}`);
         if (!response.ok) return null;
 
-        const html = await response.text();
+        const payload = await response.json();
+        const html = payload?.html;
+        if (!html || typeof html !== 'string') return null;
+
         const parser = new DOMParser();
         const doc = parser.parseFromString(html, 'text/html');
 
-        // Logic from Python script: Find sections starting with "S" (standard academic sections)
-        // and extract paragraphs.
         const sections = Array.from(doc.querySelectorAll('section.ltx_section'));
         let fullText = "";
 
@@ -46,7 +64,6 @@ export const fetchFullTextFromAr5iv = async (arxivId: string): Promise<string | 
                 return `## ${header}\n${paras}`;
             }).join('\n\n');
         } else {
-            // Fallback: grab all paragraphs if sections aren't clear
             fullText = Array.from(doc.querySelectorAll('p')).map(p => p.textContent).join('\n\n');
         }
 
@@ -55,8 +72,7 @@ export const fetchFullTextFromAr5iv = async (arxivId: string): Promise<string | 
             return fullText;
         }
         return null;
-    } catch (e) {
-        console.warn(`Ar5iv fetch failed for ${arxivId}`, e);
+    } catch {
         return null;
     }
 };
@@ -70,15 +86,16 @@ export const enrichFromArxiv = async (paper: ResearchPaper): Promise<Partial<Res
     if (cached) return cached;
 
     try {
-        // Parallelize metadata fetch and full text fetch
         const [metaResponse, fullText] = await Promise.all([
-            fetch(`https://export.arxiv.org/api/query?id_list=${arxivId}`),
+            fetch(`/api/registries/arxiv/search?id_list=${encodeURIComponent(arxivId)}`),
             fetchFullTextFromAr5iv(arxivId)
         ]);
 
         if (!metaResponse.ok) return null;
+        const payload = await metaResponse.json();
+        if (payload?.unavailable || !payload?.xml) return null;
 
-        const xmlText = await metaResponse.text();
+        const xmlText = String(payload.xml);
         const parser = new DOMParser();
         const xmlDoc = parser.parseFromString(xmlText, "application/xml");
         const entry = xmlDoc.querySelector("entry");
@@ -94,38 +111,40 @@ export const enrichFromArxiv = async (paper: ResearchPaper): Promise<Partial<Res
             enrichmentSource: 'arXiv'
         };
 
-        // If we found full text, append it to the abstract or a new field. 
-        // For compatibility with the current type definition, we might append it to the abstract with a delimiter
-        // or rely on the abstract being the summary. 
-        // Ideally, ResearchPaper type should have a `fullText` field.
-        // For now, if we found full text, we can use it for analysis but maybe not store it in the abstract field to avoid UI bloat.
-        // Let's store a truncated version or just the fact we have it.
-        
-        // However, if we want the "Deep Research" service to see it, we can create a composite abstract.
         if (fullText) {
             enrichedData.abstract = `[FULL TEXT AVAILABLE]\n\nABSTRACT:\n${enrichedData.abstract}\n\nBODY:\n${fullText.substring(0, 10000)}...`; 
         }
 
         setCache(cacheKey, enrichedData, ENRICH_TTL_MS);
         return enrichedData;
-    } catch (e) {
+    } catch {
         return null;
     }
 };
 
-export const searchArxiv = async (query: string, page: number = 1): Promise<{ papers: ResearchPaper[], hasMore: boolean }> => {
+export const searchArxiv = async (query: string, page: number = 1): Promise<{ papers: ResearchPaper[], hasMore: boolean, unavailable?: boolean }> => {
     const cacheKey = `arxiv_search_${query}_${page}`;
-    const cached = getCache<{ papers: ResearchPaper[], hasMore: boolean }>(cacheKey);
+    const cached = getCache<{ papers: ResearchPaper[], hasMore: boolean, unavailable?: boolean }>(cacheKey);
     if (cached) return cached;
 
     const resultsPerPage = 15;
     const start = (page - 1) * resultsPerPage;
-    const apiUrl = `https://export.arxiv.org/api/query?search_query=all:${encodeURIComponent(query)}&max_results=${resultsPerPage}&start=${start}`;
+    const apiUrl = `/api/registries/arxiv/search?search_query=${encodeURIComponent(`all:${query}`)}&max_results=${resultsPerPage}&start=${start}`;
     
     try {
         const response = await fetch(apiUrl);
-        if (!response.ok) return { papers: [], hasMore: false };
-        const xmlText = await response.text();
+        if (!response.ok) {
+            setArxivUnavailable(true);
+            return { papers: [], hasMore: false, unavailable: true };
+        }
+        const payload = await response.json();
+        if (payload?.unavailable || !payload?.xml) {
+            setArxivUnavailable(true);
+            return { papers: [], hasMore: false, unavailable: true };
+        }
+
+        setArxivUnavailable(false);
+        const xmlText = String(payload.xml);
         const xmlDoc = new DOMParser().parseFromString(xmlText, "application/xml");
 
         const totalResults = parseInt(xmlDoc.querySelector("opensearch\\:totalResults")?.textContent || '0', 10);
@@ -142,10 +161,12 @@ export const searchArxiv = async (query: string, page: number = 1): Promise<{ pa
             enrichmentSource: 'arXiv'
         }));
 
-        const result = { papers, hasMore: (start + resultsPerPage) < totalResults };
+        const result = { papers, hasMore: (start + resultsPerPage) < totalResults, unavailable: false };
         setCache(cacheKey, result, CACHE_TTL_MS);
         return result;
-    } catch (e) {
-        return { papers: [], hasMore: false };
+    } catch {
+        setArxivUnavailable(true);
+        return { papers: [], hasMore: false, unavailable: true };
     }
 };
+
