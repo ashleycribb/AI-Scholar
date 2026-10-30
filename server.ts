@@ -6,6 +6,7 @@ import fs from "fs";
 import { exec } from "child_process";
 import { WebSocketServer } from "ws";
 import http from "http";
+import { createGeminiProxyRouter } from "./server/geminiProxy";
 import { WorkspaceMcpServer } from "./services/mcp-server-impl";
 import { 
   registerCapabilityPackInRegistry, 
@@ -70,6 +71,10 @@ async function startServer() {
 
   // Initialize MCP Workspace Server
   const mcpServer = new WorkspaceMcpServer();
+
+  // Gemini proxy: mounted before the global JSON parser and wildcard CORS below so it
+  // enforces its own body limit and same-origin policy. The API key stays server-side.
+  app.use("/api/gemini", createGeminiProxyRouter());
 
   // Middleware
   app.use(express.json());

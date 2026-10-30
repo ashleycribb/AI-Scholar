@@ -1,11 +1,22 @@
 // extension/lib/gemini.ts
-import { GoogleGenAI, Type } from "@google/genai";
+import { Type } from "@google/genai";
+import { createGeminiClient } from "../../services/geminiClient";
 import type { PaperAnalysis, ResearchPaper } from '../../types';
 import { findDoiForPaper } from './crossref';
 import { findOpenAccessPdf } from './unpaywall';
 
-const ai = new GoogleGenAI({ 
-  apiKey: process.env.GEMINI_API_KEY,
+// No API key ships in the extension. Gemini calls go to the Scholar Explorer server proxy.
+// Set the proxy base URL once, e.g. in the service-worker console:
+//   chrome.storage.local.set({ geminiProxyUrl: "https://<your-app-url>" })
+// and add "chrome-extension://<extension-id>" to GEMINI_PROXY_ALLOWED_ORIGINS on the server.
+const ai = createGeminiClient({
+  baseUrl: async () => {
+    const { geminiProxyUrl } = await (globalThis as any).chrome.storage.local.get("geminiProxyUrl");
+    if (typeof geminiProxyUrl !== "string" || !/^https?:\/\//.test(geminiProxyUrl)) {
+      throw new Error("Gemini proxy URL is not set (chrome.storage.local geminiProxyUrl).");
+    }
+    return geminiProxyUrl;
+  },
 });
 
 const wait = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));

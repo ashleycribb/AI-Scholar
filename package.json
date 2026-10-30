@@ -9,7 +9,8 @@
     "build": "vite build && esbuild server.ts --bundle --platform=node --target=node18 --packages=external --outfile=dist/server.cjs",
     "build-extension": "vite build -c vite.extension.config.ts && node copy-extension-assets.js",
     "preview": "vite preview",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "test": "bun test"
   },
   "dependencies": {
     "@google/genai": "^1.19.0",
