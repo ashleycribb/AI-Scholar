@@ -49,3 +49,37 @@ test("errors keep code/status so retry logic works; failed turn not committed", 
   expect(err.error.status).toBe("RESOURCE_EXHAUSTED");
   expect(chat.getHistory().length).toBe(0);
 });
+
+import { parseRetryAfter, GeminiHttpError } from "./geminiClient";
+
+test("embedBatch posts {model, texts} to /embed-batch and returns the embeddings", async () => {
+  const seen: any[] = [];
+  const ai = createGeminiClient({ baseUrl: "http://x/", fetchImpl: mkFetch([{ body: { embeddings: [{ values: [1] }, { values: [2] }] } }], seen) });
+  const r = await ai.models.embedBatch({ model: "gemini-embedding-2-preview", texts: ["a", "b"] });
+  expect(seen[0].url).toBe("http://x/api/gemini/embed-batch");
+  expect(seen[0].body).toEqual({ model: "gemini-embedding-2-preview", texts: ["a", "b"] });
+  expect(r.embeddings.map(e => e.values)).toEqual([[1], [2]]);
+});
+
+test("a 429 carries the Retry-After header as retryAfterMs", async () => {
+  const f = (async () => new Response(JSON.stringify({ error: { code: 429, status: "RESOURCE_EXHAUSTED", message: "slow down" } }), { status: 429, headers: { "Retry-After": "7" } })) as any;
+  const ai = createGeminiClient({ fetchImpl: f });
+  const err: any = await ai.models.embedBatch({ model: "m", texts: ["a"] }).catch(e => e);
+  expect(err).toBeInstanceOf(GeminiHttpError);
+  expect(err.status).toBe(429);
+  expect(err.retryAfterMs).toBe(7000);
+  const noHeader = (async () => new Response(JSON.stringify({ error: { code: 429, message: "x" } }), { status: 429 })) as any;
+  const e2: any = await createGeminiClient({ fetchImpl: noHeader }).models.embedBatch({ model: "m", texts: ["a"] }).catch(e => e);
+  expect(e2.retryAfterMs).toBeUndefined();
+});
+
+test("parseRetryAfter: seconds, HTTP date, junk", () => {
+  expect(parseRetryAfter("30")).toBe(30_000);
+  expect(parseRetryAfter(" 0 ")).toBe(0);
+  expect(parseRetryAfter(null)).toBeUndefined();
+  expect(parseRetryAfter("soon")).toBeUndefined();
+  const now = Date.parse("2026-10-30T12:00:00Z");
+  expect(parseRetryAfter("Fri, 30 Oct 2026 12:00:45 GMT", now)).toBe(45_000);
+  expect(parseRetryAfter("Fri, 30 Oct 2026 11:00:00 GMT", now)).toBe(0);
+  expect(parseRetryAfter("999999999")).toBe(86_400_000);
+});

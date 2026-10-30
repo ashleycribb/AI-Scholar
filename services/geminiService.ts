@@ -3,6 +3,7 @@ import { Type, GenerateContentResponse } from "@google/genai";
 import { ai, type Chat } from "./geminiClient";
 import type { ResearchPaper, SummaryLength, SummaryStyle, ModelDefinition, CitationStyle, InnovationResult, SynthesisResult } from "../types";
 import { papersToToonCollection } from "../utils/toon";
+import { embedText } from "../utils/embeddings";
 
 // The Gemini client forwards to the server-side proxy; no API key lives in the browser.
 export { ai };
@@ -28,8 +29,12 @@ export async function runWithRetry<T>(fn: () => Promise<T>, retries = 5, delay =
         errorMessage?.includes('quota')
     )) {
       const jitter = Math.random() * 1000;
-      console.warn(`Gemini API rate limit hit. Retrying in ${(delay + jitter).toFixed(0)}ms...`);
-      await wait(delay + jitter);
+      // Honor the proxy's Retry-After when it sent one (bounded, so a long window fails fast instead of hanging the UI).
+      const hinted = typeof error?.retryAfterMs === 'number' ? error.retryAfterMs : undefined;
+      if (hinted !== undefined && hinted > 30_000) throw error;
+      const waitMs = (hinted !== undefined ? Math.max(hinted, delay) : delay) + jitter;
+      console.warn(`Gemini API rate limit hit. Retrying in ${waitMs.toFixed(0)}ms...`);
+      await wait(waitMs);
       return runWithRetry(fn, retries - 1, delay * 2);
     }
     throw error;
@@ -174,24 +179,9 @@ The goal is to generate a document that is semantically similar to real relevant
  * Generates an embedding vector for a given text string.
  */
 export const getEmbedding = async (text: string): Promise<number[]> => {
-  try {
-    // Attempt with gemini-embedding-2-preview
-    const model = "gemini-embedding-2-preview";
-    const result = await runWithRetry<any>(() => ai.models.embedContent({
-      model: model,
-      contents: text,
-    }));
-    return result.embedding?.values || result.embeddings?.[0]?.values || result.embeddings || [];
-  } catch (error: any) {
-    // Suppress 404 errors for embeddings as they are optional
-    const isNotFound = error?.message?.includes('not found') || error?.status === 404 || error?.error?.code === 404;
-    if (isNotFound) {
-        console.warn(`[SemanticSearch] Embedding model not available (404). Semantic search disabled. Error details: ${error?.message || JSON.stringify(error)}`);
-        return [];
-    }
-    console.error("Error fetching embedding:", error);
-    return [];
-  }
+  // Shared embedder: cached, de-duplicated, batched with any other pending texts, bounded retries,
+  // and never throws (an unavailable embedding service yields [] and callers fall back to keyword scoring).
+  return embedText(text);
 };
 
 /**

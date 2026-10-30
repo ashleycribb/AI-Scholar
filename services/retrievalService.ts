@@ -1,5 +1,5 @@
 
-import { embedText } from "../utils/embeddings";
+import { batchEmbedText } from "../utils/embeddings";
 import { cosineSimilarity } from "../utils/math";
 import { EvidenceSpan } from "../types";
 import { searchOpenAlexByDoi } from "./openalexService";
@@ -25,11 +25,10 @@ export async function findSupportingPassages(doi: string | undefined, claim: str
   if (abstract) {
         // In this simplified version, the whole abstract is treated as a single "passage".
         // A more advanced version could split the abstract into sentences.
-        const claimEmb = await embedText(claim);
-        if (claimEmb.length === 0) return [];
-        
-        const passageEmb = await embedText(abstract);
-        if (passageEmb.length === 0) return [];
+        // One batched call for both texts.
+        const [claimEmb, passageEmb] = await batchEmbedText([claim, abstract]);
+        if (!claimEmb || claimEmb.length === 0) return [];
+        if (!passageEmb || passageEmb.length === 0) return [];
 
         const similarity = cosineSimilarity(claimEmb, passageEmb);
         

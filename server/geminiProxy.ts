@@ -2,7 +2,7 @@
  * Server-side Gemini proxy.
  *
  * The browser (and the Chrome extension) never see GEMINI_API_KEY. They POST
- * to /api/gemini/{generate,embed}; this router validates the request, applies
+ * to /api/gemini/{generate,embed,embed-batch}; this router validates the request, applies
  * rate limits, and calls Gemini with the key read from the server environment
  * at request time.
  *
@@ -10,9 +10,13 @@
  *  - model allowlist (regex), config allowlist, only functionDeclarations tools
  *  - same-origin only (Origin must match Host) unless listed in
  *    GEMINI_PROXY_ALLOWED_ORIGINS (e.g. the extension's chrome-extension://<id>)
- *  - per-client and global fixed-window rate limits
+ *  - per-client and global fixed-window rate limits; embeddings have their own
+ *    budgets (calls AND texts per minute) so a batch embed cannot starve chat/generate
  *  - request body cap, contents size cap
  *  - upstream errors are sanitized; the key is never echoed
+ *
+ * Embedding note: use /embed-batch for more than one text. /embed with an array `contents` is
+ * forwarded as-is, and gemini-embedding-2* aggregates a flat list of parts into a single vector.
  */
 import express, { type Request, type Response, type NextFunction, Router } from "express";
 import { GoogleGenAI } from "@google/genai";
@@ -25,30 +29,61 @@ export const GENERATE_CONFIG_KEYS = new Set([
 export const EMBED_CONFIG_KEYS = new Set(["outputDimensionality", "taskType", "title"]);
 const BODY_LIMIT = "4mb";
 const MAX_CONTENTS_CHARS = 3_000_000;
+/** Defaults for /embed-batch; each is overridable via options or env (see createGeminiProxyRouter). */
+export const DEFAULT_EMBED_BATCH_MAX_TEXTS = 100; // Gemini batchEmbedContents accepts up to 100 requests
+export const DEFAULT_EMBED_TEXT_MAX_CHARS = 20_000; // ~8k-token input limit of the embedding models, with margin
 
 export interface ProxyOptions {
   /** Returns the API key; defaults to process.env.GEMINI_API_KEY (read per request). */
   getApiKey?: () => string | undefined;
   /** Test seam / alternative backend. */
   clientFactory?: (apiKey: string) => Pick<GoogleGenAI, "models">;
+  /** generate budget (calls per minute). */
   perClientPerMinute?: number;
   globalPerMinute?: number;
+  /** embed budget: HTTP calls per minute (a batch call counts once). */
+  embedPerClientPerMinute?: number;
+  embedGlobalPerMinute?: number;
+  /** embed budget: texts per minute (a batch of n counts n), the real quota driver upstream. */
+  embedTextsPerClientPerMinute?: number;
+  embedTextsGlobalPerMinute?: number;
+  /** /embed-batch shape caps. */
+  embedBatchMaxTexts?: number;
+  embedTextMaxChars?: number;
   allowedOrigins?: string[];
 }
 
 class FixedWindowLimiter {
   private hits = new Map<string, { n: number; reset: number }>();
   constructor(private limit: number, private windowMs = 60_000) {}
-  take(key: string, now = Date.now()): boolean {
+  private sweep(now: number) {
     if (this.hits.size > 5000) {
       for (const [k, v] of this.hits) if (v.reset <= now) this.hits.delete(k);
       if (this.hits.size > 5000) this.hits.clear();
     }
+  }
+  /** Non-consuming check: would `cost` units fit right now? */
+  has(key: string, cost = 1, now = Date.now()): boolean {
     const cur = this.hits.get(key);
-    if (!cur || cur.reset <= now) { this.hits.set(key, { n: 1, reset: now + this.windowMs }); return true; }
-    if (cur.n >= this.limit) return false;
-    cur.n++;
+    if (!cur || cur.reset <= now) return cost <= this.limit;
+    return cur.n + cost <= this.limit;
+  }
+  take(key: string, cost = 1, now = Date.now()): boolean {
+    this.sweep(now);
+    const cur = this.hits.get(key);
+    if (!cur || cur.reset <= now) {
+      if (cost > this.limit) return false;
+      this.hits.set(key, { n: cost, reset: now + this.windowMs });
+      return true;
+    }
+    if (cur.n + cost > this.limit) return false;
+    cur.n += cost;
     return true;
+  }
+  /** Seconds until the current window for `key` resets (>= 1). */
+  retryAfterSeconds(key: string, now = Date.now()): number {
+    const cur = this.hits.get(key);
+    return cur && cur.reset > now ? Math.max(1, Math.ceil((cur.reset - now) / 1000)) : 1;
   }
 }
 
@@ -99,6 +134,43 @@ export function validateGenerate(body: any, embed: boolean): { error?: string; v
   return { value: { model, contents, config: clean } };
 }
 
+/**
+ * Validate an /embed-batch body: { model, texts: string[], config? }.
+ * Every text becomes its own Content so the result has exactly one vector per text
+ * (gemini-embedding-2* aggregates a flat list of parts into ONE vector, which would silently
+ * give every text the same embedding).
+ */
+export function validateEmbedBatch(
+  body: any,
+  caps: { maxTexts?: number; maxTextChars?: number } = {},
+): { error?: string; value?: { model: string; texts: string[]; config: Record<string, unknown> } } {
+  const maxTexts = caps.maxTexts ?? DEFAULT_EMBED_BATCH_MAX_TEXTS;
+  const maxChars = caps.maxTextChars ?? DEFAULT_EMBED_TEXT_MAX_CHARS;
+  if (!isPlainObject(body)) return { error: "Body must be a JSON object." };
+  const { model, texts, config } = body;
+  if (typeof model !== "string" || !MODEL_PATTERN.test(model)) return { error: "Unsupported model." };
+  if (!Array.isArray(texts)) return { error: "texts must be an array of strings." };
+  if (texts.length === 0) return { error: "texts is empty." };
+  if (texts.length > maxTexts) return { error: `texts has too many items (max ${maxTexts}).` };
+  let total = 0;
+  for (const t of texts) {
+    if (typeof t !== "string") return { error: "texts must be an array of strings." };
+    if (t.trim() === "") return { error: "texts must not contain empty strings." };
+    if (t.length > maxChars) return { error: `A text is too long (max ${maxChars} characters).` };
+    total += t.length;
+  }
+  if (total > MAX_CONTENTS_CHARS) return { error: "texts too large." };
+  const clean: Record<string, unknown> = {};
+  if (config !== undefined) {
+    if (!isPlainObject(config)) return { error: "config must be an object." };
+    for (const k of Object.keys(config)) {
+      if (!EMBED_CONFIG_KEYS.has(k)) return { error: `config.${k} is not permitted.` };
+      clean[k] = config[k];
+    }
+  }
+  return { value: { model, texts: texts as string[], config: clean } };
+}
+
 /** Map an upstream SDK error to a safe client-facing error. Never forwards raw upstream text. */
 export function sanitizeUpstreamError(err: any): { code: number; status: string; message: string } {
   const raw = Number(err?.status ?? err?.code ?? err?.error?.code);
@@ -116,6 +188,15 @@ export function createGeminiProxyRouter(opts: ProxyOptions = {}): Router {
   const router = Router();
   const perClient = new FixedWindowLimiter(opts.perClientPerMinute ?? envInt("GEMINI_PROXY_PER_CLIENT_PER_MIN", 60));
   const global = new FixedWindowLimiter(opts.globalPerMinute ?? envInt("GEMINI_PROXY_GLOBAL_PER_MIN", 600));
+  // Embeddings: separate budgets, so a search's embeddings never use up the generate budget (or vice versa).
+  const embedClient = new FixedWindowLimiter(opts.embedPerClientPerMinute ?? envInt("GEMINI_PROXY_EMBED_PER_CLIENT_PER_MIN", 60));
+  const embedGlobal = new FixedWindowLimiter(opts.embedGlobalPerMinute ?? envInt("GEMINI_PROXY_EMBED_GLOBAL_PER_MIN", 600));
+  const embedTextsClient = new FixedWindowLimiter(opts.embedTextsPerClientPerMinute ?? envInt("GEMINI_PROXY_EMBED_TEXTS_PER_CLIENT_PER_MIN", 3000));
+  const embedTextsGlobal = new FixedWindowLimiter(opts.embedTextsGlobalPerMinute ?? envInt("GEMINI_PROXY_EMBED_TEXTS_GLOBAL_PER_MIN", 20000));
+  const batchCaps = {
+    maxTexts: opts.embedBatchMaxTexts ?? envInt("GEMINI_PROXY_EMBED_BATCH_MAX_TEXTS", DEFAULT_EMBED_BATCH_MAX_TEXTS),
+    maxTextChars: opts.embedTextMaxChars ?? envInt("GEMINI_PROXY_EMBED_TEXT_MAX_CHARS", DEFAULT_EMBED_TEXT_MAX_CHARS),
+  };
   const extraOrigins = new Set(
     (opts.allowedOrigins ?? (process.env.GEMINI_PROXY_ALLOWED_ORIGINS || "").split(","))
       .map(s => s.trim()).filter(Boolean));
@@ -131,6 +212,7 @@ export function createGeminiProxyRouter(opts: ProxyOptions = {}): Router {
       res.setHeader("Vary", "Origin");
       res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
       res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+      res.setHeader("Access-Control-Expose-Headers", "Retry-After");
       if (req.method === "OPTIONS") return res.sendStatus(204);
     }
     next();
@@ -150,14 +232,52 @@ export function createGeminiProxyRouter(opts: ProxyOptions = {}): Router {
       return fail(res, 403, "PERMISSION_DENIED", "Cross-site requests are not permitted.");
     }
     if (!req.is("application/json")) return fail(res, 415, "INVALID_ARGUMENT", "Content-Type must be application/json.");
-    if (!global.take("*") || !perClient.take(clientId(req))) {
-      res.setHeader("Retry-After", "30");
-      return fail(res, 429, "RESOURCE_EXHAUSTED", "Too many requests to the Gemini proxy (429). Please retry shortly.");
+    next();
+  };
+
+  const tooMany = (res: Response, retryAfter: number) => {
+    res.setHeader("Retry-After", String(retryAfter));
+    return fail(res, 429, "RESOURCE_EXHAUSTED", "Too many requests to the Gemini proxy (429). Please retry shortly.");
+  };
+
+  /** Generate budget. */
+  const generateBudget = (req: Request, res: Response, next: NextFunction) => {
+    const id = clientId(req);
+    if (!global.take("*") || !perClient.take(id)) {
+      return tooMany(res, Math.max(perClient.retryAfterSeconds(id), global.retryAfterSeconds("*")));
     }
     next();
   };
 
-  router.use(guard, express.json({ limit: BODY_LIMIT }));
+  /**
+   * Embed budget: one call per HTTP request plus `texts` units against the texts budget.
+   * All limits are checked before anything is consumed, so a rejected request costs nothing.
+   * Runs after body parsing, which is why the cost of a batch is known.
+   */
+  const embedBudget = (req: Request, res: Response, next: NextFunction) => {
+    const id = clientId(req);
+    const b = req.body;
+    const n = Array.isArray(b?.texts) ? Math.min(b.texts.length, 100_000) : 1;
+    if (!(embedGlobal.has("*") && embedClient.has(id) && embedTextsGlobal.has("*", n) && embedTextsClient.has(id, n))) {
+      return tooMany(res, Math.max(
+        embedClient.retryAfterSeconds(id), embedGlobal.retryAfterSeconds("*"),
+        embedTextsClient.retryAfterSeconds(id), embedTextsGlobal.retryAfterSeconds("*")));
+    }
+    embedGlobal.take("*"); embedClient.take(id); embedTextsGlobal.take("*", n); embedTextsClient.take(id, n);
+    next();
+  };
+
+  /** Cheap pre-parse check so a flood is rejected without parsing 4 MB bodies. Consumes nothing. */
+  const embedPreCheck = (req: Request, res: Response, next: NextFunction) => {
+    const id = clientId(req);
+    if (!(embedGlobal.has("*") && embedClient.has(id))) {
+      return tooMany(res, Math.max(embedClient.retryAfterSeconds(id), embedGlobal.retryAfterSeconds("*")));
+    }
+    next();
+  };
+
+  const jsonBody = express.json({ limit: BODY_LIMIT });
+  router.use(guard);
 
   const handle = (embed: boolean) => async (req: Request, res: Response) => {
     const v = validateGenerate(req.body, embed);
@@ -177,8 +297,37 @@ export function createGeminiProxyRouter(opts: ProxyOptions = {}): Router {
     }
   };
 
-  router.post("/generate", handle(false));
-  router.post("/embed", handle(true));
+  /** One vector per text, in order. Each text is its own Content (see validateEmbedBatch). */
+  const handleBatch = async (req: Request, res: Response) => {
+    const v = validateEmbedBatch(req.body, batchCaps);
+    if (v.error) return fail(res, 400, "INVALID_ARGUMENT", v.error);
+    const apiKey = getKey();
+    if (!apiKey) return fail(res, 503, "UNAVAILABLE", "Gemini is not configured on the server (GEMINI_API_KEY is not set).");
+    try {
+      const { model, texts, config } = v.value!;
+      const client = makeClient(apiKey);
+      const out: any = await client.models.embedContent({
+        model,
+        contents: texts.map(text => ({ role: "user", parts: [{ text }] })),
+        config,
+      } as any);
+      const embeddings = Array.isArray(out?.embeddings) ? out.embeddings : [];
+      // A short/aggregated answer must never be paired positionally with the inputs.
+      if (embeddings.length !== texts.length) {
+        console.error(`[gemini-proxy] embed-batch count mismatch: sent ${texts.length}, got ${embeddings.length}`);
+        return fail(res, 502, "UPSTREAM_ERROR", "Gemini returned an unexpected number of embeddings.");
+      }
+      res.json({ embeddings: embeddings.map((e: any) => ({ values: Array.isArray(e?.values) ? e.values : [] })) });
+    } catch (err: any) {
+      const e = sanitizeUpstreamError(err);
+      console.error(`[gemini-proxy] upstream error ${e.code} ${e.status}`);
+      fail(res, e.code, e.status, e.message);
+    }
+  };
+
+  router.post("/generate", generateBudget, jsonBody, handle(false));
+  router.post("/embed", embedPreCheck, jsonBody, embedBudget, handle(true));
+  router.post("/embed-batch", embedPreCheck, jsonBody, embedBudget, handleBatch);
 
   // Malformed JSON / oversize body / anything else: JSON error, no stack.
   router.use((err: any, _req: Request, res: Response, _next: NextFunction) => {

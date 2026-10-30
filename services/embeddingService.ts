@@ -75,71 +75,71 @@ export const computeScores = async (papers: ResearchPaper[], queryEmbedding: num
         return papers.map(p => ({ ...p, semanticScore: 0 }));
     }
 
-    const scoredPapers: ResearchPaper[] = [];
-    const BATCH_SIZE = 5; // Process 5 papers at a time to keep response times snappy
+    let scoredPapers: ResearchPaper[] = [];
 
     try {
-        for (let i = 0; i < papers.length; i += BATCH_SIZE) {
-            const paperBatch = papers.slice(i, i + BATCH_SIZE);
-            
-            // 1. Prepare all chunks for this batch
-            const batchChunks: { text: string; paperId: string; batchLocalIndex: number }[] = [];
-            
-            paperBatch.forEach((paper, batchIdx) => {
-                const text = (paper.abstract && paper.abstract.length > 50 && !paper.abstract.includes("No abstract")) 
-                  ? paper.abstract 
-                  : `${paper.title}. ${paper.abstract || ""}`; 
-                
-                const passages = chunkTextIntoPassages(text);
-                passages.forEach(p => batchChunks.push({ text: p, paperId: paper.id, batchLocalIndex: batchIdx }));
-            });
+        // 1. Prepare every passage of every paper up front, so the whole result set is embedded in
+        //    as few proxy calls as possible (batchEmbedText chunks, de-duplicates and caches).
+        const allChunks: { text: string; paperIdx: number }[] = [];
+        papers.forEach((paper, paperIdx) => {
+            const text = (paper.abstract && paper.abstract.length > 50 && !paper.abstract.includes("No abstract"))
+              ? paper.abstract
+              : `${paper.title}. ${paper.abstract || ""}`;
+            chunkTextIntoPassages(text).forEach(p => allChunks.push({ text: p, paperIdx }));
+        });
 
-            // 2. Batch Embed all passages from all papers in this batch
-            const passageEmbeddings = await batchEmbedText(batchChunks.map(c => c.text));
+        // 2. Embed all passages (one call per ~100 texts; never throws, failures come back as []).
+        const passageEmbeddings = await batchEmbedText(allChunks.map(c => c.text));
 
-            // 3. Score passages using Cosine Similarity
-            const scoredPassages = batchChunks.map((chunk, idx) => {
-                const embedding = passageEmbeddings[idx];
-                const similarity = (embedding && embedding.length > 0) 
-                    ? cosineSimilarity(queryEmbedding, embedding) 
-                    : 0;
-                return { ...chunk, score: similarity };
-            });
-
-            // 4. Aggregate passage scores back to their respective papers
-            const processedPapers = paperBatch.map((paper, batchIdx) => {
-                const paperPassages = scoredPassages.filter(p => p.batchLocalIndex === batchIdx);
-                // Sort by similarity descending
-                paperPassages.sort((a, b) => b.score - a.score);
-                
-                const bestPassage = paperPassages[0];
-                const similarity = bestPassage ? bestPassage.score : 0;
-
-                // Normalization: 
-                // In gemini-embedding-2-preview, typical related hits are between 0.6 and 0.85
-                const minSim = 0.45; // Threshold for "0%"
-                const maxSim = 0.88; // Threshold for "100%"
-                const score = Math.max(0, Math.min(100, Math.round(((similarity - minSim) / (maxSim - minSim)) * 100)));
-
-                // Store top matching snippets for UI display
-                const highlights: SemanticSpan[] = paperPassages
-                    .filter(p => p.score > minSim) // Only keep semi-relevant ones
-                    .slice(0, 2)
-                    .map(p => ({
-                        text: p.text,
-                        score: Math.round(((p.score - minSim) / (maxSim - minSim)) * 100)
-                    }));
-
-                return {
-                    ...paper,
-                    semanticScore: score / 100, // Normalize to 0-1 for reranker
-                    rawSemanticSimilarity: score,
-                    semanticHighlights: highlights
-                };
-            });
-            
-            scoredPapers.push(...processedPapers);
+        // Graceful degradation: if no passage could be embedded (rate limit, outage), rank lexically
+        // instead of scoring everything 0. The embedder has already logged a single warning.
+        if (!passageEmbeddings.some(e => e && e.length > 0)) {
+            const fallbackQuery = queryFallback ?? '';
+            const lexicalScored = computeLexicalScores(papers, fallbackQuery);
+            return queryFallback ? await rerankResults(lexicalScored, queryFallback) : lexicalScored;
         }
+
+        // 3. Score passages using Cosine Similarity, grouped per paper
+        const passagesByPaper: { text: string; score: number }[][] = papers.map(() => []);
+        allChunks.forEach((chunk, idx) => {
+            const embedding = passageEmbeddings[idx];
+            const similarity = (embedding && embedding.length > 0)
+                ? cosineSimilarity(queryEmbedding, embedding)
+                : 0;
+            passagesByPaper[chunk.paperIdx].push({ text: chunk.text, score: similarity });
+        });
+
+        // 4. Aggregate passage scores back to their respective papers
+        scoredPapers = papers.map((paper, paperIdx) => {
+            const paperPassages = passagesByPaper[paperIdx];
+            // Sort by similarity descending
+            paperPassages.sort((a, b) => b.score - a.score);
+
+            const bestPassage = paperPassages[0];
+            const similarity = bestPassage ? bestPassage.score : 0;
+
+            // Normalization:
+            // In gemini-embedding-2-preview, typical related hits are between 0.6 and 0.85
+            const minSim = 0.45; // Threshold for "0%"
+            const maxSim = 0.88; // Threshold for "100%"
+            const score = Math.max(0, Math.min(100, Math.round(((similarity - minSim) / (maxSim - minSim)) * 100)));
+
+            // Store top matching snippets for UI display
+            const highlights: SemanticSpan[] = paperPassages
+                .filter(p => p.score > minSim) // Only keep semi-relevant ones
+                .slice(0, 2)
+                .map(p => ({
+                    text: p.text,
+                    score: Math.round(((p.score - minSim) / (maxSim - minSim)) * 100)
+                }));
+
+            return {
+                ...paper,
+                semanticScore: score / 100, // Normalize to 0-1 for reranker
+                rawSemanticSimilarity: score,
+                semanticHighlights: highlights
+            };
+        });
 
         // 5. Local Reranking Step
         if (queryFallback) {

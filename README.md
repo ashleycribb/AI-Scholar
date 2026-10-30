@@ -23,11 +23,19 @@ View your app in AI Studio: https://ai.studio/apps/drive/11DnbZoGbLy6qtxVCFwBXCN
 
 `GEMINI_API_KEY` is read **only by the Node server** (`server.ts`). The browser bundle and the
 Chrome extension never contain it: the client calls `POST /api/gemini/generate` and
-`POST /api/gemini/embed` (`server/geminiProxy.ts`), which validate the request, rate-limit it,
-and call Gemini with the server-side key. In AI Studio, keep the key in the app's Secrets/env.
+`POST /api/gemini/embed` / `POST /api/gemini/embed-batch` (`server/geminiProxy.ts`), which validate the
+request, rate-limit it, and call Gemini with the server-side key. In AI Studio, keep the key in the app's Secrets/env.
 
-Optional server env: `GEMINI_PROXY_PER_CLIENT_PER_MIN` (default 60), `GEMINI_PROXY_GLOBAL_PER_MIN`
-(default 600), `GEMINI_PROXY_ALLOWED_ORIGINS` (comma-separated extra origins, e.g.
+Embeddings are batched: the app sends up to 100 texts per `/embed-batch` call (`{model, texts: string[]}`
+-> one vector per text, in order), caches vectors by text hash (memory + IndexedDB) and, on a 429, honors
+`Retry-After`, retries a bounded number of times and then falls back to keyword ranking. Embeddings have their
+own budgets, separate from chat/generate: `GEMINI_PROXY_EMBED_PER_CLIENT_PER_MIN` (calls, default 60),
+`GEMINI_PROXY_EMBED_GLOBAL_PER_MIN` (default 600), `GEMINI_PROXY_EMBED_TEXTS_PER_CLIENT_PER_MIN` (texts, default 3000),
+`GEMINI_PROXY_EMBED_TEXTS_GLOBAL_PER_MIN` (default 20000), plus the shape caps `GEMINI_PROXY_EMBED_BATCH_MAX_TEXTS`
+(default 100) and `GEMINI_PROXY_EMBED_TEXT_MAX_CHARS` (default 20000).
+
+Optional server env: `GEMINI_PROXY_PER_CLIENT_PER_MIN` (default 60) and `GEMINI_PROXY_GLOBAL_PER_MIN`
+(default 600) for generate, `GEMINI_PROXY_ALLOWED_ORIGINS` (comma-separated extra origins, e.g.
 `chrome-extension://<id>`; the extension also needs `chrome.storage.local.set({geminiProxyUrl: "https://<app-url>"})`).
 
 Tests: `npm test` (runs `bun test`; install [Bun](https://bun.sh) for the test runner only).

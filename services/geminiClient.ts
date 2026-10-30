@@ -16,15 +16,27 @@ export interface GeminiClientOptions {
   fetchImpl?: typeof fetch;
 }
 
-class GeminiHttpError extends Error {
+export class GeminiHttpError extends Error {
   status: number;
   error: { code: number; status: string; message: string };
-  constructor(code: number, status: string, message: string) {
+  /** From the Retry-After response header, in ms (undefined when absent or unparseable). */
+  retryAfterMs?: number;
+  constructor(code: number, status: string, message: string, retryAfterMs?: number) {
     super(message);
     this.name = "GeminiHttpError";
     this.status = code;
     this.error = { code, status, message };
+    if (retryAfterMs !== undefined) this.retryAfterMs = retryAfterMs;
   }
+}
+
+/** Retry-After is delta-seconds or an HTTP date; returns ms or undefined. */
+export function parseRetryAfter(value: string | null | undefined, now = Date.now()): number | undefined {
+  if (!value) return undefined;
+  const v = value.trim();
+  if (/^\d+$/.test(v)) return Math.min(parseInt(v, 10), 86_400) * 1000;
+  const t = Date.parse(v);
+  return Number.isFinite(t) ? Math.max(0, Math.min(t - now, 86_400_000)) : undefined;
 }
 
 /** Re-attach the `text` / `functionCalls` accessors the SDK adds, which JSON transport drops. */
@@ -51,7 +63,7 @@ export function createGeminiClient(options: GeminiClientOptions = {}) {
     return b.replace(/\/+$/, "");
   };
 
-  async function post(path: "generate" | "embed", body: unknown): Promise<any> {
+  async function post(path: "generate" | "embed" | "embed-batch", body: unknown): Promise<any> {
     const base = await resolveBase();
     let res: Response;
     try {
@@ -66,7 +78,9 @@ export function createGeminiClient(options: GeminiClientOptions = {}) {
     const data = await res.json().catch(() => null);
     if (!res.ok) {
       const err = data?.error;
-      throw new GeminiHttpError(err?.code ?? res.status, err?.status ?? "UNKNOWN", err?.message ?? `Gemini proxy error (${res.status})`);
+      throw new GeminiHttpError(
+        err?.code ?? res.status, err?.status ?? "UNKNOWN", err?.message ?? `Gemini proxy error (${res.status})`,
+        parseRetryAfter(res.headers?.get?.("Retry-After")));
     }
     return data;
   }
@@ -76,6 +90,9 @@ export function createGeminiClient(options: GeminiClientOptions = {}) {
       hydrateResponse(await post("generate", params)),
     embedContent: async (params: { model: string; contents: any; config?: Record<string, any> }): Promise<any> =>
       post("embed", params),
+    /** One vector per text, in order (server enforces the batch caps). Returns `{ embeddings: [{ values }] }`. */
+    embedBatch: async (params: { model: string; texts: string[]; config?: Record<string, any> }): Promise<{ embeddings: { values: number[] }[] }> =>
+      post("embed-batch", params),
   };
 
   const chats = {
