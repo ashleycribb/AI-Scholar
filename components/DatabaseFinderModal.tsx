@@ -15,6 +15,7 @@ import {
   addCustomDiscoveredSource,
   generateLibraryProspectus 
 } from '../services/sourceDiscoveryService';
+import { friendlyApiError } from '../services/apiErrors';
 
 interface DatabaseFinderModalProps {
   isOpen: boolean;
@@ -318,7 +319,7 @@ export const DatabaseFinderModal: React.FC<DatabaseFinderModalProps> = ({
       );
       await loadRegistry();
     } catch (err: any) {
-      setNotificationMsg(`Connection error: ${err.message}`);
+      setNotificationMsg(`Connection error: ${friendlyApiError(err)}`);
     } finally {
       setTestingSourceId(null);
     }
@@ -332,7 +333,7 @@ export const DatabaseFinderModal: React.FC<DatabaseFinderModalProps> = ({
       setNotificationMsg(`Proposal generated for ${recipientEmail}. Email preview ready.`);
       await loadRegistry();
     } catch (err: any) {
-      setNotificationMsg(`Error proposing source: ${err.message}`);
+      setNotificationMsg(`Error proposing source: ${friendlyApiError(err)}`);
     } finally {
       setProposingSourceId(null);
     }
@@ -355,7 +356,7 @@ export const DatabaseFinderModal: React.FC<DatabaseFinderModalProps> = ({
       });
       await loadRegistry();
     } catch (err: any) {
-      setNotificationMsg(`Approval failed: ${err.message}`);
+      setNotificationMsg(`Approval failed: ${friendlyApiError(err)}`);
     }
   };
 
@@ -365,7 +366,7 @@ export const DatabaseFinderModal: React.FC<DatabaseFinderModalProps> = ({
       setNotificationMsg(`Source dismissed: ${source.name}`);
       await loadRegistry();
     } catch (err: any) {
-      setNotificationMsg(`Rejection failed: ${err.message}`);
+      setNotificationMsg(`Rejection failed: ${friendlyApiError(err)}`);
     }
   };
 
@@ -390,7 +391,7 @@ export const DatabaseFinderModal: React.FC<DatabaseFinderModalProps> = ({
       setNotificationMsg('New open source added to discovery queue for verification!');
       await loadRegistry();
     } catch (err: any) {
-      setNotificationMsg(`Error creating source: ${err.message}`);
+      setNotificationMsg(`Error creating source: ${friendlyApiError(err)}`);
     }
   };
 

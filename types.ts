@@ -12,8 +12,14 @@ export interface UserSession {
   sessionId: string;      // Shared interactionSessionId for xAPI telemetry
   actor_uuid?: string;    // Dual UUIDv7: Human Student Actor
   agent_uuid?: string;    // Dual UUIDv7: AI Assistant Instance
-  inviteCode?: string;    // Associated study invite token
+  inviteCode?: string;    // Associated study invite token (legacy; the invite link only captures a study id now)
   createdAt: string;
+  /** Address the server signed this session in with. In memory only; never stored in the browser or put in telemetry. */
+  email?: string;
+  /** Role exactly as the server reported it (researcher, committee, participant, admin). `role` is derived from it. */
+  serverRole?: 'participant' | 'researcher' | 'committee' | 'admin';
+  /** When the server session expires (ms since epoch). */
+  expiresAt?: number;
 
   // Backwards-compatible aliases
   id?: string;
@@ -540,6 +546,8 @@ export interface McpStatus {
   serverUrl: string;
   version?: string;
   capabilities: string[];
+  /** True when the bridge was not attempted because there is no signed-in researcher session. */
+  authRequired?: boolean;
 }
 
 export interface StudyTask {

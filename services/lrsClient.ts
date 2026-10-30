@@ -13,7 +13,7 @@
  * - Exponential backoff for network and 5xx errors
  */
 
-import { csrfHeaders, isSameOrigin, isUnsafeMethod } from './csrf';
+import { csrfHeaders, getCsrfToken, isSameOrigin, isUnsafeMethod } from './csrf';
 import { getLrsCredentials, type LrsCredentials, normalizeLrsEndpoint, hasConfiguredLrsCredentials } from './lrsCredentialsService';
 
 export class LrsError extends Error {
@@ -77,6 +77,19 @@ function buildHeaders(creds: LrsCredentials, extraHeaders: Record<string, string
 }
 
 /**
+ * Can we talk to this LRS at all right now?
+ *  - A cross-origin LRS (the hosted one) needs configured credentials: a service token sent as the Basic password.
+ *  - This app's own server (same origin) accepts the signed-in browser session instead, so no stored credentials are
+ *    needed, but there has to be a session. Without one the call is skipped quietly (statements stay queued) rather
+ *    than sent just to be refused with a 401.
+ */
+export async function lrsAuthAvailable(creds: LrsCredentials & { authHeader?: string }): Promise<boolean> {
+  if (hasConfiguredLrsCredentials(creds)) return true;
+  if (!isSameOrigin(normalizeLrsEndpoint(creds.endpoint))) return false;
+  return (await getCsrfToken()) !== null;
+}
+
+/**
  * Helper to parse server error text or JSON response safely
  */
 async function parseErrorResponse(res: Response): Promise<string> {
@@ -108,7 +121,9 @@ async function fetchWithRetry(
 
   // A same-origin unsafe request (PUT state, POST statements, DELETE by actor) to this app's own server
   // needs the CSRF token of the signed-in session. Cross-origin LRS hosts authenticate with Basic credentials instead.
-  if (isUnsafeMethod(options.method) && isSameOrigin(url)) {
+  const needsCsrf = isUnsafeMethod(options.method) && isSameOrigin(url);
+  let csrfRetried = false;
+  if (needsCsrf) {
     options = { ...options, headers: { ...(options.headers as Record<string, string>), ...(await csrfHeaders()) } };
   }
 
@@ -120,6 +135,16 @@ async function fetchWithRetry(
       if (!res.ok) {
         const errorMsg = await parseErrorResponse(res);
         const lrsError = new LrsError(res.status, errorMsg);
+
+        // A stale CSRF token (session renewed in another tab): fetch the current one and try once more.
+        if (needsCsrf && !csrfRetried && res.status === 403 && /csrf_check_failed/.test(errorMsg)) {
+          csrfRetried = true;
+          const fresh = await getCsrfToken(true);
+          if (fresh) {
+            options = { ...options, headers: { ...(options.headers as Record<string, string>), 'X-CSRF-Token': fresh } };
+            continue;
+          }
+        }
 
         // If non-retryable (400, 401, 403, 409), fail fast
         if (!lrsError.isRetryable || attempt >= maxRetries) {
@@ -217,8 +242,8 @@ export async function postStatements(
   if (!statements || statements.length === 0) return [];
 
   const creds = customCreds || await getLrsCredentials();
-  if (!hasConfiguredLrsCredentials(creds)) {
-    // Skip LRS sync quietly when no credentials are configured
+  if (!(await lrsAuthAvailable(creds))) {
+    // Skip LRS sync quietly when there is neither a configured service token nor (for this app's own server) a signed-in session
     return [];
   }
   const url = `${normalizeLrsEndpoint(creds.endpoint)}statements`;
@@ -270,8 +295,8 @@ export async function getStatements(
   customCreds?: LrsCredentials
 ): Promise<any[]> {
   const creds = customCreds || await getLrsCredentials();
-  if (!hasConfiguredLrsCredentials(creds)) {
-    // Skip LRS sync quietly when no credentials are configured
+  if (!(await lrsAuthAvailable(creds))) {
+    // Skip LRS sync quietly when there is neither a configured service token nor (for this app's own server) a signed-in session
     return [];
   }
   const baseEndpoint = normalizeLrsEndpoint(creds.endpoint);
@@ -336,8 +361,8 @@ export async function getState(
   customCreds?: LrsCredentials
 ): Promise<{ data: any; etag: string | null } | null> {
   const creds = customCreds || await getLrsCredentials();
-  if (!hasConfiguredLrsCredentials(creds)) {
-    // Skip LRS sync quietly when no credentials are configured
+  if (!(await lrsAuthAvailable(creds))) {
+    // Skip LRS sync quietly when there is neither a configured service token nor (for this app's own server) a signed-in session
     return null;
   }
   const baseEndpoint = normalizeLrsEndpoint(creds.endpoint);
@@ -392,8 +417,8 @@ export async function putState(
   customCreds?: LrsCredentials
 ): Promise<{ etag: string | null }> {
   const creds = customCreds || await getLrsCredentials();
-  if (!hasConfiguredLrsCredentials(creds)) {
-    // Skip LRS sync quietly when no credentials are configured
+  if (!(await lrsAuthAvailable(creds))) {
+    // Skip LRS sync quietly when there is neither a configured service token nor (for this app's own server) a signed-in session
     return { etag: null };
   }
   const baseEndpoint = normalizeLrsEndpoint(creds.endpoint);
@@ -431,16 +456,24 @@ export async function putState(
   }
 }
 
+export type DeleteResult = { success: boolean; deletedCount?: number };
+
 /**
- * Calls the server's delete-by-actor endpoint for an actor / device ID.
+ * Calls the server's delete-by-actor endpoint.
+ *
+ * On this app's own server the target is decided by the session, not by the caller: a signed-in participant's request
+ * names no actor and the server deletes the records tied to their sign-in address (naming any other actor is refused
+ * with 403). Researchers and admins must name the exact actor to delete. Pass `actorId = null` for the participant case.
+ * Against a cross-origin LRS the actor is sent as before, authenticated by the configured credentials.
  */
 export async function deleteStatementsByActor(
-  actorId: string,
+  actorId: string | null,
   customCreds?: LrsCredentials
-): Promise<{ success: boolean; deletedCount?: number }> {
+): Promise<DeleteResult> {
   const creds = customCreds || await getLrsCredentials();
   const baseEndpoint = normalizeLrsEndpoint(creds.endpoint);
-  const url = `${baseEndpoint}statements/by-actor?actor=${encodeURIComponent(actorId)}`;
+  const actorQuery = actorId ? `?actor=${encodeURIComponent(actorId)}` : '';
+  const url = `${baseEndpoint}statements/by-actor${actorQuery}`;
   const headers = buildHeaders(creds);
 
   try {
@@ -450,14 +483,16 @@ export async function deleteStatementsByActor(
     });
     const data = await res.json().catch(() => ({ success: true }));
     return { success: true, deletedCount: data.deletedCount };
-  } catch {
+  } catch (e1: any) {
+    // 401 / 403 are decisions, not transport problems: the POST form would be refused the same way.
+    if (e1 instanceof LrsError && (e1.status === 401 || e1.status === 403)) throw e1;
     // Fallback: try POST /statements/delete-by-actor
     try {
       const postUrl = `${baseEndpoint}statements/delete-by-actor`;
       const res = await fetchWithRetry(postUrl, {
         method: 'POST',
         headers,
-        body: JSON.stringify({ actor: actorId })
+        body: JSON.stringify(actorId ? { actor: actorId } : {})
       });
       const data = await res.json().catch(() => ({ success: true }));
       return { success: true, deletedCount: data.deletedCount };

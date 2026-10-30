@@ -117,6 +117,12 @@ export const LrsTelemetryModal: React.FC<LrsTelemetryModalProps> = ({
           </div>
         </div>
 
+        {!user && (
+          <div role="status" className="bg-amber-50 border-b border-amber-200/80 px-6 py-2.5 text-xs text-amber-900 font-medium">
+            You are not signed in, so this shows only what this browser tab has recorded. Sign in to include the server's records.
+          </div>
+        )}
+
         {/* Access Role Notice Banner */}
         {!isResearcher && (
           <div className="bg-emerald-50 border-b border-emerald-200/80 px-6 py-2.5 flex items-center justify-between text-xs text-emerald-900 font-medium">

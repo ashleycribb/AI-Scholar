@@ -216,12 +216,36 @@ export const recordAgentStatement = async (
   return statement;
 };
 
+/** Server rows first, then this tab's own statements the server has not stored (it only acknowledges writes). */
+export function mergeById(server: xAPIStatement[], local: xAPIStatement[]): xAPIStatement[] {
+  const seen = new Set<string>();
+  const out: xAPIStatement[] = [];
+  for (const st of [...server, ...local]) {
+    const id = st?.id;
+    if (id) { if (seen.has(id)) continue; seen.add(id); }
+    out.push(st);
+  }
+  return out;
+}
+
+function ownLocal(all: xAPIStatement[], userRole?: string, userName?: string): xAPIStatement[] {
+  if (userRole === 'researcher') return all;
+  if (!userName) return [];
+  const n = userName.toLowerCase();
+  return all.filter(s => s.actor.name?.toLowerCase() === n || s.actor.account?.name?.toLowerCase() === n);
+}
+
+function ownLocalAgent(sessionUuid?: string, userRole?: string): xAPIStatement[] {
+  if (sessionUuid) return localDuckDbLrsStatements.filter(s => s.context?.sessionUuid === sessionUuid);
+  return userRole === 'researcher' ? localDuckDbLrsStatements : [];
+}
+
 /**
  * Fetch LRS Status
  */
 export const fetchLrsStatus = async (): Promise<LrsSystemStatus> => {
   try {
-    const res = await fetch('/api/lrs/status');
+    const res = await fetch('/api/lrs/status', { credentials: 'same-origin' });
     if (res.ok) {
       return await res.json();
     }
@@ -260,10 +284,10 @@ export const fetchLrsStatus = async (): Promise<LrsSystemStatus> => {
 export const fetchUserSqlLrsStatements = async (userRole?: string, userName?: string): Promise<xAPIStatement[]> => {
   try {
     // The server decides what this caller may see from their signed-in session; role/userName are not sent.
-    const res = await fetch('/api/lrs/sql-lrs/statements');
+    const res = await fetch('/api/lrs/sql-lrs/statements', { credentials: 'same-origin' });
     if (res.ok) {
       const data = await res.json();
-      if (Array.isArray(data.statements)) return data.statements;
+      if (Array.isArray(data.statements)) return mergeById(data.statements, ownLocal(localSqlLrsStatements, userRole, userName));
     }
   } catch (e) {
     console.warn('[Yet SQL LRS] Fetching local fallback:', e);
@@ -288,10 +312,10 @@ export const fetchAgentDuckDbStatements = async (sessionUuid?: string, userRole?
     if (sessionUuid) params.append('sessionUuid', sessionUuid);
     const queryString = params.toString() ? `?${params.toString()}` : '';
 
-    const res = await fetch(`/api/lrs/duckdb-lrs/statements${queryString}`);
+    const res = await fetch(`/api/lrs/duckdb-lrs/statements${queryString}`, { credentials: 'same-origin' });
     if (res.ok) {
       const data = await res.json();
-      if (Array.isArray(data.statements)) return data.statements;
+      if (Array.isArray(data.statements)) return mergeById(data.statements, ownLocalAgent(sessionUuid, userRole));
     }
   } catch (e) {
     console.warn('[DuckDB Vertical LRS] Fetching local fallback:', e);

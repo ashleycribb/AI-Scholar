@@ -113,6 +113,9 @@ export function createAuth(opts: AuthOptions = {}): Auth {
   router.get("/magic-link/verify", (req: Request, res: Response) => {
     if (problems.length) return unavailable(res);
     const token = typeof req.query.token === "string" ? req.query.token : "";
+    // Not "no-referrer": with that policy browsers send `Origin: null` on this page's form POST, which the origin
+    // check (rightly) refuses, so nobody could finish signing in. "same-origin" sends the real Origin to us only.
+    res.setHeader("Referrer-Policy", "same-origin");
     res.setHeader("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'");
     res.setHeader("X-Frame-Options", "DENY");
     res.type("html").send(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Sign in to Scholar Explorer</title>

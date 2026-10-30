@@ -1,7 +1,7 @@
 
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
-import { csrfHeaders } from './csrf';
+import { csrfHeaders, getCsrfToken } from './csrf';
 import type { McpStatus, LocalLibraryMetadata, ResearchPaper } from '../types';
 
 const DEFAULT_MCP_URL = '/mcp';
@@ -20,7 +20,13 @@ class McpClientService {
      */
     public async connect(url: string = DEFAULT_MCP_URL): Promise<McpStatus> {
         console.log(`[MCP] Building bridge to ${url}...`);
-        
+
+        // The server's /mcp bridge needs a signed-in researcher session. Without one, do not even try.
+        if (!url.startsWith('http') && (await getCsrfToken()) === null) {
+            this.currentStatus = { isConnected: false, serverUrl: url, capabilities: [], authRequired: true };
+            return this.currentStatus;
+        }
+
         try {
             // Close existing connection if any
             if (this.client) {
@@ -51,6 +57,7 @@ class McpClientService {
             
             this.currentStatus = {
                 isConnected: true,
+                authRequired: false,
                 serverUrl: url,
                 version: "1.0.0",
                 capabilities: [
@@ -62,7 +69,7 @@ class McpClientService {
             console.log("[MCP] Bridge established successfully.");
         } catch (e) {
             console.error("[MCP] Failed to connect to bridge", e);
-            this.currentStatus = { ...this.currentStatus, isConnected: false, serverUrl: url };
+            this.currentStatus = { ...this.currentStatus, isConnected: false, authRequired: false, serverUrl: url };
         }
         
         return this.currentStatus;

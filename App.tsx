@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import type { 
     ResearchPaper, 
     SummaryLength, 
@@ -71,7 +71,7 @@ import {
     trackExplorerSearch, 
     trackExplorerViewSource 
 } from './services/explorerTrackingService';
-import { initializeOutboxSync } from './services/s3aOutboxService';
+import { initializeOutboxSync, flushOutbox } from './services/s3aOutboxService';
 import { 
     getState, 
     putState, 
@@ -88,7 +88,6 @@ import {
     getS3ASessionState, 
     S3A_VERBS, 
     emitStatement,
-    resetDualSession,
     isRecordingActive,
     getConsentState,
     importS3ASnapshotFile,
@@ -600,20 +599,39 @@ const App: React.FC = () => {
   }, []);
 
   // --- AUTH HANDLERS ---
+  // The session lives on the server (magic-link sign-in). `authService` asks it who we are; role and email come only from there.
+  const landSignedIn = useCallback((signedIn: User) => {
+      // Staff land on the dashboard. Participants stay where they are: they opted in to an account, not to a study task list.
+      if (signedIn.role !== 'participant') setAppMode('dashboard');
+      setToastMessage(`Signed in as ${signedIn.email || signedIn.displayName}.`);
+  }, []);
+
   const handleLogin = (loggedInUser: User) => {
+      // Called when the server confirms a session while the sign-in dialog is open (the link was used in another tab).
       setUser(loggedInUser);
-      // Reset S3A dual session with actor_uuid (human student) and agent_uuid (AI assistant instance)
-      resetDualSession({
-          actor_uuid: loggedInUser.actor_uuid,
-          agent_uuid: loggedInUser.agent_uuid,
-          sessionId: loggedInUser.sessionId
-      });
-      if (loggedInUser.role === 'participant') {
-          setAppMode('evaluation');
-      } else {
-          setAppMode('dashboard');
-      }
+      landSignedIn(loggedInUser);
+      authService.consumeSignInRequested();
   };
+
+  useEffect(() => {
+      const unsubscribe = authService.subscribe(next => {
+          setUser(next);
+          if (next) flushOutbox().catch(() => {}); // statements queued while signed out can go now
+      });
+      const stopRefresh = authService.startAutoRefresh();
+      authService.refresh().then(restored => {
+          // Back from the emailed link: greet the person once. Otherwise this is just a restored session.
+          if (restored && authService.consumeSignInRequested()) landSignedIn(restored);
+      });
+      return () => { unsubscribe(); stopRefresh(); };
+  }, [landSignedIn]);
+
+  // A session that ended (expired, signed out elsewhere, removed from the allowlist) must not leave a staff-only screen open.
+  useEffect(() => {
+      const privileged = user?.role === 'pi_researcher' || user?.role === 'committee_member';
+      if (appMode === 'dashboard' && !privileged) setAppMode('search');
+      if (appMode === 'evaluation' && user?.role !== 'participant') setAppMode('search');
+  }, [user, appMode]);
 
   const handleLogout = () => {
       // Emit xAPI logout statement before tearing down session
@@ -623,7 +641,9 @@ const App: React.FC = () => {
           type: 'session-control'
       }, { actor: 'human' }).catch(() => {});
 
-      authService.logout();
+      authService.logout().then(ok => {
+          if (!ok) setToastMessage('Signed out on this device. The server could not be reached to end the session, so it will expire on its own.');
+      });
       setUser(null);
       setAppMode('search');
   };
@@ -2546,7 +2566,7 @@ const App: React.FC = () => {
                 }
             )}
         />
-        <LoginScreen isOpen={showLogin} onClose={() => setShowLogin(false)} onLogin={handleLogin} />
+        <LoginScreen isOpen={showLogin} onClose={() => setShowLogin(false)} onLogin={handleLogin} user={user} onLogout={handleLogout} />
         <ProxySettingsModal isOpen={showProxy} onClose={() => setShowProxy(false)} settings={userSettings} onSave={setUserSettings} />
         <ConnectionsDashboard 
             isOpen={showConnections} 
