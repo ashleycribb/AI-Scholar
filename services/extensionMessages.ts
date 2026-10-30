@@ -39,7 +39,18 @@ export const ResearchPaperSchema = z
         sourceURL: httpUrl.optional().catch(undefined),
         pdfURL: httpUrl.optional().catch(undefined),
     })
-    .passthrough();
+    .passthrough()
+    // Keep unknown extra fields (the extension may send openalex_id, doi, ...), but copy into a
+    // fresh object without prototype-related keys. Depending on the zod version, passthrough can
+    // otherwise assign `__proto__` and silently change the parsed paper's prototype.
+    .transform((paper) => {
+        const clean: Record<string, unknown> = {};
+        for (const key of Object.keys(paper)) {
+            if (key === '__proto__' || key === 'constructor' || key === 'prototype') continue;
+            clean[key] = (paper as Record<string, unknown>)[key];
+        }
+        return clean as typeof paper;
+    });
 
 export const ExtensionMessageSchema = z.discriminatedUnion('type', [
     z.object({
