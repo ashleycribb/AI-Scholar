@@ -18,6 +18,7 @@ import {
   getPackById 
 } from "./marketplaceService.js";
 import { registerCapabilityToolInAgent } from "./agentService.js";
+import { resolveVaultFile, VaultPathError } from "../server/localVerify.js";
 import { recordClaim, linkClaimEvidence, getClaimProvenance, getResearchGraph } from "../server/provenanceDatabase.js";
 
 /**
@@ -369,10 +370,22 @@ export class WorkspaceMcpServer {
         const { mdxPath } = args as { mdxPath: string };
         const pythonScript = path.join(process.cwd(), "local_engine", "nanobots", "logician.py");
         
-        console.log(`[Workspace Server] Initiating Logician verification for "${mdxPath}"...`);
+        // Same confinement as POST /api/local/verify: only .md/.mdx files inside the vault.
+        let safePath: string;
+        try {
+          const vaultDir = path.join(process.cwd(), "local_engine", "vault");
+          safePath = resolveVaultFile(vaultDir, typeof mdxPath === "string" ? mdxPath.replace(/^(\.\/)?(local_engine\/)?vault\//, "") : mdxPath);
+        } catch (e) {
+          if (e instanceof VaultPathError) {
+            return { isError: true, content: [{ type: "text", text: "Invalid mdxPath: must be a .md/.mdx file inside the local vault." }] };
+          }
+          throw e;
+        }
+
+        console.log(`[Workspace Server] Initiating Logician verification for "${path.basename(safePath)}"...`);
 
         return new Promise((resolve) => {
-          const child = spawn("python3", [pythonScript, mdxPath]);
+          const child = spawn("python3", [pythonScript, safePath]);
           let output = "";
           let errorOutput = "";
           
