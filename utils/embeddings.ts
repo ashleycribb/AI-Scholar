@@ -1,9 +1,5 @@
 
-import { GoogleGenAI } from "@google/genai";
-
-const ai = new GoogleGenAI({ 
-  apiKey: process.env.GEMINI_API_KEY
-});
+import { ai } from "../services/geminiClient";
 const EMBEDDING_MODEL = "gemini-embedding-2-preview";
 
 // Persistent Cache using localStorage (simple string-key store)

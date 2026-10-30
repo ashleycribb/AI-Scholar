@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import type { ResearchPaper, ChatMessage } from '../types';
 import { ChatPanel } from './ChatPanel';
-import { GoogleGenAI, Chat } from "@google/genai";
+import type { Chat } from "../services/geminiClient";
 import * as geminiService from '../services/geminiService';
 
 interface PaperChatProps {

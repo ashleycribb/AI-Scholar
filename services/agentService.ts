@@ -1,5 +1,6 @@
 
-import { GoogleGenAI, FunctionDeclaration, Type, Chat } from "@google/genai";
+import { FunctionDeclaration, Type } from "@google/genai";
+import { ai, type Chat } from "./geminiClient";
 import type { ResearchPaper, ModelDefinition, Project, ChatMessage, ConnectedPaper } from '../types';
 import type { CapabilityPack } from '../types/marketplace';
 import * as apiService from './apiService';
@@ -7,11 +8,6 @@ import * as openalexService from './openalexService';
 import * as semanticScholarService from './semanticScholarService';
 import * as crossrefService from './crossrefService';
 import * as unpaywallService from './unpaywallService';
-
-// Fixed: Correct initialization of GoogleGenAI using process.env.API_KEY directly
-const ai = new GoogleGenAI({ 
-  apiKey: process.env.GEMINI_API_KEY,
-});
 
 // --- TRACEABILITY & ONTOLOGY TYPES ---
 

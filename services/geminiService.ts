@@ -1,11 +1,11 @@
 
-import { GoogleGenAI, Type, Chat, GenerateContentResponse } from "@google/genai";
+import { Type, GenerateContentResponse } from "@google/genai";
+import { ai, type Chat } from "./geminiClient";
 import type { ResearchPaper, SummaryLength, SummaryStyle, ModelDefinition, CitationStyle, InnovationResult, SynthesisResult } from "../types";
 import { papersToToonCollection } from "../utils/toon";
 
-export const ai = new GoogleGenAI({ 
-  apiKey: process.env.GEMINI_API_KEY
-});
+// The Gemini client forwards to the server-side proxy; no API key lives in the browser.
+export { ai };
 
 // Helper for exponential backoff with jitter
 const wait = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));

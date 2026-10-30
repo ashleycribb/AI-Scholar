@@ -1,10 +1,7 @@
-import { GoogleGenAI, FunctionDeclaration, Type, Chat } from "@google/genai";
+import { FunctionDeclaration, Type } from "@google/genai";
+import { ai, type Chat } from "./geminiClient";
 import type { ResearchPaper, ModelDefinition, Project, ChatMessage, ConnectedPaper } from '../types';
 import * as apiService from './apiService';
-
-const ai = new GoogleGenAI({ 
-  apiKey: process.env.GEMINI_API_KEY,
-});
 
 // --- AGENT TOOL DEFINITIONS ---
 

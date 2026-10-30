@@ -1,5 +1,6 @@
 
-import { GoogleGenAI, Type, GenerateContentResponse } from "@google/genai";
+import { Type, GenerateContentResponse } from "@google/genai";
+import { ai } from "./geminiClient";
 import type { ModelDefinition, ResearchPaper, DeepResearchStep, DeepResearchReport, UserSettings, DeepResearchReflection } from "../types";
 import * as openalexService from "./openalexService";
 import * as oaiService from "./oaiService";
@@ -15,10 +16,6 @@ import * as coreService from "./coreService";
 import * as dissertationService from "./dissertationService";
 import { createPaperId } from "./extensionService";
 import { papersToToonCollection } from "../utils/toon";
-
-const ai = new GoogleGenAI({ 
-  apiKey: process.env.GEMINI_API_KEY
-});
 
 const wait = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
