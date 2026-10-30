@@ -38,6 +38,30 @@ Optional server env: `GEMINI_PROXY_PER_CLIENT_PER_MIN` (default 60) and `GEMINI_
 (default 600) for generate, `GEMINI_PROXY_ALLOWED_ORIGINS` (comma-separated extra origins, e.g.
 `chrome-extension://<id>`; the extension also needs `chrome.storage.local.set({geminiProxyUrl: "https://<app-url>"})`).
 
+### LLM provider layer (`server/llm/`)
+
+The proxy does not call Gemini directly. It calls an `LLMService`, which talks to providers through one
+contract (`server/llm/types.ts`: `generate`, `embed`, `embedBatch`, normalized `LLMError` kinds such as
+`rate_limited` with `retryAfterMs`, `unavailable`, `timeout`, `bad_request`). The Gemini SDK lives only in
+`server/llm/providers/gemini.ts`. Only the Gemini adapter is registered; a new vendor means one new adapter
+file plus one `register` line in `server/llm/config.ts`. Routes, request/response shapes, caps and rate limits
+are unchanged; responses add an `X-LLM-Provider` header (and `providerId` in the `/embed-batch` body).
+
+Policy: `generate` can fail over to the providers in `LLM_FALLBACK_PROVIDERS`; **embeddings never fail over**
+(vectors from different models are not comparable), so an embedding error goes back to the client, which falls
+back to keyword ranking. Each call has a timeout and a per-provider circuit breaker (opens after consecutive
+5xx/network/timeout failures, then lets one probe through; 429s and bad requests do not open it).
+
+| Env var | Default | Meaning |
+| --- | --- | --- |
+| `LLM_PRIMARY_PROVIDER` | `gemini` | Provider tried first for `generate`. Unknown ids stop the server at startup. |
+| `LLM_FALLBACK_PROVIDERS` | empty | Comma-separated, `generate` only, tried in order. |
+| `LLM_EMBED_PROVIDER` | the primary | Provider for embeddings. Never failed over. |
+| `LLM_GENERATE_TIMEOUT_MS` | `120000` | Per-call timeout for `generate`. |
+| `LLM_EMBED_TIMEOUT_MS` | `30000` | Per-call timeout for embeddings. |
+| `LLM_BREAKER_FAILURES` | `5` | Consecutive failures that open the breaker. |
+| `LLM_BREAKER_OPEN_MS` | `30000` | Time open before one probe call is allowed. |
+
 Tests: `npm test` (runs `bun test`; install [Bun](https://bun.sh) for the test runner only).
 
 ## Signing in (email magic links)
