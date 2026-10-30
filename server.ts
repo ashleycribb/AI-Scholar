@@ -14,6 +14,7 @@ import {
   validateCapabilityPackPayload 
 } from "./services/marketplaceService";
 import { registerCapabilityToolInAgent } from "./services/agentService";
+import { createAuth } from "./server/auth";
 
 import { 
   insertSqlLrsStatement, 
@@ -75,6 +76,14 @@ async function startServer() {
   // Gemini proxy: mounted before the global JSON parser and wildcard CORS below so it
   // enforces its own body limit and same-origin policy. The API key stays server-side.
   app.use("/api/gemini", createGeminiProxyRouter());
+
+  // Email magic-link sign-in and server-side sessions. Mounted before the global JSON
+  // parser and wildcard CORS so it applies its own body limits and stays same-origin only.
+  // Behind a reverse proxy (AI Studio / Cloud Run) set AUTH_TRUST_PROXY=1 so req.ip and the
+  // secure-cookie check use the real client address.
+  const auth = createAuth();
+  if (auth.config.trustProxy !== undefined) app.set("trust proxy", auth.config.trustProxy);
+  app.use("/api/auth", auth.router);
 
   // Middleware
   app.use(express.json());
@@ -409,7 +418,10 @@ async function startServer() {
   });
 
   // --- Bi-Directional Capability Marketplace Sync Endpoints ---
-  app.post("/api/marketplace/capabilities", (req, res) => {
+  // Registering a pack adds a tool to the server's agent, so it needs a signed-in researcher
+  // (or admin) plus CSRF. First route to use the auth middleware; the rest follow in the
+  // route-lockdown PR.
+  app.post("/api/marketplace/capabilities", auth.requireRole("researcher"), (req, res) => {
     try {
       const payload = req.body;
       const author = (req.headers["x-local-lab-author"] as string) || payload.author || "Local Lab Researcher";
