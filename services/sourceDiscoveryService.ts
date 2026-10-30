@@ -5,6 +5,7 @@ import type {
   SourceProposalResult, 
   LibraryMcpProspectusConfig 
 } from '../types';
+import { csrfHeaders } from './csrf';
 
 export interface SourcesRegistryResponse {
   discovered: DiscoveredSource[];
@@ -26,7 +27,7 @@ export const testSourceEndpoint = async (sourceId: string, url?: string): Promis
   bytesRead?: number;
   error?: string;
 }> => {
-  const res = await axios.post('/api/sources/test-endpoint', { sourceId, url });
+  const res = await axios.post('/api/sources/test-endpoint', { sourceId, url }, { headers: await csrfHeaders() });
   return res.data;
 };
 
@@ -34,24 +35,24 @@ export const proposeSourceByEmail = async (
   sourceId: string, 
   recipientEmail?: string
 ): Promise<SourceProposalResult> => {
-  const res = await axios.post('/api/sources/propose', { sourceId, recipientEmail });
+  const res = await axios.post('/api/sources/propose', { sourceId, recipientEmail }, { headers: await csrfHeaders() });
   return res.data;
 };
 
 export const approveSource = async (sourceId: string): Promise<{ success: boolean; source: DiscoveredSource }> => {
-  const res = await axios.post(`/api/sources/approve/${sourceId}`);
+  const res = await axios.post(`/api/sources/approve/${encodeURIComponent(sourceId)}`, undefined, { headers: await csrfHeaders() });
   return res.data;
 };
 
 export const rejectSource = async (sourceId: string): Promise<{ success: boolean; source: DiscoveredSource }> => {
-  const res = await axios.post(`/api/sources/reject/${sourceId}`);
+  const res = await axios.post(`/api/sources/reject/${encodeURIComponent(sourceId)}`, undefined, { headers: await csrfHeaders() });
   return res.data;
 };
 
 export const addCustomDiscoveredSource = async (
   source: Partial<DiscoveredSource>
 ): Promise<{ success: boolean; source: DiscoveredSource }> => {
-  const res = await axios.post('/api/sources/custom', source);
+  const res = await axios.post('/api/sources/custom', source, { headers: await csrfHeaders() });
   return res.data;
 };
 

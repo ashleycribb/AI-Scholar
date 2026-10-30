@@ -1,5 +1,6 @@
 
 import type { ResearchPaper } from '../types';
+import { csrfFetch } from './csrf';
 
 export const getVaultFiles = async (): Promise<string[]> => {
     try {
@@ -14,7 +15,8 @@ export const getVaultFiles = async (): Promise<string[]> => {
 
 export const verifyPaperWithLogician = async (fileName: string): Promise<string> => {
     try {
-        const response = await fetch('/api/local/verify', {
+        // Needs a signed-in researcher session (+ CSRF token); answers 401/403 otherwise.
+        const response = await csrfFetch('/api/local/verify', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ filePath: fileName })
