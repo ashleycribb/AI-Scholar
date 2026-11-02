@@ -1807,6 +1807,7 @@ const App: React.FC = () => {
                   <ResearcherWorkspace
                       papers={workspacePapers}
                       onRemovePaper={handleToggleWorkspacePaper}
+                      onAddPaper={handleToggleWorkspacePaper}
                       onSelectPaper={(paper) => {
                           navigateToPaperDetail(paper, 'queue');
                       }}
