@@ -229,14 +229,11 @@ const App: React.FC = () => {
     };
   }, []);
 
-  // Emit xAPI statement when user views a report/tile/tab
-  useEffect(() => {
-    emitStatement('viewed', {
-      id: `urn:view:${activeNav}`,
-      name: `${activeNav} View`,
-      type: 'ui-view'
-    }, { actor: 'human', tab: activeNav }).catch(() => {});
-  }, [activeNav]);
+  // Pass 1 recording starts when the researcher SELECTS a paper (the inclusion decision);
+  // see the 'saved' statements, tagged pass: 1. Only the skim BEFORE selection (browsing
+  // results, opening a paper page, switching tabs) is not recorded, so there is deliberately
+  // no 'viewed' or 'opened' statement. Always consent-gated.
+  // Guarded by services/pass1NotRecorded.test.ts.
 
   const navigateToPaperDetail = (paper: ResearchPaper, fromNav: NavTab = activeNav) => {
     setSelectedPaper(paper);
@@ -244,13 +241,6 @@ const App: React.FC = () => {
       setPreviousNav(fromNav);
     }
     setActiveNav('detail');
-
-    // Emit single authoritative xAPI statement for paper opened
-    emitStatement('opened', {
-      id: paper.doi ? `https://doi.org/${paper.doi.replace(/^https?:\/\/doi\.org\//, '')}` : (paper.openalex_id || `urn:paper:${paper.id}`),
-      name: paper.title || 'Untitled Research Paper',
-      type: 'academic-paper'
-    }, { actor: 'human', doi: paper.doi, year: paper.year, citations: paper.citations }).catch(() => {});
   };
 
   // --- UI MODAL & TOAST STATE ---
@@ -1054,12 +1044,12 @@ const App: React.FC = () => {
               storageService.syncPaperToCloud(paper);
               setToastMessage(`Added "${paper.title.substring(0, 30)}..." to selection queue.`);
               
-              // Emit xAPI statement for citation/paper saved
+              // Selecting a paper is the pass 1 inclusion decision: this is the recorded pass 1 event (consent-gated).
               emitStatement('saved', {
                   id: paper.doi ? `https://doi.org/${paper.doi.replace(/^https?:\/\/doi\.org\//, '')}` : (paper.openalex_id || `urn:paper:${paper.id}`),
                   name: paper.title || 'Paper',
                   type: 'academic-paper'
-              }, { actor: 'human', doi: paper.doi, year: paper.year, citations: paper.citations }).catch(() => {});
+              }, { actor: 'human', pass: 1, pass_event: 'paper-selected', doi: paper.doi, year: paper.year, citations: paper.citations }).catch(() => {});
 
               recordUserStatement(
                   user?.name || 'Human Researcher',
@@ -1085,12 +1075,12 @@ const App: React.FC = () => {
                   addedCount++;
                   storageService.syncPaperToCloud(p);
 
-                  // Emit xAPI statement for citation/paper saved
+                  // Selecting a paper is the pass 1 inclusion decision: this is the recorded pass 1 event (consent-gated).
                   emitStatement('saved', {
                       id: p.doi ? `https://doi.org/${p.doi.replace(/^https?:\/\/doi\.org\//, '')}` : (p.openalex_id || `urn:paper:${p.id}`),
                       name: p.title || 'Paper',
                       type: 'academic-paper'
-                  }, { actor: 'human', doi: p.doi, year: p.year, citations: p.citations }).catch(() => {});
+                  }, { actor: 'human', pass: 1, pass_event: 'paper-selected', doi: p.doi, year: p.year, citations: p.citations }).catch(() => {});
               }
           });
           return combined;
