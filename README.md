@@ -64,6 +64,14 @@ back to keyword ranking. Each call has a timeout and a per-provider circuit brea
 
 Tests: `npm test` (runs `bun test`; install [Bun](https://bun.sh) for the test runner only).
 
+## What is recorded (three-pass reading)
+
+Recording is off unless the researcher joins a study and agrees.
+
+- **Before selecting a paper (the skim):** not recorded. Browsing results, opening a paper page and switching tabs write no statements.
+- **Selecting a paper marks pass 1.** Selecting is the researcher's inclusion decision. With consent, Explorer records a `saved` statement tagged `pass: 1` (`pass_event: paper-selected`).
+- Later passes (claim approve, edit, reject) are recorded the same way, only with consent.
+
 ## Signing in (email magic links)
 
 The app has one way to sign in: an emailed one-time link. There is no password and no role picker; the
