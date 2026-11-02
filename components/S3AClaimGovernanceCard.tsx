@@ -23,7 +23,6 @@ import type { ResearchPaper } from '../types';
 import { 
   assertAgentAllows, 
   checkRequiresHumanGate, 
-  evaluatePreflight, 
   logHumanAction, 
   logAiAction, 
   downloadS3ASnapshotFile,
@@ -55,9 +54,6 @@ export const S3AClaimGovernanceCard: React.FC<S3AClaimGovernanceCardProps> = ({
   const [verificationResult, setVerificationResult] = useState<{
     aiIndex: number;
     agent: string;
-    confidence: number;
-    preflightPassed: boolean;
-    preflightMessage: string;
     requiresGate: boolean;
     isGateApproved: boolean;
     decision: 'approved' | 'rejected' | 'under_review' | 'pending';
@@ -69,8 +65,10 @@ export const S3AClaimGovernanceCard: React.FC<S3AClaimGovernanceCardProps> = ({
   const [reviewRequested, setReviewRequested] = useState(false);
   const [gateActionStatus, setGateActionStatus] = useState<string | null>(null);
 
-  // Trigger simulated low confidence test toggle
-  const [simulatedConfidence, setSimulatedConfidence] = useState<number>(0.92);
+  // The "AI suggestion" here is the paper's TLDR or the start of its abstract. No model
+  // scores it, so no confidence is shown or invented. 0 is recorded as "not scored".
+  // The researcher judges; the AI only suggests.
+  const UNSCORED = 0;
 
   const isClaimEdited = claimText.trim() !== initialAiClaimText.trim();
 
@@ -97,17 +95,14 @@ export const S3AClaimGovernanceCard: React.FC<S3AClaimGovernanceCardProps> = ({
       // 1. Before any agent acts, call assert_agent_allows. If it throws, block action & show why.
       await assertAgentAllows(agentSlug, S3A_VERBS.APPROVE_CLAIM, ScholarTool.TOOL_EXTRACT_CLAIMS);
 
-      // 2. Preflight evaluation
-      const preflight = await evaluatePreflight(simulatedConfidence);
-
-      // 3. Gate requirement
+      // 2. Gate requirement
       const requiresGate = await checkRequiresHumanGate(agentSlug);
 
-      // 4. Log AI claim check (initial state before final human gate click)
+      // 3. Log the AI suggestion (initial state before final human gate click)
       const { aiIndex } = await logAiAction(
         agentSlug,
         1, // Step type: claim verification
-        simulatedConfidence,
+        UNSCORED,
         null,
         false
       );
@@ -115,9 +110,6 @@ export const S3AClaimGovernanceCard: React.FC<S3AClaimGovernanceCardProps> = ({
       setVerificationResult({
         aiIndex,
         agent: agentSlug,
-        confidence: simulatedConfidence,
-        preflightPassed: preflight.passed,
-        preflightMessage: preflight.message,
         requiresGate,
         isGateApproved: false,
         decision: 'pending',
@@ -255,7 +247,7 @@ export const S3AClaimGovernanceCard: React.FC<S3AClaimGovernanceCardProps> = ({
               <span className="px-1.5 py-0.2 rounded bg-slate-100 text-slate-600 text-[10px] font-mono">WASM Core</span>
             </h4>
             <p className="text-[11px] text-slate-500">
-              Guarded by <code className="text-indigo-600">assert_agent_allows</code>, human clearance gate &amp; epistemic preflight
+              Guarded by <code className="text-indigo-600">assert_agent_allows</code> and a human clearance gate. The AI only suggests; you judge.
             </p>
           </div>
         </div>
@@ -299,34 +291,10 @@ export const S3AClaimGovernanceCard: React.FC<S3AClaimGovernanceCardProps> = ({
         />
       </div>
 
-      {/* Confidence Simulation Controls */}
-      <div className="flex items-center justify-between text-xs bg-slate-50/80 p-2.5 rounded-xl border border-slate-200">
-        <div className="flex items-center gap-2 text-slate-700">
-          <Cpu className="w-3.5 h-3.5 text-indigo-600" />
-          <span className="text-[11px] font-semibold">Test Epistemic Confidence:</span>
-          <span className="font-mono font-bold text-indigo-700">{(simulatedConfidence * 100).toFixed(0)}%</span>
-        </div>
-        <div className="flex items-center gap-1.5">
-          <button
-            type="button"
-            onClick={() => setSimulatedConfidence(0.92)}
-            className={`px-2 py-0.5 rounded text-[10px] font-bold font-mono transition-colors ${
-              simulatedConfidence >= 0.70 ? 'bg-emerald-600 text-white' : 'bg-slate-200 text-slate-600'
-            }`}
-          >
-            High (92% - Passes)
-          </button>
-          <button
-            type="button"
-            onClick={() => setSimulatedConfidence(0.58)}
-            className={`px-2 py-0.5 rounded text-[10px] font-bold font-mono transition-colors ${
-              simulatedConfidence < 0.70 ? 'bg-amber-600 text-white' : 'bg-slate-200 text-slate-600'
-            }`}
-          >
-            Low (58% - Needs Review)
-          </button>
-        </div>
-      </div>
+      <p className="text-[11px] text-slate-500 bg-slate-50/80 p-2.5 rounded-xl border border-slate-200">
+        <Cpu className="w-3.5 h-3.5 text-indigo-600 inline mr-1.5 -mt-0.5" />
+        The suggested claim above is the paper&apos;s TLDR or the start of its abstract. It is not scored by a model, so there is no confidence number. You decide whether to approve, edit or reject it.
+      </p>
 
       {/* Agent Blocked Error Warning if assert_agent_allows throws */}
       {agentBlockedError && (
@@ -352,7 +320,7 @@ export const S3AClaimGovernanceCard: React.FC<S3AClaimGovernanceCardProps> = ({
             ) : (
               <Bot className="w-3.5 h-3.5 text-emerald-400" />
             )}
-            <span>{isVerifying ? 'Asserting Agent & Evaluating Preflight...' : 'Run AI Claim Check (claim-checker)'}</span>
+            <span>{isVerifying ? 'Asserting Agent...' : 'Log AI Suggestion for Your Review'}</span>
           </button>
 
           <button
@@ -389,41 +357,16 @@ export const S3AClaimGovernanceCard: React.FC<S3AClaimGovernanceCardProps> = ({
               <span className="text-xs font-bold text-slate-800">Agent: [{verificationResult.agent}]</span>
             </div>
 
-            {/* Epistemic Preflight Status */}
-            <div>
-              {verificationResult.preflightPassed ? (
-                <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-200 flex items-center gap-1">
-                  <CheckCircle2 className="w-3 h-3 text-emerald-600" />
-                  Preflight Cleared ({(verificationResult.confidence * 100).toFixed(0)}%)
-                </span>
-              ) : (
-                <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-900 border border-amber-300 flex items-center gap-1">
-                  <AlertTriangle className="w-3 h-3 text-amber-600" />
-                  Needs Review (Low Confidence: {(verificationResult.confidence * 100).toFixed(0)}%)
-                </span>
-              )}
-            </div>
+            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-100 text-slate-700 border border-slate-200">
+              Suggestion only, not scored
+            </span>
           </div>
 
-          {/* If preflight failed: show "needs review" instead of answer */}
-          {!verificationResult.preflightPassed ? (
-            <div className="p-3 bg-amber-50 rounded-lg border border-amber-200 text-amber-900 text-xs space-y-1">
-              <span className="font-bold flex items-center gap-1.5">
-                <AlertTriangle className="w-4 h-4 text-amber-600" />
-                Epistemic Guard: Needs Review
-              </span>
-              <p className="text-[11px] text-amber-800">
-                Epistemic confidence is below the mandatory 0.70 threshold ({verificationResult.preflightMessage}). The claim check output cannot be finalized autonomously and is marked as <strong>needs review</strong>.
-              </p>
-            </div>
-          ) : (
-            <div className="p-3 bg-white rounded-lg border border-slate-200 text-xs text-slate-700 leading-relaxed">
-              <p className="font-semibold text-slate-900 mb-1">Claim Verification Finding:</p>
-              <p className="text-[11px] italic">
-                "The target claim demonstrates solid textual alignment with the findings reported in this paper ({paper.year}). Evidence is supported by empirical methodology."
-              </p>
-            </div>
-          )}
+          <div className="p-3 bg-white rounded-lg border border-slate-200 text-xs text-slate-700 leading-relaxed">
+            <p className="font-semibold text-slate-900 mb-1">AI-suggested claim (from this paper&apos;s {paper.year} metadata):</p>
+            <p className="text-[11px] italic">&ldquo;{initialAiClaimText}&rdquo;</p>
+            <p className="text-[11px] text-slate-500 mt-1">The AI has not checked this claim against the evidence. Only you can judge it.</p>
+          </div>
 
           {/* Supervisory Human Gate Clearance Section */}
           {verificationResult.requiresGate && (
