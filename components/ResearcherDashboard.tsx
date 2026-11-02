@@ -13,7 +13,8 @@ import {
   parseParticipantSnapshot,
   recordCommitteeDecision,
   listCommitteeDecisions,
-  verifyCommitteeDecision
+  verifyCommitteeDecision,
+  EPHEMERAL_REVIEWER_KEY_NOTICE
 } from '../services/s3aWasmService';
 import { saveParticipantStudyId } from '../services/lrsCredentialsService';
 import { 
@@ -364,7 +365,7 @@ export const ResearcherDashboard: React.FC<ResearcherDashboardProps> = ({
         timestampSec
       );
       setDecisionComment('');
-      setDecisionSuccess('Committee decision signed with Ed25519 key and recorded on engine.');
+      setDecisionSuccess('Committee decision signed with a temporary demo key (it changes on every page load) and recorded on engine.');
       await loadDecisions();
     } catch (err: any) {
       console.error('[Committee Decision Submit Error]:', err);
@@ -1349,6 +1350,9 @@ export const ResearcherDashboard: React.FC<ResearcherDashboardProps> = ({
                     <p className="text-xs text-slate-500">
                       Independent Ed25519 cryptographically signed committee evaluation
                     </p>
+                    <p className="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-2 py-1 mt-2" data-testid="ephemeral-key-notice">
+                      {EPHEMERAL_REVIEWER_KEY_NOTICE}
+                    </p>
                   </div>
                   <Award className="w-5 h-5 text-indigo-600" />
                 </div>
@@ -1515,7 +1519,7 @@ export const ResearcherDashboard: React.FC<ResearcherDashboardProps> = ({
 
                           <div className="flex items-center justify-between text-[10px] text-slate-400 border-t border-slate-200/60 pt-2 font-mono">
                             <span>Timestamp: {ts}</span>
-                            <span>Signed with Ed25519 WebCrypto</span>
+                            <span>Signed with Ed25519 (temporary demo key)</span>
                           </div>
                         </div>
                       );

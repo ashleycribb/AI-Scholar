@@ -2257,6 +2257,16 @@ export async function parseParticipantSnapshot(bytes: Uint8Array): Promise<WasmA
 /**
  * Committee decision and Ed25519 cryptographic sign-off helpers
  */
+/**
+ * The reviewer signing key is generated in memory and is NOT saved anywhere. It is a
+ * new key on every page load, so a signature proves the payload was not altered after
+ * signing but does not prove which person signed it, and the key cannot be reused
+ * across sessions. Treat committee signing here as a demo until a persistent,
+ * identity-bound reviewer key is designed.
+ */
+export const EPHEMERAL_REVIEWER_KEY_NOTICE =
+  'Demo signing key: a new Ed25519 key is made each time this page loads and is not saved. Signatures show the record was not altered, not who signed it.';
+
 let reviewerKeyPair: CryptoKeyPair | null = null;
 
 export async function getOrCreateReviewerKey(): Promise<{
