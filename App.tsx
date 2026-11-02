@@ -229,14 +229,10 @@ const App: React.FC = () => {
     };
   }, []);
 
-  // Emit xAPI statement when user views a report/tile/tab
-  useEffect(() => {
-    emitStatement('viewed', {
-      id: `urn:view:${activeNav}`,
-      name: `${activeNav} View`,
-      type: 'ui-view'
-    }, { actor: 'human', tab: activeNav }).catch(() => {});
-  }, [activeNav]);
+  // Pass 1 (the researcher's own ~15 second skim) is never recorded, so there is
+  // deliberately no 'viewed' or 'opened' statement for tabs or paper pages. Recording
+  // starts when the researcher selects a paper (see the 'saved' statement), and only
+  // with consent. Guarded by services/pass1NotRecorded.test.ts.
 
   const navigateToPaperDetail = (paper: ResearchPaper, fromNav: NavTab = activeNav) => {
     setSelectedPaper(paper);
@@ -244,13 +240,6 @@ const App: React.FC = () => {
       setPreviousNav(fromNav);
     }
     setActiveNav('detail');
-
-    // Emit single authoritative xAPI statement for paper opened
-    emitStatement('opened', {
-      id: paper.doi ? `https://doi.org/${paper.doi.replace(/^https?:\/\/doi\.org\//, '')}` : (paper.openalex_id || `urn:paper:${paper.id}`),
-      name: paper.title || 'Untitled Research Paper',
-      type: 'academic-paper'
-    }, { actor: 'human', doi: paper.doi, year: paper.year, citations: paper.citations }).catch(() => {});
   };
 
   // --- UI MODAL & TOAST STATE ---
