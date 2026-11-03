@@ -169,6 +169,11 @@ export interface ResearchPaper {
   sciteTallyState?: 'idle' | 'loading' | 'loaded' | 'error';
   laymanSummary?: string;
   isLaymanLoading?: boolean;
+  // Extracted content & structure for Scholar pack representation (Tile 12 / Tile 13)
+  sections?: Array<{ id?: string; title?: string; heading?: string; content?: string; text?: string }>;
+  figures?: Array<{ id?: string; caption?: string; label?: string; url?: string }>;
+  tables?: Array<{ id?: string; caption?: string; label?: string; content?: string }>;
+  references?: Array<ResearchPaper | string | { id?: string; title?: string; doi?: string; openalex_id?: string; year?: number }>;
 }
 
 export type PublicationYearData = { year: number; count: number }[];
