@@ -118,6 +118,17 @@ export interface SciteTally {
     total: number;
 }
 
+export interface PaperReference {
+  id?: string;
+  doi?: string;
+  title: string;
+  authors?: string;
+  year?: number;
+  openalex_id?: string;
+  sourceURL?: string;
+  citations?: number;
+}
+
 export interface ResearchPaper {
   id: string;
   title: string;
@@ -169,6 +180,11 @@ export interface ResearchPaper {
   sciteTallyState?: 'idle' | 'loading' | 'loaded' | 'error';
   laymanSummary?: string;
   isLaymanLoading?: boolean;
+
+  // Reference lists & citations
+  references?: (PaperReference | ResearchPaper | string)[];
+  referenceList?: (PaperReference | ResearchPaper | string)[];
+  referenced_works?: string[];
   // Extracted content & structure for Scholar pack representation (Tile 12 / Tile 13)
   sections?: Array<{ id?: string; title?: string; heading?: string; content?: string; text?: string }>;
   figures?: Array<{ id?: string; caption?: string; label?: string; url?: string }>;

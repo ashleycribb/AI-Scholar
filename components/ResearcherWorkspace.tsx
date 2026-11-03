@@ -35,20 +35,23 @@ import {
     FileSpreadsheet,
     Users,
     Award,
-    FileCode
+    FileCode,
+    Hash
 } from 'lucide-react';
 import type { ResearchPaper } from '../types';
 import { checkS3ALocalHealth } from '../services/s3aBridgeService';
 import { emitStatement } from '../services/s3aWasmService';
 import { SourceCheckBadge } from './SourceCheckBadge';
+import { FrequentlyCitedPanel } from './FrequentlyCitedPanel';
 
-export type WorkspaceTab = 'overview' | 'papers' | 'evidence' | 'notes' | 'ai-assistant' | 'snapshots';
+export type WorkspaceTab = 'overview' | 'papers' | 'frequently-cited' | 'evidence' | 'notes' | 'ai-assistant' | 'snapshots';
 export type EvidenceSubTab = 'matrix' | 'claims' | 'pdf_claims' | 'collaboration' | 'protocol';
 
 interface ResearcherWorkspaceProps {
     papers: ResearchPaper[];
     onRemovePaper: (paper: ResearchPaper) => void;
     onSelectPaper: (paper: ResearchPaper) => void;
+    onAddPaper?: (paper: ResearchPaper) => void;
     onOpenSnapshotDialog: () => void;
     onNavigateToSearch: () => void;
     searchQuery?: string;
@@ -61,6 +64,7 @@ export const ResearcherWorkspace: React.FC<ResearcherWorkspaceProps> = ({
     papers,
     onRemovePaper,
     onSelectPaper,
+    onAddPaper,
     onOpenSnapshotDialog,
     onNavigateToSearch,
     searchQuery = '',
@@ -525,6 +529,21 @@ ${exportNotes.length > 0 ? exportNotes.map(n => `### [${n.tag}] ${n.author} (${n
                     <button
                         type="button"
                         role="tab"
+                        aria-selected={activeTab === 'frequently-cited'}
+                        onClick={() => setActiveTab('frequently-cited')}
+                        className={`inline-flex items-center gap-2 px-3 py-2 text-xs rounded-t-lg border-b-2 transition-all ${
+                            activeTab === 'frequently-cited'
+                                ? 'border-slate-900 text-slate-900 font-semibold bg-white'
+                                : 'border-transparent text-slate-500 hover:text-slate-900 hover:bg-slate-50 font-medium'
+                        }`}
+                    >
+                        <Hash className="w-3.5 h-3.5" />
+                        <span>Frequently Cited</span>
+                    </button>
+
+                    <button
+                        type="button"
+                        role="tab"
                         aria-selected={activeTab === 'evidence'}
                         onClick={() => setActiveTab('evidence')}
                         className={`inline-flex items-center gap-2 px-3 py-2 text-xs rounded-t-lg border-b-2 transition-all ${
@@ -692,6 +711,26 @@ ${exportNotes.length > 0 ? exportNotes.map(n => `### [${n.tag}] ${n.author} (${n
                             </p>
                         </div>
                     </div>
+
+                    {/* Frequently Cited Co-citation Panel */}
+                    <FrequentlyCitedPanel
+                        selectedPapers={papers}
+                        onSelectPaper={onAddPaper || onSelectPaper}
+                        onViewPaperDetail={onSelectPaper}
+                        topN={5}
+                    />
+                </div>
+            )}
+
+            {/* TAB: FREQUENTLY CITED */}
+            {activeTab === 'frequently-cited' && (
+                <div className="space-y-4">
+                    <FrequentlyCitedPanel
+                        selectedPapers={papers}
+                        onSelectPaper={onAddPaper || onSelectPaper}
+                        onViewPaperDetail={onSelectPaper}
+                        topN={10}
+                    />
                 </div>
             )}
 
