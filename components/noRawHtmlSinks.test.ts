@@ -44,7 +44,7 @@ describe('raw HTML sinks', () => {
 });
 
 describe('BroadcastChannel handlers validate input', () => {
-    const find = (file: string) => sources.find((s) => s.file === file)!.text;
+    const find = (file: string) => sources.find((s) => s.file.replace(/\\/g, '/') === file)!.text;
 
     test('web app listener goes through parseExtensionMessage', () => {
         const text = find('services/extensionService.ts');

@@ -42,6 +42,7 @@ const EXPLORER_CREDENTIALS_KEY = 'lrs_explorer_config';
 const EXPLORER_DEVICE_ID_KEY = 'explorer_device_id';
 const USER_MODE_KEY = 'active_user_mode';
 const FIRST_RUN_CONSENT_KEY = 'first_run_consent_time';
+const memoryFallbackStore = new Map<string, any>();
 const RESEARCH_LOGGING_CONSENT_KEY = 'research_logging_consent';
 const STUDY_ID_KEY = 'participant_study_id';
 const CONSENT_STATE_KEY = 'research_consent_state';
@@ -453,6 +454,7 @@ export async function saveFirstRunConsentTime(time = new Date().toISOString()): 
  * Tracing is OFF by default and only turns on for enrolled study participants who consent.
  */
 export async function getResearchLoggingConsent(): Promise<boolean> {
+  if (typeof indexedDB === "undefined") { return memoryFallbackStore.get(RESEARCH_LOGGING_CONSENT_KEY) === true; }
   try {
     const db = await openIdb();
     return new Promise((resolve) => {
@@ -473,6 +475,7 @@ export async function getResearchLoggingConsent(): Promise<boolean> {
  * Stores explicit research logging consent.
  */
 export async function setResearchLoggingConsent(consented: boolean): Promise<void> {
+  if (typeof indexedDB === "undefined") { memoryFallbackStore.set(RESEARCH_LOGGING_CONSENT_KEY, consented); return; }
   const db = await openIdb();
   return new Promise((resolve, reject) => {
     const tx = db.transaction(CREDENTIALS_STORE, 'readwrite');
@@ -519,6 +522,7 @@ export async function saveParticipantStudyId(studyId: string): Promise<void> {
  * Gets the persisted consent state ("none" | "granted" | "withdrawn").
  */
 export async function getStoredConsentState(): Promise<'none' | 'granted' | 'withdrawn'> {
+  if (typeof indexedDB === "undefined") { const val = memoryFallbackStore.get(CONSENT_STATE_KEY); return (val === "granted" || val === "withdrawn") ? val : "none"; }
   try {
     const db = await openIdb();
     return new Promise((resolve) => {
@@ -543,6 +547,7 @@ export async function getStoredConsentState(): Promise<'none' | 'granted' | 'wit
  * Stores the consent state.
  */
 export async function saveStoredConsentState(state: 'none' | 'granted' | 'withdrawn'): Promise<void> {
+  if (typeof indexedDB === "undefined") { memoryFallbackStore.set(CONSENT_STATE_KEY, state); return; }
   const db = await openIdb();
   return new Promise((resolve, reject) => {
     const tx = db.transaction(CREDENTIALS_STORE, 'readwrite');
@@ -610,6 +615,7 @@ export async function enqueueOutboxStatement(
   statement: any,
   sessionUuid: string
 ): Promise<number> {
+  if (typeof indexedDB === "undefined") return 1;
   const db = await openIdb();
   return new Promise((resolve, reject) => {
     const tx = db.transaction(OUTBOX_STORE, 'readwrite');
@@ -631,6 +637,7 @@ export async function enqueueOutboxStatement(
  * Fetch all queued statements in FIFO order.
  */
 export async function getQueuedStatements(limit = 50): Promise<QueuedStatementItem[]> {
+  if (typeof indexedDB === "undefined") return [];
   const db = await openIdb();
   return new Promise((resolve, reject) => {
     const tx = db.transaction(OUTBOX_STORE, 'readonly');
