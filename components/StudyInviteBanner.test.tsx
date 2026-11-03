@@ -1,16 +1,26 @@
-import { describe, expect, mock, test } from 'bun:test';
+import { describe, expect, mock, test, spyOn } from 'bun:test';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { StudyInviteBanner } from './StudyInviteBanner';
+import fs from 'node:fs';
+import path from 'node:path';
 
-// The modal imports the S3A WASM service (a CDN module). Stub it so the test is
-// offline, and record setConsent so we can prove nothing is granted by rendering.
-const setConsentCalls: unknown[][] = [];
-mock.module('../services/s3aWasmService', () => ({
-  setConsent: async (...args: unknown[]) => { setConsentCalls.push(args); return true; },
-  getConsentState: async () => 'none',
-  getStudyId: async () => '',
+// Bind remote WASM URL to local WASM module so the modal and s3aWasmService work hermetically offline
+const wasmModule = require('../services/wasm/s3a_wasm_snapshot.js');
+const wasmBytes = fs.readFileSync(path.resolve('public/s3a_wasm_snapshot_bg.wasm'));
+wasmModule.initSync({ module: wasmBytes });
+
+mock.module('https://cdn.jsdelivr.net/gh/ashleycribb/s3a-wasm-dist@v0.1.56/v0.1.56/s3a_wasm_snapshot.js', () => ({
+  default: async () => {},
+  WasmAgentSnapshot: wasmModule.WasmAgentSnapshot,
+  new_session: wasmModule.new_session,
+  from_bytes: wasmModule.from_bytes,
+  iri_for_verb_id: wasmModule.iri_for_verb_id,
+  verb_id_for_iri: wasmModule.verb_id_for_iri,
 }));
+
+const s3aSvc = await import('../services/s3aWasmService');
+const setConsentSpy = spyOn(s3aSvc, 'setConsent');
 const { FirstRunConsentModal } = await import('./FirstRunConsentModal');
 
 /** Depth-first search of a React element tree for elements of a given type. */
@@ -63,6 +73,6 @@ describe('FirstRunConsentModal', () => {
       <FirstRunConsentModal isOpen={false} onClose={() => {}} initialStudyId="STUDY-7" />
     );
     expect(html).toBe('');
-    expect(setConsentCalls).toEqual([]);
+    expect(setConsentSpy).not.toHaveBeenCalled();
   });
 });
