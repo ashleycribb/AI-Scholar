@@ -201,7 +201,7 @@ function loadState(): RegistryState {
   }
 
   const initial: RegistryState = {
-    discovered: INITIAL_DISCOVERED_SOURCES,
+    discovered: [...INITIAL_DISCOVERED_SOURCES],
     recipientEmail: DEFAULT_EMAIL_RECIPIENT,
     lastScanAt: new Date().toISOString()
   };

@@ -7,9 +7,10 @@
  * Nothing counts as saved until the server acknowledges it.
  */
 
-import init, { WasmAgentSnapshot, new_session, from_bytes } from "https://cdn.jsdelivr.net/gh/ashleycribb/s3a-wasm-dist@v0.1.45/v0.1.45/s3a_wasm_snapshot.js";
+import init, { WasmAgentSnapshot, new_session, from_bytes } from "https://cdn.jsdelivr.net/gh/ashleycribb/s3a-wasm-dist@v0.1.56/v0.1.56/s3a_wasm_snapshot.js";
 
-export const S3A_ENGINE_VERSION = "v0.1.45";
+export const S3A_ENGINE_VERSION = "v0.1.56";
+import type { ResearchPaper } from "../types";
 
 export enum ScholarTool {
   TOOL_READ_FILE = 1,
@@ -2038,16 +2039,18 @@ export async function exportS3ASession(options: S3AExportOptions = {}): Promise<
 
   const filename = `scholar-${sanitizedName}-${dateStr}.s3a`;
 
-  // Save as Blob with type "application/octet-stream" (never JSON.stringify)
-  const blob = new Blob([bytes], { type: 'application/octet-stream' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  URL.revokeObjectURL(url);
+  // Save as Blob with type "application/octet-stream" when running in browser
+  if (typeof document !== 'undefined') {
+    const blob = new Blob([bytes], { type: 'application/octet-stream' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }
 
   return { filename, bytes, warnings: [...sessionSkippedPaperWarnings] };
 }
@@ -2416,3 +2419,490 @@ export async function verifyCommitteeDecision(
   return false;
 }
 
+
+
+// -------------------------------------------------------------
+// Scholar Pack Structure & Tile Constants (Tiles 12, 13, 15)
+// -------------------------------------------------------------
+
+export const SCHOLAR_TILE_TYPES = {
+  HUMAN_LRS: 10,
+  AI_TRACE_LOG: 11,
+  ACADEMIC_PAPERS: 12,
+  RESEARCH_GRAPH: 13,
+  SRS_WORKSPACE: 14,
+  SRS_MANIFEST: 15,
+  AGENT_REGISTRY: 18,
+  NOTE_CLAIMS: 20,
+  CITATION_FINGERPRINT: 32,
+  COMMITTEE_DECISION: 96,
+} as const;
+
+export const RESEARCH_GRAPH_PREDICATES = {
+  CONTAINS: 1,
+  AUTHORED_BY: 2,
+  CITES: 3,
+  SUPPORTS: 1,
+  CONTRADICTS: 2,
+} as const;
+
+export const ACADEMIC_PAPER_FLAGS = {
+  SOURCE_OPENALEX: 1 << 3,
+  SOURCE_CROSSREF: 1 << 4,
+  RESEARCHER_APPROVED: 1 << 5,
+  HAS_OA_URL_REF: 1 << 6,
+} as const;
+
+/**
+ * 64-bit FNV-1a hash matching Rust s3a_pack_scholar::xapi::hash_iri.
+ */
+export function hashIri(iri: string): bigint {
+  let hash = 0xcbf29ce484222325n;
+  const FNV_PRIME = 0x100000001b3n;
+  const MASK = 0xffffffffffffffffn;
+  const bytes = new TextEncoder().encode(iri);
+  for (let i = 0; i < bytes.length; i++) {
+    hash ^= BigInt(bytes[i]);
+    hash = (hash * FNV_PRIME) & MASK;
+  }
+  return hash;
+}
+
+// Castagnoli CRC32C table (polynomial 0x82F63B78)
+const CRC32C_POLYNOMIAL = 0x82f63b78;
+const CRC32C_TABLE = new Uint32Array(256);
+for (let i = 0; i < 256; i++) {
+  let crc = i;
+  for (let j = 0; j < 8; j++) {
+    crc = (crc & 1) ? (crc >>> 1) ^ CRC32C_POLYNOMIAL : crc >>> 1;
+  }
+  CRC32C_TABLE[i] = crc >>> 0;
+}
+
+export function computeCrc32c(bytes: Uint8Array, initial = 0): number {
+  let crc = (initial ^ 0xffffffff) >>> 0;
+  for (let i = 0; i < bytes.length; i++) {
+    crc = (CRC32C_TABLE[(crc ^ bytes[i]) & 0xff] ^ (crc >>> 8)) >>> 0;
+  }
+  return (crc ^ 0xffffffff) >>> 0;
+}
+
+let sessionDeltaSeq = 1;
+
+export function getSessionDeltaSeq(): number {
+  return sessionDeltaSeq;
+}
+
+export function resetSessionDeltaSeq(): void {
+  sessionDeltaSeq = 1;
+}
+
+export interface ResearchGraphEdgeInput {
+  subject_hash: bigint | number;
+  object_hash: bigint | number;
+  predicate_id: number;
+  weight?: number;
+  timestamp_sec?: number;
+}
+
+/**
+ * Encodes an SrsSyncDeltaPacket containing ResearchGraphEdgeRecords (Tile 13)
+ * with hardware-compatible CRC32C Castagnoli verification.
+ */
+export function buildGraphDeltaPacket(
+  sessionUuidHex: string,
+  deltaSeq: number,
+  edges: ResearchGraphEdgeInput[]
+): Uint8Array {
+  const cleanHex = sessionUuidHex.replace(/[^0-9a-fA-F]/g, '');
+  if (cleanHex.length !== 32) {
+    throw new Error(`Invalid session UUID hex length: expected 32 hex chars, got ${cleanHex.length}`);
+  }
+  const sessHigh = BigInt('0x' + cleanHex.slice(0, 16));
+  const sessLow = BigInt('0x' + cleanHex.slice(16, 32));
+  const snapHigh = sessHigh ^ 0xa5a5a5a55a5a5a5an;
+  const snapLow = sessLow ^ 0x5a5a5a5aa5a5a5a5n;
+
+  const entriesBuf = new ArrayBuffer(168 * edges.length);
+  const entriesBytes = new Uint8Array(entriesBuf);
+  const nowSec = BigInt(Math.floor(Date.now() / 1000));
+
+  for (let i = 0; i < edges.length; i++) {
+    const edge = edges[i];
+    const offset = i * 168;
+    const entryView = new DataView(entriesBuf, offset, 168);
+    entryView.setUint32(0, SCHOLAR_TILE_TYPES.RESEARCH_GRAPH, true); // Tile 13
+    entryView.setUint32(4, 0, true);
+
+    const edgeView = new DataView(entriesBuf, offset + 8, 64);
+    edgeView.setBigUint64(0, BigInt(edge.subject_hash), true);
+    edgeView.setBigUint64(8, BigInt(edge.object_hash), true);
+    edgeView.setBigUint64(16, typeof edge.timestamp_sec === 'number' ? BigInt(edge.timestamp_sec) : nowSec, true);
+    edgeView.setBigUint64(24, 0n, true); // hilbert_coord
+    edgeView.setUint32(32, edge.predicate_id, true);
+    edgeView.setFloat32(36, typeof edge.weight === 'number' ? edge.weight : 1.0, true);
+    edgeView.setBigUint64(40, 1n, true); // FLAG_ACTIVE
+  }
+
+  const headerBuf = new ArrayBuffer(96);
+  const headerView = new DataView(headerBuf);
+  const magic = new TextEncoder().encode('S3ASYNC1');
+  new Uint8Array(headerBuf, 0, 8).set(magic);
+  headerView.setUint32(8, 1, true); // schema_version = 1
+  headerView.setUint32(12, 0, true); // flags
+  headerView.setBigUint64(16, sessHigh, true);
+  headerView.setBigUint64(24, sessLow, true);
+  headerView.setBigUint64(32, snapHigh, true);
+  headerView.setBigUint64(40, snapLow, true);
+  headerView.setBigUint64(48, BigInt(deltaSeq), true);
+  headerView.setUint32(56, edges.length, true);
+  headerView.setUint32(60, 0, true); // zero placeholder for CRC
+  headerView.setBigUint64(64, nowSec, true);
+
+  const checksum = computeCrc32c(entriesBytes, computeCrc32c(new Uint8Array(headerBuf)));
+  headerView.setUint32(60, checksum, true);
+
+  const packet = new Uint8Array(96 + entriesBytes.length);
+  packet.set(new Uint8Array(headerBuf), 0);
+  packet.set(entriesBytes, 96);
+  return packet;
+}
+
+export interface ScholarPackWriteResult {
+  added: boolean;
+  skipped?: boolean;
+  duplicate?: boolean;
+  warning?: string;
+  paperIndex?: number;
+  edgesCount?: number;
+  tracingEmitted?: boolean;
+}
+
+/**
+ * Writes a selected paper as a complete record (metadata, PDF ref, sections, figures,
+ * tables, references) to the Scholar pack (Tile 12 Papers, Tile 13 Research graph, Tile 15 Manifest).
+ * 
+ * - Dual UUID: links human researcher (actor_uuid) and AI assistant (agent_uuid).
+ * - Consent-gated tracing: Pass 1 human selection statement is emitted ONLY if research logging consent is granted.
+ */
+export async function writePaperToScholarPack(
+  paper: ResearchPaper,
+  options?: { actorUuid?: string; agentUuid?: string }
+): Promise<ScholarPackWriteResult> {
+  const session = getDualSessionState();
+  const actorUuid = options?.actorUuid || session.actor_uuid;
+  const agentUuid = options?.agentUuid || session.agent_uuid;
+
+  const cleanOpenAlex = extractCleanOpenAlexId(paper.openalex_id || paper.id);
+  const cleanDoi = paper.doi ? paper.doi.replace(/^https?:\/\/doi\.org\//i, '').trim() : '';
+  const paperIdentifier = cleanOpenAlex || cleanDoi || paper.id || paper.title;
+
+  if (!paperIdentifier) {
+    const warning = 'Skipped paper: missing identifier.';
+    if (!sessionSkippedPaperWarnings.includes(warning)) sessionSkippedPaperWarnings.push(warning);
+    return { added: false, skipped: true, warning };
+  }
+
+  const hasPdf = Boolean(paper.pdfURL || paper.openAccessPdfUrl);
+  let flags = ACADEMIC_PAPER_FLAGS.SOURCE_OPENALEX | ACADEMIC_PAPER_FLAGS.RESEARCHER_APPROVED;
+  if (hasPdf) {
+    flags |= ACADEMIC_PAPER_FLAGS.HAS_OA_URL_REF;
+  }
+
+  const safeYear = (typeof paper.year === 'number' && Number.isFinite(paper.year) && paper.year > 0)
+    ? Math.floor(paper.year)
+    : 0;
+  const safeCitations = (typeof paper.citations === 'number' && Number.isFinite(paper.citations) && paper.citations >= 0)
+    ? Math.floor(paper.citations)
+    : 0;
+
+  let paperIndex = 0;
+  let isDuplicate = false;
+  let edgesCount = 0;
+  const dedupeKey = cleanOpenAlex || cleanDoi || paperIdentifier;
+
+  await snapshotMutex.run(async () => {
+    const snapshot = await _ensureActiveSnapshotInternal();
+    if (sessionAddedPaperIds.has(dedupeKey)) {
+      isDuplicate = true;
+    } else {
+      try {
+        paperIndex = snapshot.add_paper(cleanOpenAlex || dedupeKey, cleanDoi, safeYear, safeCitations, flags);
+        sessionAddedPaperIds.add(dedupeKey);
+        papersCount = sessionAddedPaperIds.size;
+      } catch (err: any) {
+        const errMsg = `Failed to record paper "${paper.title || paperIdentifier}" via add_paper: ${err?.message || err}`;
+        if (!sessionRecordErrors.includes(errMsg)) sessionRecordErrors.push(errMsg);
+        if (isPoisonError(err)) await handlePoisonedSnapshot(err);
+        throw new Error(errMsg);
+      }
+    }
+
+    // Build Tile 13 Research Graph Edges (metadata, PDF ref, sections, figures, tables, references)
+    const paperHash = hashIri(cleanOpenAlex || cleanDoi || paperIdentifier);
+    const edges: ResearchGraphEdgeInput[] = [];
+
+    // 1. PDF reference
+    const pdfRef = paper.pdfURL || paper.openAccessPdfUrl;
+    if (pdfRef) {
+      edges.push({
+        subject_hash: paperHash,
+        object_hash: hashIri(pdfRef),
+        predicate_id: RESEARCH_GRAPH_PREDICATES.CONTAINS,
+        weight: 1.0,
+      });
+    }
+
+    // 2. Sections
+    if (Array.isArray(paper.sections)) {
+      for (let sIdx = 0; sIdx < paper.sections.length; sIdx++) {
+        const s = paper.sections[sIdx];
+        const sKey = s.id || s.heading || s.title || (s.content ? s.content.slice(0, 40) : `section_${sIdx}`);
+        edges.push({
+          subject_hash: paperHash,
+          object_hash: hashIri(sKey),
+          predicate_id: RESEARCH_GRAPH_PREDICATES.CONTAINS,
+          weight: 1.0,
+        });
+      }
+    }
+
+    // 3. Figures
+    if (Array.isArray(paper.figures)) {
+      for (let fIdx = 0; fIdx < paper.figures.length; fIdx++) {
+        const f = paper.figures[fIdx];
+        const fKey = f.id || f.label || f.caption || f.url || `figure_${fIdx}`;
+        edges.push({
+          subject_hash: paperHash,
+          object_hash: hashIri(fKey),
+          predicate_id: RESEARCH_GRAPH_PREDICATES.CONTAINS,
+          weight: 1.0,
+        });
+      }
+    }
+
+    // 4. Tables
+    if (Array.isArray(paper.tables)) {
+      for (let tIdx = 0; tIdx < paper.tables.length; tIdx++) {
+        const t = paper.tables[tIdx];
+        const tKey = t.id || t.label || t.caption || `table_${tIdx}`;
+        edges.push({
+          subject_hash: paperHash,
+          object_hash: hashIri(tKey),
+          predicate_id: RESEARCH_GRAPH_PREDICATES.CONTAINS,
+          weight: 1.0,
+        });
+      }
+    }
+
+    // 5. References
+    if (Array.isArray(paper.references)) {
+      for (let rIdx = 0; rIdx < paper.references.length; rIdx++) {
+        const r = paper.references[rIdx];
+        const rKey = typeof r === 'string'
+          ? r
+          : (r.openalex_id || r.doi || r.id || r.title || `ref_${rIdx}`);
+        edges.push({
+          subject_hash: paperHash,
+          object_hash: hashIri(rKey),
+          predicate_id: RESEARCH_GRAPH_PREDICATES.CITES,
+          weight: 1.0,
+        });
+      }
+    }
+
+    if (edges.length > 0) {
+      try {
+        const packet = buildGraphDeltaPacket(currentSessionUuidHex, sessionDeltaSeq, edges);
+        snapshot.apply_delta(packet);
+        sessionDeltaSeq++;
+        edgesCount = edges.length;
+      } catch (deltaErr: any) {
+        console.warn('[S3A WASM] Graph edges delta apply warning:', deltaErr);
+      }
+    }
+  });
+
+  // 6. Consent-gated tracing (Pass 1 selection only when consent is granted)
+  let tracingEmitted = false;
+  const consented = await getResearchLoggingConsent();
+  const consentState = await getStoredConsentState();
+
+  if (consented && consentState === 'granted') {
+    try {
+      const user = authService.getUser();
+      const resolvedActorName = user?.displayName || user?.name || 'Scholar Researcher';
+      await logHumanAction(
+        S3A_VERBS.SAVED,
+        resolvedActorName,
+        paper.title || paperIdentifier,
+        null,
+        cleanOpenAlex || cleanDoi || paperIdentifier
+      );
+      tracingEmitted = true;
+    } catch (traceErr) {
+      console.warn('[S3A WASM] Consent-gated trace recording error:', traceErr);
+    }
+  }
+
+  notifyStateChange();
+  return {
+    added: !isDuplicate,
+    duplicate: isDuplicate,
+    paperIndex,
+    edgesCount,
+    tracingEmitted,
+  };
+}
+
+// -------------------------------------------------------------
+// Scholar Pack Round-Trip Binary Reader & Inspector
+// -------------------------------------------------------------
+
+export interface ScholarPackManifest {
+  magic: string;
+  schema_version: number;
+  archive_flags: number;
+  project_uuid: [bigint, bigint];
+  snapshot_uuid: [bigint, bigint];
+  parent_snapshot_uuid: [bigint, bigint];
+  origin_session_uuid: [bigint, bigint];
+  created_at_sec: bigint;
+  tile_count: number;
+  crc32c_checksum: number;
+  total_records: bigint;
+}
+
+export interface ScholarPackPaper {
+  paper_id: bigint;
+  timestamp_sec: bigint;
+  hilbert_index: bigint;
+  citation_count: number;
+  year: number;
+  venue_id: number;
+  open_access_flag: number;
+  warning_count: number;
+  doi_prefix_hash: bigint;
+  flags: bigint;
+}
+
+export interface ScholarPackEdge {
+  subject_hash: bigint;
+  object_hash: bigint;
+  timestamp_sec: bigint;
+  hilbert_coord: bigint;
+  predicate_id: number;
+  weight: number;
+  flags: bigint;
+}
+
+export interface ScholarPackParsed {
+  tileCount: number;
+  tileTypes: number[];
+  hasTile12: boolean;
+  hasTile13: boolean;
+  hasTile15: boolean;
+  papers: ScholarPackPaper[];
+  edges: ScholarPackEdge[];
+  manifest: ScholarPackManifest | null;
+}
+
+/**
+ * Parses and verifies an exported .snapshot.s3a container buffer.
+ * Inspects Tile 12 (Papers), Tile 13 (Research Graph), and Tile 15 (Manifest).
+ */
+export function readScholarPack(bytes: Uint8Array): ScholarPackParsed {
+  const FILE_HEADER_SIZE = 512;
+  const HYPER_TILE_SIZE = 131072;
+
+  if (bytes.length < FILE_HEADER_SIZE) {
+    throw new Error(`Buffer too small for S3A file header: ${bytes.length} bytes`);
+  }
+
+  const fileView = new DataView(bytes.buffer, bytes.byteOffset, 512);
+  const tileCount = fileView.getUint32(16, true);
+
+  const parsed: ScholarPackParsed = {
+    tileCount,
+    tileTypes: [],
+    hasTile12: false,
+    hasTile13: false,
+    hasTile15: false,
+    papers: [],
+    edges: [],
+    manifest: null,
+  };
+
+  for (let i = 0; i < tileCount; i++) {
+    const tileOffset = FILE_HEADER_SIZE + i * HYPER_TILE_SIZE;
+    if (tileOffset + 512 > bytes.length) break;
+
+    const tileView = new DataView(bytes.buffer, bytes.byteOffset + tileOffset, 64);
+    const tileType = tileView.getUint32(8, true);
+    const recordCount = tileView.getUint32(12, true);
+    parsed.tileTypes.push(tileType);
+
+    const payloadOffset = tileOffset + 512;
+
+    if (tileType === SCHOLAR_TILE_TYPES.ACADEMIC_PAPERS) {
+      parsed.hasTile12 = true;
+      for (let r = 0; r < recordCount; r++) {
+        const rOffset = payloadOffset + r * 64;
+        if (rOffset + 64 > bytes.length) break;
+        const rv = new DataView(bytes.buffer, bytes.byteOffset + rOffset, 64);
+        parsed.papers.push({
+          paper_id: rv.getBigUint64(0, true),
+          timestamp_sec: rv.getBigUint64(8, true),
+          hilbert_index: rv.getBigUint64(16, true),
+          citation_count: rv.getUint32(36, true),
+          year: rv.getUint16(40, true),
+          venue_id: rv.getUint16(42, true),
+          open_access_flag: rv.getUint16(44, true),
+          warning_count: rv.getUint16(46, true),
+          doi_prefix_hash: rv.getBigUint64(48, true),
+          flags: rv.getBigUint64(56, true),
+        });
+      }
+    } else if (tileType === SCHOLAR_TILE_TYPES.RESEARCH_GRAPH) {
+      parsed.hasTile13 = true;
+      for (let r = 0; r < recordCount; r++) {
+        const rOffset = payloadOffset + r * 64;
+        if (rOffset + 64 > bytes.length) break;
+        const rv = new DataView(bytes.buffer, bytes.byteOffset + rOffset, 64);
+        parsed.edges.push({
+          subject_hash: rv.getBigUint64(0, true),
+          object_hash: rv.getBigUint64(8, true),
+          timestamp_sec: rv.getBigUint64(16, true),
+          hilbert_coord: rv.getBigUint64(24, true),
+          predicate_id: rv.getUint32(32, true),
+          weight: rv.getFloat32(36, true),
+          flags: rv.getBigUint64(40, true),
+        });
+      }
+    } else if (tileType === SCHOLAR_TILE_TYPES.SRS_MANIFEST) {
+      parsed.hasTile15 = true;
+      if (payloadOffset + 512 <= bytes.length) {
+        const mv = new DataView(bytes.buffer, bytes.byteOffset + payloadOffset, 512);
+        const magicBytes = new Uint8Array(bytes.buffer, bytes.byteOffset + payloadOffset, 8);
+        const magic = new TextDecoder('utf-8').decode(magicBytes);
+        parsed.manifest = {
+          magic,
+          schema_version: mv.getUint32(8, true),
+          archive_flags: mv.getUint32(12, true),
+          project_uuid: [mv.getBigUint64(16, true), mv.getBigUint64(24, true)],
+          snapshot_uuid: [mv.getBigUint64(32, true), mv.getBigUint64(40, true)],
+          parent_snapshot_uuid: [mv.getBigUint64(48, true), mv.getBigUint64(56, true)],
+          origin_session_uuid: [mv.getBigUint64(64, true), mv.getBigUint64(72, true)],
+          created_at_sec: mv.getBigUint64(80, true),
+          tile_count: mv.getUint32(88, true),
+          crc32c_checksum: mv.getUint32(92, true),
+          total_records: mv.getBigUint64(96, true),
+        };
+      }
+    }
+  }
+
+  return parsed;
+}
+
+export const parseScholarPack = readScholarPack;

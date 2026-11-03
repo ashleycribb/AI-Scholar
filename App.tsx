@@ -81,7 +81,8 @@ import {
 import { 
     initializeS3ASession, 
     logHumanAction, 
-    addOpenAlexPaper, 
+    addOpenAlexPaper,
+    writePaperToScholarPack, 
     downloadS3ASnapshotFile, 
     runS3ADemoMode,
     subscribeS3AState, 
@@ -270,13 +271,7 @@ const App: React.FC = () => {
   const [s3aExportError, setS3aExportError] = useState<string | null>(null);
 
   const stagePaperInS3ASession = (paper: ResearchPaper) => {
-      addOpenAlexPaper(
-          paper.openalex_id || paper.id || '',
-          paper.doi || '',
-          paper.year ? Number(paper.year) : 0,
-          paper.citations || 0,
-          paper.title
-      ).then(res => {
+      writePaperToScholarPack(paper).then(res => {
           setS3aSessionWarnings(getSkippedPaperWarnings());
           if (res.skipped && res.warning) {
               setToastMessage(res.warning);
