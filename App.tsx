@@ -186,6 +186,9 @@ import {
     downloadFallbackSnapshot, 
     buildScholarExportBaseName,
     DEFAULT_TARGET_DB,
+    isLiveLabHandoffAvailable,
+    HOSTED_LAB_DOWNLOAD_LABEL,
+    HOSTED_LAB_HANDOFF_HINT,
     type S3ASnapshotPayload
 } from './services/s3aBridgeService';
 
@@ -216,16 +219,21 @@ const App: React.FC = () => {
   const [showS3AInspector, setShowS3AInspector] = useState(false);
 
   useEffect(() => {
-    const verify = () => checkS3ALocalHealth().then(setIsLocalLabOnline).catch(() => setIsLocalLabOnline(false));
-    verify();
-    const interval = setInterval(verify, 8000);
+    let interval: ReturnType<typeof setInterval> | undefined;
+    if (isLiveLabHandoffAvailable()) {
+      const verify = () => checkS3ALocalHealth().then(setIsLocalLabOnline).catch(() => setIsLocalLabOnline(false));
+      verify();
+      interval = setInterval(verify, 8000);
+    } else {
+      setIsLocalLabOnline(false);
+    }
     
     // Initialize or restore S3A WASM Session
     initializeS3ASession().catch(e => console.error("S3A Session init error:", e));
     const unsub = subscribeS3AState(setS3AState);
 
     return () => {
-      clearInterval(interval);
+      if (interval) clearInterval(interval);
       unsub();
     };
   }, []);
@@ -1381,7 +1389,10 @@ const App: React.FC = () => {
       setIsCompilingSnapshot(true);
       setCompilationProgress(0);
       setCompilationItemIndex(0);
-      setCompilationPaperTitle('Pinging S3A Local Lab Engine (127.0.0.1:8080)...');
+      const liveHandoff = isLiveLabHandoffAvailable();
+      setCompilationPaperTitle(liveHandoff
+          ? 'Pinging S3A Local Lab Engine (127.0.0.1:8080)...'
+          : 'Preparing a portable .s3a file for your local lab...');
 
       const s3aPayload = convertPapersToS3APayload(
           workspacePapers,
@@ -1396,15 +1407,17 @@ const App: React.FC = () => {
           scoutServices
       );
 
-      // 1. Check if S3A Local Lab Engine is running locally at http://127.0.0.1:8080 (capped at 800ms)
+      // Live ingest only when this app runs on localhost http. Hosted https never pings 127.0.0.1:8080.
       let isDaemonOnline = false;
-      try {
-          isDaemonOnline = await checkS3ALocalHealth();
-      } catch (_e) {
-          isDaemonOnline = false;
+      if (liveHandoff) {
+        try {
+            isDaemonOnline = await checkS3ALocalHealth();
+        } catch (_e) {
+            isDaemonOnline = false;
+        }
       }
 
-      // 2. If Local Lab is Online: stream research session directly into local S3A high-performance database (< 1ms)
+      // If Local Lab is Online (local dev only): stream the session into the local S3A database
       if (isDaemonOnline) {
           const targetDb = userSettings.s3aTargetDb || DEFAULT_TARGET_DB;
           setCompilationProgress(60);
@@ -1449,6 +1462,8 @@ const App: React.FC = () => {
           
           if (userSettings.autoSaveSnapshot) {
               setToastMessage(`⚡ Auto-saved: "${savedFileName}" downloaded straight to default directory.`);
+          } else if (!liveHandoff) {
+              setToastMessage(`Downloaded "${savedFileName}" for your local lab.`);
           } else {
               setToastMessage(`Local Lab offline — portable snapshot "${savedFileName}" saved for offline intake.`);
           }
@@ -1826,7 +1841,9 @@ const App: React.FC = () => {
                                   </span>
                               </div>
                               <p className="text-xs text-slate-500 font-normal">
-                                  Automated high-performance ingestion into your local research machine at <code className="font-mono text-slate-700">127.0.0.1:8080</code>.
+                                  {isLiveLabHandoffAvailable()
+                                      ? <>Automated high-performance ingestion into your local research machine at <code className="font-mono text-slate-700">127.0.0.1:8080</code>.</>
+                                      : HOSTED_LAB_HANDOFF_HINT}
                               </p>
                           </div>
 
@@ -1899,10 +1916,12 @@ const App: React.FC = () => {
                                       <div className="border border-slate-200/80 rounded-lg p-3.5 bg-slate-50 flex flex-col justify-center space-y-1">
                                           <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-500 flex items-center gap-1.5">
                                               <Zap className="w-3 h-3 text-emerald-600" />
-                                              Dual-Mode Auto-Detection
+                                              {isLiveLabHandoffAvailable() ? 'Dual-Mode Auto-Detection' : HOSTED_LAB_DOWNLOAD_LABEL}
                                           </span>
                                           <p className="text-xs text-slate-600 leading-relaxed">
-                                              If local S3A engine is online at <code className="font-mono text-[11px]">127.0.0.1:8080</code>, data streams in &lt; 1ms. If offline, a portable snapshot file is downloaded for manual intake.
+                                              {isLiveLabHandoffAvailable()
+                                                  ? <>If local S3A engine is online at <code className="font-mono text-[11px]">127.0.0.1:8080</code>, data streams in &lt; 1ms. If offline, a portable snapshot file is downloaded for manual intake.</>
+                                                  : HOSTED_LAB_HANDOFF_HINT}
                                           </p>
                                       </div>
                                   </div>
@@ -2089,19 +2108,27 @@ const App: React.FC = () => {
                                               </div>
                                           </div>
                                       </div>
-                                      {isLocalLabOnline ? (
-                                          <span className="flex items-center gap-1 text-[10px] font-bold text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-full border border-emerald-200/80 shrink-0">
-                                              <CheckCircle2 className="w-3 h-3 text-emerald-600" /> Connected (:8080)
-                                          </span>
+                                      {isLiveLabHandoffAvailable() ? (
+                                          isLocalLabOnline ? (
+                                              <span className="flex items-center gap-1 text-[10px] font-bold text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-full border border-emerald-200/80 shrink-0">
+                                                  <CheckCircle2 className="w-3 h-3 text-emerald-600" /> Connected (:8080)
+                                              </span>
+                                          ) : (
+                                              <span className="flex items-center gap-1 text-[10px] font-bold text-amber-700 bg-amber-50 px-2.5 py-1 rounded-full border border-amber-200/80 shrink-0">
+                                                  <HardDrive className="w-3 h-3 text-amber-600" /> Standby Mode
+                                              </span>
+                                          )
                                       ) : (
-                                          <span className="flex items-center gap-1 text-[10px] font-bold text-amber-700 bg-amber-50 px-2.5 py-1 rounded-full border border-amber-200/80 shrink-0">
-                                              <HardDrive className="w-3 h-3 text-amber-600" /> Standby Mode
+                                          <span className="flex items-center gap-1 text-[10px] font-bold text-slate-700 bg-slate-50 px-2.5 py-1 rounded-full border border-slate-200/80 shrink-0">
+                                              <Download className="w-3 h-3 text-slate-500" /> {HOSTED_LAB_DOWNLOAD_LABEL}
                                           </span>
                                       )}
                                   </div>
 
                                   <p className="text-xs text-slate-600 leading-relaxed">
-                                      Direct high-performance local database bridge. Streams verified literature, citation graphs, and synthesis snapshots into your S3A database (<code className="font-mono text-[11px] text-slate-800 bg-slate-100 px-1 py-0.5 rounded">scholar_live_lab.s3a</code>) running at <code className="font-mono text-[11px] text-slate-800 bg-slate-100 px-1 py-0.5 rounded">127.0.0.1:8080</code>.
+                                      {isLiveLabHandoffAvailable()
+                                          ? <>Direct high-performance local database bridge. Streams verified literature, citation graphs, and synthesis snapshots into your S3A database (<code className="font-mono text-[11px] text-slate-800 bg-slate-100 px-1 py-0.5 rounded">scholar_live_lab.s3a</code>) running at <code className="font-mono text-[11px] text-slate-800 bg-slate-100 px-1 py-0.5 rounded">127.0.0.1:8080</code>.</>
+                                          : HOSTED_LAB_HANDOFF_HINT}
                                   </p>
 
                                   <div className="p-3 bg-slate-50 border border-slate-100 rounded-xl space-y-1.5 text-xs">
@@ -2129,13 +2156,21 @@ const App: React.FC = () => {
                                           }
                                           setIsSyncingS3A(true);
                                           const payload = convertPapersToS3APayload(workspacePapers, query || 'Doctoral Research Synthesis');
+                                          const liveHandoff = isLiveLabHandoffAvailable();
                                           try {
-                                              const targetDb = userSettings.s3aTargetDb || DEFAULT_TARGET_DB;
-                                              const res = await syncToS3ALocalLab(payload, targetDb);
-                                              setToastMessage(`⚡ Successfully synced ${res.ingested_papers} papers into ${res.target_db}`);
+                                              if (!liveHandoff) {
+                                                  const saved = await downloadFallbackSnapshot(payload);
+                                                  setToastMessage(`Downloaded "${saved}" for your local lab.`);
+                                              } else {
+                                                  const targetDb = userSettings.s3aTargetDb || DEFAULT_TARGET_DB;
+                                                  const res = await syncToS3ALocalLab(payload, targetDb);
+                                                  setToastMessage(`⚡ Successfully synced ${res.ingested_papers} papers into ${res.target_db}`);
+                                              }
                                           } catch (err: any) {
                                               await downloadFallbackSnapshot(payload);
-                                              setToastMessage(`S3A local daemon offline. Exported portable .s3a file.`);
+                                              setToastMessage(liveHandoff
+                                                  ? `S3A local daemon offline. Exported portable .s3a file.`
+                                                  : `Downloaded a portable .s3a file for your local lab.`);
                                           } finally {
                                               setIsSyncingS3A(false);
                                           }
@@ -2144,8 +2179,11 @@ const App: React.FC = () => {
                                       className="flex-1 py-2.5 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2 shadow-2xs disabled:opacity-50 active:scale-[0.98]"
                                   >
                                       <Zap className="w-3.5 h-3.5 text-indigo-400" />
-                                      <span>{isSyncingS3A ? 'Syncing to S3A...' : `Sync Evidence (${workspacePapers.length})`}</span>
+                                      <span>{isSyncingS3A
+                                          ? (isLiveLabHandoffAvailable() ? 'Syncing to S3A...' : 'Downloading...')
+                                          : (isLiveLabHandoffAvailable() ? `Sync Evidence (${workspacePapers.length})` : HOSTED_LAB_DOWNLOAD_LABEL)}</span>
                                   </button>
+                                  {isLiveLabHandoffAvailable() && (
                                   <button
                                       onClick={async () => {
                                           setIsCheckingS3A(true);
@@ -2159,12 +2197,13 @@ const App: React.FC = () => {
                                           }
                                       }}
                                       disabled={isCheckingS3A}
-                                      className="px-3.5 py-2.5 border border-slate-200 rounded-xl hover:bg-slate-50 text-xs font-semibold text-slate-700 transition-all flex items-center gap-1.5 active:scale-95"
+                                      className="px-3.5 py-2.5 border border-slate-200 rounded-xl hover:bg-slate-50 text-xs font-semibold text-slate-700 transition-all flex items-center justify-center gap-1.5 active:scale-95"
                                       title="Test local daemon connection"
                                   >
                                       <RefreshCw className={`w-3.5 h-3.5 text-slate-500 ${isCheckingS3A ? 'animate-spin' : ''}`} />
                                       <span className="hidden sm:inline">Ping</span>
                                   </button>
+                                  )}
                               </div>
                           </div>
 

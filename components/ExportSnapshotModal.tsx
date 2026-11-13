@@ -29,7 +29,10 @@ import {
     S3ASnapshotPayload, 
     S3AIngestResponse,
     S3A_LOCAL_BASE,
-    DEFAULT_TARGET_DB
+    DEFAULT_TARGET_DB,
+    isLiveLabHandoffAvailable,
+    HOSTED_LAB_DOWNLOAD_LABEL,
+    HOSTED_LAB_HANDOFF_HINT,
 } from '../services/s3aBridgeService';
 import { importS3ASnapshotFile } from '../services/s3aWasmService';
 import {
@@ -95,13 +98,19 @@ export const ExportSnapshotModal: React.FC<ExportSnapshotModalProps> = ({
     const [simulatedPreview, setSimulatedPreview] = useState(false);
     const debugEnabled = isLabSyncDebugEnabled();
     const simulatedOnlineMode = debugEnabled && debugSimulatedToggle;
+    const liveHandoff = isLiveLabHandoffAvailable();
 
     const computedBaseName = buildScholarExportBaseName(exportFileName || searchQuery || projectName || 'research-session');
 
     // Re-check daemon health when modal opens
     useEffect(() => {
         if (isOpen) {
-            checkDaemonStatus();
+            if (isLiveLabHandoffAvailable()) {
+                checkDaemonStatus();
+            } else {
+                setIsDaemonOnline(false);
+                setIsCheckingDaemon(false);
+            }
             setSyncResult(null);
             setSyncError(null);
             setSimulatedPreview(false);
@@ -234,7 +243,9 @@ export const ExportSnapshotModal: React.FC<ExportSnapshotModalProps> = ({
                                 </span>
                             </div>
                             <p className="text-xs text-slate-500 font-normal">
-                                Direct zero-latency stream to local database or download portable snapshot
+                                {liveHandoff
+                                    ? 'Direct zero-latency stream to local database or download portable snapshot'
+                                    : HOSTED_LAB_HANDOFF_HINT}
                             </p>
                         </div>
                     </div>
@@ -288,44 +299,55 @@ export const ExportSnapshotModal: React.FC<ExportSnapshotModalProps> = ({
                     </div>
                 </div>
 
-                {/* S3A Local Lab Live Connection Status Bar */}
+                {/* Handoff status: download-first on https; live ping only on localhost http */}
                 <div className={`px-6 py-3 border-b text-xs transition-colors ${
-                    effectiveOnline 
+                    liveHandoff && effectiveOnline 
                         ? 'bg-emerald-50/70 border-emerald-100 text-emerald-900' 
                         : 'bg-slate-50 border-slate-100 text-slate-700'
                 }`}>
                     <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2.5">
                         <div className="flex items-center gap-2">
-                            {/* Status Indicator Dot */}
-                            {isCheckingDaemon ? (
-                                <RefreshCw className="w-3.5 h-3.5 text-slate-400 animate-spin" />
-                            ) : effectiveOnline ? (
-                                <span className="relative flex h-2.5 w-2.5">
-                                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                                    <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500"></span>
-                                </span>
+                            {liveHandoff ? (
+                                isCheckingDaemon ? (
+                                    <RefreshCw className="w-3.5 h-3.5 text-slate-400 animate-spin" />
+                                ) : effectiveOnline ? (
+                                    <span className="relative flex h-2.5 w-2.5">
+                                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                                        <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500"></span>
+                                    </span>
+                                ) : (
+                                    <span className="inline-block h-2.5 w-2.5 rounded-full bg-slate-300" />
+                                )
                             ) : (
-                                <span className="inline-block h-2.5 w-2.5 rounded-full bg-slate-300" />
+                                <Download className="w-3.5 h-3.5 text-slate-500" />
                             )}
 
                             <div className="flex items-center gap-1.5 font-medium">
-                                <span className={`font-semibold ${effectiveOnline ? 'text-emerald-950' : 'text-slate-900'}`}>
-                                    {isCheckingDaemon 
-                                        ? 'Pinging Local Lab daemon...' 
-                                        : isDaemonOnline
-                                            ? 'S3A Local Lab Online' 
-                                            : simulatedOnlineMode
-                                                ? 'Simulated'
-                                                : 'S3A Local Lab Offline'}
+                                <span className={`font-semibold ${liveHandoff && effectiveOnline ? 'text-emerald-950' : 'text-slate-900'}`}>
+                                    {!liveHandoff
+                                        ? HOSTED_LAB_DOWNLOAD_LABEL
+                                        : isCheckingDaemon 
+                                            ? 'Pinging Local Lab daemon...' 
+                                            : isDaemonOnline
+                                                ? 'S3A Local Lab Online' 
+                                                : simulatedOnlineMode
+                                                    ? 'Simulated'
+                                                    : 'S3A Local Lab Offline'}
                                 </span>
-                                <span className="font-mono text-[11px] opacity-70">
-                                    (127.0.0.1:8080)
-                                </span>
+                                {liveHandoff && (
+                                    <span className="font-mono text-[11px] opacity-70">
+                                        (127.0.0.1:8080)
+                                    </span>
+                                )}
                             </div>
                         </div>
 
                         <div className="flex items-center gap-3 self-end sm:self-auto text-[11px]">
-                            {effectiveOnline ? (
+                            {!liveHandoff ? (
+                                <span className="text-slate-500">
+                                    {HOSTED_LAB_HANDOFF_HINT}
+                                </span>
+                            ) : effectiveOnline ? (
                                 <span className="font-medium text-emerald-800 flex items-center gap-1">
                                     <Zap className="w-3 h-3 text-emerald-600" />
                                     Target DB: <code className="font-mono font-semibold bg-white/70 px-1 py-0.2 rounded border border-emerald-200">{DEFAULT_TARGET_DB}</code>
@@ -336,16 +358,18 @@ export const ExportSnapshotModal: React.FC<ExportSnapshotModalProps> = ({
                                 </span>
                             )}
 
-                            <button
-                                type="button"
-                                onClick={checkDaemonStatus}
-                                disabled={isCheckingDaemon}
-                                className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium bg-white border border-slate-200 text-slate-600 hover:text-slate-900 hover:border-slate-300 transition-colors shadow-2xs"
-                                title="Re-check local daemon at http://127.0.0.1:8080"
-                            >
-                                <RefreshCw className={`w-2.5 h-2.5 ${isCheckingDaemon ? 'animate-spin' : ''}`} />
-                                <span>Re-check</span>
-                            </button>
+                            {liveHandoff && (
+                                <button
+                                    type="button"
+                                    onClick={checkDaemonStatus}
+                                    disabled={isCheckingDaemon}
+                                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium bg-white border border-slate-200 text-slate-600 hover:text-slate-900 hover:border-slate-300 transition-colors shadow-2xs"
+                                    title="Re-check local daemon at http://127.0.0.1:8080"
+                                >
+                                    <RefreshCw className={`w-2.5 h-2.5 ${isCheckingDaemon ? 'animate-spin' : ''}`} />
+                                    <span>Re-check</span>
+                                </button>
+                            )}
                         </div>
                     </div>
                 </div>
@@ -750,14 +774,16 @@ export const ExportSnapshotModal: React.FC<ExportSnapshotModalProps> = ({
                                 ) : (
                                     <>
                                         <Download className="w-3.5 h-3.5" />
-                                        <span>Download Snapshot (.{selectedFormat})</span>
+                                        <span>{liveHandoff ? `Download Snapshot (.${selectedFormat})` : HOSTED_LAB_DOWNLOAD_LABEL}</span>
                                     </>
                                 )}
                             </button>
                         </div>
                     </div>
                     <p className="text-[11px] text-slate-500 text-right">
-                        Query settings are not saved in the file yet
+                        {liveHandoff
+                            ? 'Query settings are not saved in the file yet'
+                            : HOSTED_LAB_HANDOFF_HINT}
                     </p>
                 </div>
             </div>
