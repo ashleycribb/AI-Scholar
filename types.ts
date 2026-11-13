@@ -182,14 +182,13 @@ export interface ResearchPaper {
   isLaymanLoading?: boolean;
 
   // Reference lists & citations
-  references?: (PaperReference | ResearchPaper | string)[];
+  references?: (PaperReference | ResearchPaper | string | { id?: string; title?: string; doi?: string; openalex_id?: string; year?: number })[];
   referenceList?: (PaperReference | ResearchPaper | string)[];
   referenced_works?: string[];
   // Extracted content & structure for Scholar pack representation (Tile 12 / Tile 13)
   sections?: Array<{ id?: string; title?: string; heading?: string; content?: string; text?: string }>;
   figures?: Array<{ id?: string; caption?: string; label?: string; url?: string }>;
   tables?: Array<{ id?: string; caption?: string; label?: string; content?: string }>;
-  references?: Array<ResearchPaper | string | { id?: string; title?: string; doi?: string; openalex_id?: string; year?: number }>;
 }
 
 export type PublicationYearData = { year: number; count: number }[];
