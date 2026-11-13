@@ -278,8 +278,8 @@ const App: React.FC = () => {
   const [s3aSessionWarnings, setS3aSessionWarnings] = useState<string[]>([]);
   const [s3aExportError, setS3aExportError] = useState<string | null>(null);
 
-  const stagePaperInS3ASession = (paper: ResearchPaper) => {
-      writePaperToScholarPack(paper).then(res => {
+  const stagePaperInS3ASession = (paper: ResearchPaper, options?: { recordInclusionStatement?: boolean }) => {
+      writePaperToScholarPack(paper, options).then(res => {
           setS3aSessionWarnings(getSkippedPaperWarnings());
           if (res.skipped && res.warning) {
               setToastMessage(res.warning);
@@ -344,6 +344,12 @@ const App: React.FC = () => {
           workspaceEtagRef.current = res.etag;
           if (Array.isArray(res.data.papers) && res.data.papers.length > 0) {
             setWorkspacePapers(res.data.papers);
+            // Restage restored papers into the WASM session so a later .s3a
+            // export includes them. This is not a new inclusion decision, so
+            // do not record xAPI / Pass 1 statements.
+            res.data.papers.forEach((p: ResearchPaper) => {
+              stagePaperInS3ASession(p, { recordInclusionStatement: false });
+            });
           }
           if (Array.isArray(res.data.projects) && res.data.projects.length > 0) {
             setProjects(res.data.projects);
