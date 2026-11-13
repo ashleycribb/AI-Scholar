@@ -32,6 +32,11 @@ import {
     DEFAULT_TARGET_DB
 } from '../services/s3aBridgeService';
 import { importS3ASnapshotFile } from '../services/s3aWasmService';
+import {
+    isLabSyncDebugEnabled,
+    labSyncSuccessTitle,
+    resolveLabSyncAction,
+} from './exportSnapshotLabSync';
 
 interface ExportSnapshotModalProps {
     isOpen: boolean;
@@ -86,7 +91,10 @@ export const ExportSnapshotModal: React.FC<ExportSnapshotModalProps> = ({
     const [syncResult, setSyncResult] = useState<S3AIngestResponse | null>(null);
     const [syncError, setSyncError] = useState<string | null>(null);
     const [selectedFormat, setSelectedFormat] = useState<'s3a' | 'json'>('s3a');
-    const [simulatedOnlineMode, setSimulatedOnlineMode] = useState(false);
+    const [debugSimulatedToggle, setDebugSimulatedToggle] = useState(false);
+    const [simulatedPreview, setSimulatedPreview] = useState(false);
+    const debugEnabled = isLabSyncDebugEnabled();
+    const simulatedOnlineMode = debugEnabled && debugSimulatedToggle;
 
     const computedBaseName = buildScholarExportBaseName(exportFileName || searchQuery || projectName || 'research-session');
 
@@ -96,6 +104,7 @@ export const ExportSnapshotModal: React.FC<ExportSnapshotModalProps> = ({
             checkDaemonStatus();
             setSyncResult(null);
             setSyncError(null);
+            setSimulatedPreview(false);
         }
     }, [isOpen]);
 
@@ -119,13 +128,18 @@ export const ExportSnapshotModal: React.FC<ExportSnapshotModalProps> = ({
         setTimeout(() => setCopied(false), 2000);
     };
 
-    // Effective online state: actual daemon online or testing simulation mode
-    const effectiveOnline = isDaemonOnline || simulatedOnlineMode;
+    // Effective online chrome: a real daemon, or a ?debug=1 preview labelled Simulated.
+    const effectiveOnline = Boolean(isDaemonOnline) || simulatedOnlineMode;
+    const successTitle = labSyncSuccessTitle({
+        realIngestSucceeded: syncResult !== null,
+        simulated: simulatedPreview,
+    });
 
     /**
      * Primary Save / Snapshot action:
-     * 1. If Local Lab is Online: Automatically stream payload into local S3A DB in < 1ms
-     * 2. If Local Lab is Offline: Fall back gracefully to generating portable snapshot file
+     * 1. If Local Lab is Online: stream payload into the local S3A DB (real ingest only)
+     * 2. If ?debug=1 simulator is on and the daemon is offline: show a Simulated preview (never a real success)
+     * 3. Otherwise: download a portable snapshot file
      */
     const handlePrimarySaveAction = async () => {
         if (workspacePapers.length === 0) return;
@@ -137,39 +151,34 @@ export const ExportSnapshotModal: React.FC<ExportSnapshotModalProps> = ({
             services
         );
 
-        // Check live daemon status first
         setIsSyncingToLab(true);
         setSyncError(null);
+        setSimulatedPreview(false);
+        setSyncResult(null);
 
-        if (effectiveOnline) {
+        const action = resolveLabSyncAction({
+            daemonOnline: Boolean(isDaemonOnline),
+            debugEnabled,
+            simulatedToggle: debugSimulatedToggle,
+        });
+
+        if (action === 'ingest-real') {
             try {
-                let response: S3AIngestResponse;
-                if (isDaemonOnline) {
-                    response = await syncToS3ALocalLab(payload, DEFAULT_TARGET_DB);
-                } else {
-                    // Simulated local daemon ingest for sandbox/preview demonstration
-                    await new Promise(res => setTimeout(res, 80));
-                    response = {
-                        status: 'success',
-                        message: 'Session streamed successfully into local S3A high-performance database.',
-                        target_db: DEFAULT_TARGET_DB,
-                        ingested_papers: workspacePapers.length,
-                        query: searchQuery || projectName || 'Scholarly Research Session'
-                    };
-                }
-
+                const response = await syncToS3ALocalLab(payload, DEFAULT_TARGET_DB);
                 setSyncResult(response);
                 if (onSyncSuccess) onSyncSuccess(response);
             } catch (err: any) {
                 console.warn("Direct S3A ingest encountered error, falling back to download:", err);
                 setSyncError(err?.message || "Failed to connect to local S3A daemon");
-                // Fallback to download
                 await downloadFallbackSnapshot(payload, computedBaseName, selectedFormat);
             } finally {
                 setIsSyncingToLab(false);
             }
+        } else if (action === 'simulated-preview') {
+            // Debug-only preview: never call onSyncSuccess and never use the real success title.
+            setSimulatedPreview(true);
+            setIsSyncingToLab(false);
         } else {
-            // Offline fallback: download portable S3A snapshot (.s3a or .json)
             setIsSyncingToLab(false);
             try {
                 await downloadFallbackSnapshot(payload, computedBaseName, selectedFormat);
@@ -303,18 +312,15 @@ export const ExportSnapshotModal: React.FC<ExportSnapshotModalProps> = ({
                                 <span className={`font-semibold ${effectiveOnline ? 'text-emerald-950' : 'text-slate-900'}`}>
                                     {isCheckingDaemon 
                                         ? 'Pinging Local Lab daemon...' 
-                                        : effectiveOnline 
+                                        : isDaemonOnline
                                             ? 'S3A Local Lab Online' 
-                                            : 'S3A Local Lab Offline'}
+                                            : simulatedOnlineMode
+                                                ? 'Simulated'
+                                                : 'S3A Local Lab Offline'}
                                 </span>
                                 <span className="font-mono text-[11px] opacity-70">
                                     (127.0.0.1:8080)
                                 </span>
-                                {simulatedOnlineMode && !isDaemonOnline && (
-                                    <span className="px-1.5 py-0.2 text-[9px] font-semibold bg-emerald-200/80 text-emerald-900 rounded">
-                                        Simulated Online
-                                    </span>
-                                )}
                             </div>
                         </div>
 
@@ -346,21 +352,33 @@ export const ExportSnapshotModal: React.FC<ExportSnapshotModalProps> = ({
 
                 {/* Body Content */}
                 <div className="p-6 space-y-5 max-h-[60vh] overflow-y-auto">
-                    {/* Success Confirmation Banner */}
-                    {syncResult && (
+                    {/* Success Confirmation Banner: real title only after a real ingest response */}
+                    {successTitle && (
                         <div className="p-4 bg-emerald-50 border border-emerald-200 rounded-xl space-y-1.5 animate-in fade-in slide-in-from-top-2 duration-200">
                             <div className="flex items-center justify-between">
                                 <div className="flex items-center gap-2 text-emerald-900 font-semibold text-xs">
                                     <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
-                                    <span>Synced to Local Research Lab</span>
+                                    <span>{successTitle}</span>
                                 </div>
-                                <span className="text-[10px] font-mono text-emerald-700 bg-emerald-100/80 px-2 py-0.5 rounded">
-                                    Latency &lt; 1ms
-                                </span>
+                                {syncResult ? (
+                                    <span className="text-[10px] font-mono text-emerald-700 bg-emerald-100/80 px-2 py-0.5 rounded">
+                                        Latency &lt; 1ms
+                                    </span>
+                                ) : (
+                                    <span className="text-[10px] font-mono text-emerald-700 bg-emerald-100/80 px-2 py-0.5 rounded">
+                                        Simulated
+                                    </span>
+                                )}
                             </div>
-                            <p className="text-xs text-emerald-800 pl-6 leading-relaxed">
-                                Streamed <strong>{syncResult.ingested_papers} papers</strong> directly into local database <code className="font-mono text-[11px] bg-white px-1 py-0.5 rounded border border-emerald-200">{syncResult.target_db}</code>. You can continue confidential full-text analysis and literature synthesis locally.
-                            </p>
+                            {syncResult ? (
+                                <p className="text-xs text-emerald-800 pl-6 leading-relaxed">
+                                    Streamed <strong>{syncResult.ingested_papers} papers</strong> directly into local database <code className="font-mono text-[11px] bg-white px-1 py-0.5 rounded border border-emerald-200">{syncResult.target_db}</code>. You can continue confidential full-text analysis and literature synthesis locally.
+                                </p>
+                            ) : (
+                                <p className="text-xs text-emerald-800 pl-6 leading-relaxed">
+                                    Simulated preview only. Nothing was written to the local lab.
+                                </p>
+                            )}
                         </div>
                     )}
 
@@ -427,7 +445,7 @@ export const ExportSnapshotModal: React.FC<ExportSnapshotModalProps> = ({
                                                 <Zap className="w-3.5 h-3.5 text-emerald-600" />
                                                 Mode 1: Live S3A Stream
                                             </span>
-                                            {effectiveOnline && (
+                                            {isDaemonOnline && (
                                                 <span className="text-[9px] font-bold uppercase bg-emerald-100 text-emerald-800 px-1.5 py-0.2 rounded">
                                                     Active
                                                 </span>
@@ -460,21 +478,26 @@ export const ExportSnapshotModal: React.FC<ExportSnapshotModalProps> = ({
                                     </div>
                                 </div>
 
-                                {/* Sandbox Simulation Toggle for demonstration & evaluation */}
-                                <div className="pt-2 border-t border-slate-200/60 flex items-center justify-between text-[11px] text-slate-500">
-                                    <span>Daemon test simulator (for environments without localhost daemon):</span>
-                                    <button
-                                        type="button"
-                                        onClick={() => setSimulatedOnlineMode(!simulatedOnlineMode)}
-                                        className={`px-2 py-0.5 rounded text-[10px] font-medium transition-colors ${
-                                            simulatedOnlineMode
-                                                ? 'bg-emerald-600 text-white'
-                                                : 'bg-slate-200 hover:bg-slate-300 text-slate-700'
-                                        }`}
-                                    >
-                                        {simulatedOnlineMode ? 'Simulating Online' : 'Simulate Online'}
-                                    </button>
-                                </div>
+                                {/* Dev-only simulator: visible with ?debug=1, always labelled Simulated */}
+                                {debugEnabled && (
+                                    <div className="pt-2 border-t border-slate-200/60 flex items-center justify-between text-[11px] text-slate-500">
+                                        <span>Debug lab simulator (?debug=1 only):</span>
+                                        <button
+                                            type="button"
+                                            onClick={() => {
+                                                setDebugSimulatedToggle(!debugSimulatedToggle);
+                                                setSimulatedPreview(false);
+                                            }}
+                                            className={`px-2 py-0.5 rounded text-[10px] font-medium transition-colors ${
+                                                simulatedOnlineMode
+                                                    ? 'bg-emerald-600 text-white'
+                                                    : 'bg-slate-200 hover:bg-slate-300 text-slate-700'
+                                            }`}
+                                        >
+                                            Simulated
+                                        </button>
+                                    </div>
+                                )}
                             </div>
 
                             {/* File Name & Format Configuration */}
@@ -714,10 +737,15 @@ export const ExportSnapshotModal: React.FC<ExportSnapshotModalProps> = ({
                                         <RefreshCw className="w-3.5 h-3.5 animate-spin" />
                                         <span>Bundling...</span>
                                     </>
-                                ) : effectiveOnline ? (
+                                ) : isDaemonOnline ? (
                                     <>
                                         <Zap className="w-3.5 h-3.5 text-emerald-200" />
                                         <span>Sync to Local Research Lab</span>
+                                    </>
+                                ) : simulatedOnlineMode ? (
+                                    <>
+                                        <Zap className="w-3.5 h-3.5 text-emerald-200" />
+                                        <span>Simulated</span>
                                     </>
                                 ) : (
                                     <>
