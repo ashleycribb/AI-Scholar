@@ -290,6 +290,41 @@ let sessionRecordErrors: string[] = [];
 // Track papers skipped because they had no OpenAlex ID
 let sessionSkippedPaperWarnings: string[] = [];
 
+/** Full bibliographic record for a selected paper (stored in the .s3a JSON trailer). */
+export interface PaperReferenceIds {
+  openalex_id?: string;
+  doi?: string;
+  title?: string;
+}
+
+export interface PaperMetadataRecord {
+  title: string;
+  authors: string;
+  abstract: string;
+  venue?: string;
+  year: number;
+  doi?: string;
+  openalex_id?: string;
+  arxiv_id?: string;
+  oa_pdf_url?: string;
+  arxiv_html_url?: string;
+  references: PaperReferenceIds[];
+  selected_at: string;
+}
+
+export const PAPER_METADATA_TRAILER_MAGIC = 'S3AJSON1';
+export const PAPER_METADATA_SCHEMA = 'scholar-explorer.paper-metadata.v1';
+
+const sessionPaperMetadata = new Map<string, PaperMetadataRecord>();
+
+function clearSessionPaperMetadata(): void {
+  sessionPaperMetadata.clear();
+}
+
+export function getSessionPaperMetadataRecords(): PaperMetadataRecord[] {
+  return [...sessionPaperMetadata.values()];
+}
+
 export function extractCleanOpenAlexId(rawId?: string): string {
   if (!rawId || typeof rawId !== 'string') return '';
   const trimmed = rawId.trim();
@@ -901,6 +936,7 @@ async function _doInitializeS3ASession(forceNew = false): Promise<WasmAgentSnaps
   aiSteps = [];
   papersCount = 0;
   sessionAddedPaperIds.clear();
+  clearSessionPaperMetadata();
   sessionRecordErrors = [];
   sessionSkippedPaperWarnings = [];
   lastPreflightStatus = 'ok';
@@ -1476,6 +1512,7 @@ export function resetDualSession(userSession?: { actor_uuid?: string; agent_uuid
   try {
     activeSnapshot = new_session(currentSessionUuidHex);
     sessionAddedPaperIds.clear();
+    clearSessionPaperMetadata();
     sessionRecordErrors = [];
     sessionSkippedPaperWarnings = [];
     papersCount = 0;
@@ -2024,6 +2061,18 @@ export async function exportS3ASession(options: S3AExportOptions = {}): Promise<
     throw new Error(errMsg);
   }
 
+  // Append the full-paper metadata JSON trailer. from_bytes ignores trailing
+  // bytes (verified against this wasm), so the engine container stays loadable.
+  const bytesWithMetadata = attachPaperMetadataTrailer(bytes, getSessionPaperMetadataRecords());
+  try {
+    const trailerCheck = from_bytes(bytesWithMetadata);
+    try { trailerCheck.free(); } catch (_f) {}
+  } catch (verifyErr: any) {
+    const errMsg = `Export validation failed after metadata trailer: ${verifyErr?.message || verifyErr}`;
+    console.error('[S3A Export] Pre-download verification failed:', errMsg);
+    throw new Error(errMsg);
+  }
+
   // Name the file scholar-<project-or-session-name>-<YYYY-MM-DD>.s3a
   const now = new Date();
   const yyyy = now.getFullYear();
@@ -2045,7 +2094,7 @@ export async function exportS3ASession(options: S3AExportOptions = {}): Promise<
 
   // Save as Blob with type "application/octet-stream" when running in browser
   if (typeof document !== 'undefined') {
-    const blob = new Blob([bytes], { type: 'application/octet-stream' });
+    const blob = new Blob([bytesWithMetadata], { type: 'application/octet-stream' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
@@ -2056,7 +2105,7 @@ export async function exportS3ASession(options: S3AExportOptions = {}): Promise<
     URL.revokeObjectURL(url);
   }
 
-  return { filename, bytes, warnings: [...sessionSkippedPaperWarnings] };
+  return { filename, bytes: bytesWithMetadata, warnings: [...sessionSkippedPaperWarnings] };
 }
 
 /**
@@ -2080,6 +2129,12 @@ export async function importS3ASnapshotFile(file: File): Promise<WasmAgentSnapsh
     const arrayBuffer = await file.arrayBuffer();
     const bytes = new Uint8Array(arrayBuffer);
     const snapshot = from_bytes(bytes);
+    const imported = readPaperMetadataTrailer(bytes);
+    clearSessionPaperMetadata();
+    for (const record of imported) {
+      const key = record.openalex_id || record.doi || record.title;
+      if (key) sessionPaperMetadata.set(key, record);
+    }
     return snapshot;
   } catch (err: any) {
     const errorMsg = 'This is not an S3A file';
@@ -2491,6 +2546,160 @@ export function computeCrc32c(bytes: Uint8Array, initial = 0): number {
   return (crc ^ 0xffffffff) >>> 0;
 }
 
+/**
+ * Extract an arXiv id from a URL, DOI (10.48550/arXiv.…), or arXiv: label.
+ * Version suffixes (vN) are stripped. Does not fetch any remote resource.
+ */
+export function extractArxivId(text?: string | null): string | undefined {
+  if (!text || typeof text !== 'string') return undefined;
+  const doiMatch = text.match(/10\.48550\/arxiv\.([^\s/?#]+)/i);
+  if (doiMatch) return normalizeArxivId(doiMatch[1]);
+  const urlMatch = text.match(/arxiv\.org\/(?:abs|pdf|html|e-print)\/([^\s?#]+)/i);
+  if (urlMatch) return normalizeArxivId(urlMatch[1].replace(/\.pdf$/i, ''));
+  const labelMatch = text.match(/\barxiv:\s*([a-zA-Z0-9.\-]+(?:\/[0-9]{7})?)/i);
+  if (labelMatch) return normalizeArxivId(labelMatch[1]);
+  return undefined;
+}
+
+function normalizeArxivId(id: string): string {
+  return id.replace(/v\d+$/i, '').replace(/\/+$/, '').trim();
+}
+
+/** Record the official HTML edition link only; do not fetch the hosted page. */
+export function arxivHtmlUrlForId(arxivId: string): string {
+  return `https://arxiv.org/html/${arxivId}`;
+}
+
+export function extractArxivIdFromPaper(paper: ResearchPaper): string | undefined {
+  const fields = [
+    (paper as any).arxiv_id,
+    paper.doi,
+    paper.pdfURL,
+    paper.openAccessPdfUrl,
+    paper.sourceURL,
+    paper.id,
+    paper.openalex_id,
+  ];
+  for (const field of fields) {
+    const id = extractArxivId(typeof field === 'string' ? field : undefined);
+    if (id) return id;
+  }
+  return undefined;
+}
+
+export function referenceIdsFromPaper(paper: ResearchPaper): PaperReferenceIds[] {
+  const raw = Array.isArray(paper.references) ? paper.references : [];
+  const out: PaperReferenceIds[] = [];
+  for (const r of raw) {
+    if (typeof r === 'string') {
+      const trimmed = r.trim();
+      if (!trimmed) continue;
+      const arxiv = extractArxivId(trimmed);
+      if (/^10\./.test(trimmed)) out.push({ doi: trimmed });
+      else if (/^W[1-9][0-9]*/i.test(trimmed)) out.push({ openalex_id: trimmed });
+      else if (arxiv) out.push({ doi: `10.48550/arXiv.${arxiv}`, title: trimmed });
+      else out.push({ title: trimmed });
+      continue;
+    }
+    if (!r || typeof r !== 'object') continue;
+    const rec: PaperReferenceIds = {};
+    if (r.openalex_id) rec.openalex_id = String(r.openalex_id);
+    if (r.doi) rec.doi = String(r.doi).replace(/^https?:\/\/doi\.org\//i, '');
+    if (r.title) rec.title = String(r.title);
+    if (!rec.openalex_id && (r as any).id && /^W[1-9][0-9]*/i.test(String((r as any).id))) {
+      rec.openalex_id = String((r as any).id);
+    }
+    if (rec.openalex_id || rec.doi || rec.title) out.push(rec);
+  }
+  return out;
+}
+
+export function buildPaperMetadataRecord(
+  paper: ResearchPaper,
+  selectedAt: string = new Date().toISOString()
+): PaperMetadataRecord {
+  const arxivId = extractArxivIdFromPaper(paper);
+  const doi = paper.doi ? paper.doi.replace(/^https?:\/\/doi\.org\//i, '').trim() : undefined;
+  const openalex = extractCleanOpenAlexId(paper.openalex_id || paper.id) || undefined;
+  const venue = paper.journal || (paper as any).venue || undefined;
+  const oa = paper.pdfURL || paper.openAccessPdfUrl || undefined;
+  const record: PaperMetadataRecord = {
+    title: paper.title || '',
+    authors: typeof paper.authors === 'string' ? paper.authors : (Array.isArray(paper.authors) ? (paper.authors as string[]).join(', ') : ''),
+    abstract: paper.abstract || '',
+    year: (typeof paper.year === 'number' && Number.isFinite(paper.year)) ? Math.floor(paper.year) : 0,
+    references: referenceIdsFromPaper(paper),
+    selected_at: selectedAt,
+  };
+  if (venue) record.venue = String(venue);
+  if (doi) record.doi = doi;
+  if (openalex) record.openalex_id = openalex;
+  if (arxivId) {
+    record.arxiv_id = arxivId;
+    record.arxiv_html_url = arxivHtmlUrlForId(arxivId);
+  }
+  if (oa) record.oa_pdf_url = oa;
+  return record;
+}
+
+function rememberPaperMetadata(dedupeKey: string, paper: ResearchPaper): void {
+  const existing = sessionPaperMetadata.get(dedupeKey);
+  sessionPaperMetadata.set(
+    dedupeKey,
+    buildPaperMetadataRecord(paper, existing?.selected_at)
+  );
+}
+
+/**
+ * Append a versioned JSON paper-metadata trailer after the WASM engine container.
+ * Tile 12 / Tile 15 have no slot for title, abstract, or URLs; this trailer is the
+ * existing-file place to keep a full record until the wasm API can store one.
+ */
+export function attachPaperMetadataTrailer(
+  engineBytes: Uint8Array,
+  records: PaperMetadataRecord[]
+): Uint8Array {
+  const json = new TextEncoder().encode(JSON.stringify({
+    schema: PAPER_METADATA_SCHEMA,
+    papers: records,
+  }));
+  const header = new Uint8Array(16);
+  const headerView = new DataView(header.buffer);
+  header.set(new TextEncoder().encode(PAPER_METADATA_TRAILER_MAGIC), 0);
+  headerView.setUint32(8, json.length, true);
+  headerView.setUint32(12, computeCrc32c(json), true);
+  const trailerLen = 16 + json.length + 4;
+  const out = new Uint8Array(engineBytes.length + trailerLen);
+  out.set(engineBytes, 0);
+  out.set(header, engineBytes.length);
+  out.set(json, engineBytes.length + 16);
+  new DataView(out.buffer, out.byteOffset + out.length - 4, 4).setUint32(0, trailerLen, true);
+  return out;
+}
+
+export function readPaperMetadataTrailer(bytes: Uint8Array): PaperMetadataRecord[] {
+  if (bytes.length < 20) return [];
+  const trailerLen = new DataView(bytes.buffer, bytes.byteOffset + bytes.length - 4, 4).getUint32(0, true);
+  if (trailerLen < 20 || trailerLen > bytes.length) return [];
+  const start = bytes.length - trailerLen;
+  const magic = new TextDecoder('utf-8').decode(bytes.subarray(start, start + 8));
+  if (magic !== PAPER_METADATA_TRAILER_MAGIC) return [];
+  const headerView = new DataView(bytes.buffer, bytes.byteOffset + start, 16);
+  const jsonLen = headerView.getUint32(8, true);
+  const crc = headerView.getUint32(12, true);
+  if (16 + jsonLen + 4 !== trailerLen) return [];
+  if (start + 16 + jsonLen > bytes.length - 4) return [];
+  const jsonBytes = bytes.subarray(start + 16, start + 16 + jsonLen);
+  if (computeCrc32c(jsonBytes) !== crc) return [];
+  try {
+    const parsed = JSON.parse(new TextDecoder('utf-8').decode(jsonBytes));
+    if (parsed?.schema !== PAPER_METADATA_SCHEMA || !Array.isArray(parsed.papers)) return [];
+    return parsed.papers as PaperMetadataRecord[];
+  } catch {
+    return [];
+  }
+}
+
 let sessionDeltaSeq = 1;
 
 export function getSessionDeltaSeq(): number {
@@ -2738,6 +2947,10 @@ export async function writePaperToScholarPack(
     }
   });
 
+  // Full bibliographic record lives in the export trailer (wasm add_paper has
+  // no title/authors/abstract/URL fields). Restage keeps the original selected_at.
+  rememberPaperMetadata(dedupeKey, paper);
+
   // 6. Consent-gated tracing (Pass 1 selection only when consent is granted).
   // Restaging a restored queue must not record a new inclusion statement.
   let tracingEmitted = false;
@@ -2839,6 +3052,7 @@ export interface ScholarPackParsed {
   papers: ScholarPackPaper[];
   edges: ScholarPackEdge[];
   manifest: ScholarPackManifest | null;
+  paperMetadata: PaperMetadataRecord[];
 }
 
 /**
@@ -2865,6 +3079,7 @@ export function readScholarPack(bytes: Uint8Array): ScholarPackParsed {
     papers: [],
     edges: [],
     manifest: null,
+    paperMetadata: [],
   };
 
   for (let i = 0; i < tileCount; i++) {
@@ -2936,6 +3151,7 @@ export function readScholarPack(bytes: Uint8Array): ScholarPackParsed {
     }
   }
 
+  parsed.paperMetadata = readPaperMetadataTrailer(bytes);
   return parsed;
 }
 
