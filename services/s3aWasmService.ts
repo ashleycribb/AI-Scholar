@@ -1951,17 +1951,21 @@ if (typeof window !== 'undefined') {
     triggerBackgroundFlush('interval-30s');
   }, 30000);
 
-  // On pagehide
-  window.addEventListener('pagehide', () => {
-    triggerBackgroundFlush('pagehide');
-  });
+  // On pagehide (guard: bun/test stubs may have window without addEventListener)
+  if (typeof window.addEventListener === 'function') {
+    window.addEventListener('pagehide', () => {
+      triggerBackgroundFlush('pagehide');
+    });
+  }
 
   // On visibilitychange (when user switches tabs or hides page)
-  document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'hidden') {
-      triggerBackgroundFlush('visibilitychange');
-    }
-  });
+  if (typeof document !== 'undefined' && typeof document.addEventListener === 'function') {
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'hidden') {
+        triggerBackgroundFlush('visibilitychange');
+      }
+    });
+  }
 }
 
 /// -------------------------------------------------------------
@@ -2585,9 +2589,20 @@ export interface ScholarPackWriteResult {
  * - Dual UUID: links human researcher (actor_uuid) and AI assistant (agent_uuid).
  * - Consent-gated tracing: Pass 1 human selection statement is emitted ONLY if research logging consent is granted.
  */
+export interface WritePaperToScholarPackOptions {
+  actorUuid?: string;
+  agentUuid?: string;
+  /**
+   * When false, the paper is written to the pack without a Pass 1 / xAPI
+   * inclusion statement. Used when restaging a restored queue: restore is
+   * not a new inclusion decision. Default true (real selection).
+   */
+  recordInclusionStatement?: boolean;
+}
+
 export async function writePaperToScholarPack(
   paper: ResearchPaper,
-  options?: { actorUuid?: string; agentUuid?: string }
+  options?: WritePaperToScholarPackOptions
 ): Promise<ScholarPackWriteResult> {
   const session = getDualSessionState();
   const actorUuid = options?.actorUuid || session.actor_uuid;
@@ -2723,12 +2738,14 @@ export async function writePaperToScholarPack(
     }
   });
 
-  // 6. Consent-gated tracing (Pass 1 selection only when consent is granted)
+  // 6. Consent-gated tracing (Pass 1 selection only when consent is granted).
+  // Restaging a restored queue must not record a new inclusion statement.
   let tracingEmitted = false;
+  const recordInclusionStatement = options?.recordInclusionStatement !== false;
   const consented = await getResearchLoggingConsent();
   const consentState = await getStoredConsentState();
 
-  if (consented && consentState === 'granted') {
+  if (recordInclusionStatement && consented && consentState === 'granted') {
     try {
       const user = authService.getUser();
       const resolvedActorName = user?.displayName || user?.name || 'Scholar Researcher';
@@ -2753,6 +2770,23 @@ export async function writePaperToScholarPack(
     edgesCount,
     tracingEmitted,
   };
+}
+
+/**
+ * Writes every paper in the current selection queue into the in-memory WASM
+ * session. Defaults to not recording inclusion statements so a restored queue
+ * can be restaged without treating restore as a new selection.
+ */
+export async function stageQueuePapersInSession(
+  papers: ResearchPaper[],
+  options?: WritePaperToScholarPackOptions
+): Promise<ScholarPackWriteResult[]> {
+  const recordInclusionStatement = options?.recordInclusionStatement ?? false;
+  const results: ScholarPackWriteResult[] = [];
+  for (const paper of papers) {
+    results.push(await writePaperToScholarPack(paper, { ...options, recordInclusionStatement }));
+  }
+  return results;
 }
 
 // -------------------------------------------------------------

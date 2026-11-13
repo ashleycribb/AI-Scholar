@@ -9,7 +9,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import type { ResearchPaper } from '../types';
-import { exportS3ASession } from './s3aWasmService';
+import { exportS3ASession, stageQueuePapersInSession } from './s3aWasmService';
 
 export {
   S3A_LOCAL_BASE,
@@ -83,6 +83,50 @@ export function convertPapersToS3APayload(
 }
 
 /**
+ * Reconstructs ResearchPaper records from an S3A snapshot payload so a
+ * download can be built from the current selection queue (including papers
+ * that were restored into the queue but never restaged into the WASM session).
+ */
+export function researchPapersFromSnapshotPayload(payload: S3ASnapshotPayload): ResearchPaper[] {
+  const ids = Array.isArray(payload.selected_work_ids) ? payload.selected_work_ids : [];
+  return (payload.papers || []).map((p, i) => {
+    const id = (ids[i] && String(ids[i]).trim()) || (p.doi ? String(p.doi) : '') || p.title;
+    const authors = Array.isArray(p.authors)
+      ? p.authors.join(', ')
+      : (typeof p.authors === 'string' ? p.authors : '');
+    const yearRaw = p.year;
+    const year = typeof yearRaw === 'number' && Number.isFinite(yearRaw)
+      ? Math.floor(yearRaw)
+      : (typeof yearRaw === 'string' ? parseInt(yearRaw, 10) || 0 : 0);
+    return {
+      id,
+      openalex_id: ids[i] || undefined,
+      title: p.title,
+      doi: p.doi,
+      year,
+      authors,
+      abstract: p.abstract || '',
+      pdfURL: p.open_access_pdf_url,
+    };
+  });
+}
+
+/**
+ * Stages every paper in the payload into the WASM session (without recording
+ * new inclusion statements) and exports a real .s3a snapshot. Used by the
+ * portable download path so a restored queue is not omitted.
+ */
+export async function exportS3ASnapshotFromPayload(
+  payload: S3ASnapshotPayload,
+  fileName?: string
+): Promise<{ filename: string; bytes: Uint8Array; warnings: string[] }> {
+  const papers = researchPapersFromSnapshotPayload(payload);
+  await stageQueuePapersInSession(papers, { recordInclusionStatement: false });
+  const baseName = buildScholarExportBaseName(fileName || payload.query || 'research-session');
+  return exportS3ASession({ projectOrSessionName: baseName });
+}
+
+/**
  * Builds the standard export base filename `scholar-<name>-<YYYY-MM-DD>`
  * where `<name>` is a slug of the project name or search query and `<YYYY-MM-DD>` is the local date.
  */
@@ -131,9 +175,7 @@ export async function downloadFallbackSnapshot(
     return jsonFilename;
   }
 
-  const result = await exportS3ASession({
-    projectOrSessionName: baseName
-  });
+  const result = await exportS3ASnapshotFromPayload(payload, fileName || payload.query || 'research-session');
   return result.filename;
 }
 
