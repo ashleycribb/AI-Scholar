@@ -272,17 +272,17 @@ export const synthesizeReport = async (topic: string, papers: ResearchPaper[], m
     // Convert to TOON.
     const context = papersToToonCollection(uniquePapers.slice(0, 50)); 
     
-    const prompt = `Act as a Principal Investigator. Write a rigorous literature review on: "${topic}".
+    const prompt = `You are a literature-review coach, not a ghostwriter. Do not write a literature review, chapter, or any prose the researcher could paste in as their own. Produce a coaching brief the researcher can use to write their own review of: "${topic}".
     
     Source Material (TOON):
     ${context}
     
     Instructions:
-    1. Organize the report into 4-6 thematic sections.
-    2. For each section, output a list of **Claims**. 
-    3. **Verification**: For every claim, you MUST cite the source ID (e.g., "#1") found in the TOON block. 
-    4. Assign a **confidence score** (0.0 - 1.0) to each claim based on how strongly the source supports it.
-    5. Be critical. If sources conflict, note it in a separate claim.
+    1. Organize the brief into short sections such as guiding questions, concepts (claim, evidence, gaps, Keshav's three-pass reading), and next steps.
+    2. For each section, output a list of **Claims** that are actually coaching notes: questions to ask, concepts to explain, or next steps to take — never review paragraphs.
+    3. **Verification**: For every note that refers to a source, cite the source ID (e.g., "#1") found in the TOON block.
+    4. Assign a **confidence score** (0.0 - 1.0) only when pointing at source support the researcher should verify themselves.
+    5. If sources appear to conflict, ask the researcher how they would judge the conflict. Do not resolve it for them.
     
     Return JSON matching the schema.`;
 
