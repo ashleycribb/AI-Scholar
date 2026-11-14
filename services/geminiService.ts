@@ -77,15 +77,15 @@ export const generateSummaryForPapers = async (papers: ResearchPaper[], length: 
  * Generates optimal search queries for academic databases based on a user's natural language question.
  */
 export const generateSearchQueries = async (question: string): Promise<string[]> => {
-    const prompt = `Suggest academic search queries to retrieve relevant papers to answer the following research question. The search queries must be short (2-4 words), technical, and comma separated.
-    
-    Question: ${question}
+    const systemInstruction = `Suggest academic search queries to retrieve relevant papers to answer the user's research question. The search queries must be short (2-4 words), technical, and comma separated.
+
     Search queries:`;
 
     try {
         const response = await runWithRetry<GenerateContentResponse>(() => ai.models.generateContent({
             model: "gemini-3-flash-preview",
-            contents: prompt,
+            contents: question,
+            config: { systemInstruction },
         }));
         
         const text = response.text || "";
@@ -132,15 +132,14 @@ export const generateLaymanSummary = async (paper: ResearchPaper): Promise<strin
  * Used to expand search scope based on semantic predictions.
  */
 export const extractKeywordsFromText = async (text: string): Promise<string[]> => {
-    const prompt = `Extract 3 high-impact, technical academic search keywords from this text that would yield similar research papers.
-    Return only the keywords, separated by commas.
-    
-    Text: ${text}`;
+    const systemInstruction = `Extract 3 high-impact, technical academic search keywords from the user's text that would yield similar research papers.
+    Return only the keywords, separated by commas.`;
 
     try {
         const response = await runWithRetry<GenerateContentResponse>(() => ai.models.generateContent({
             model: "gemini-3-flash-preview",
-            contents: prompt,
+            contents: text,
+            config: { systemInstruction },
         }));
         return (response.text || "").split(',').map(s => s.trim()).filter(Boolean);
     } catch (e) {
@@ -153,7 +152,7 @@ export const extractKeywordsFromText = async (text: string): Promise<string[]> =
  * This is used for HyDE (Hypothetical Document Embeddings).
  */
 export const generateHypotheticalAnswer = async (query: string): Promise<string> => {
-  const prompt = `Act as an expert academic researcher. Generate a high-quality, dense hypothetical abstract for a peer-reviewed paper that provides a comprehensive answer to the following research question: "${query}".
+  const systemInstruction = `Act as an expert academic researcher. Generate a high-quality, dense hypothetical abstract for a peer-reviewed paper that provides a comprehensive answer to the user's research question.
 
 The abstract should:
 1. Use professional academic terminology.
@@ -166,7 +165,8 @@ The goal is to generate a document that is semantically similar to real relevant
   try {
     const response = await runWithRetry<GenerateContentResponse>(() => ai.models.generateContent({
       model: "gemini-3-flash-preview",
-      contents: prompt,
+      contents: query,
+      config: { systemInstruction },
     }));
     return response.text || query; // Fallback to query if generation fails
   } catch (error) {
@@ -385,16 +385,14 @@ export const extractKeyConcepts = async (text: string, model?: ModelDefinition):
     if (!text || text.trim().length < 10) {
         throw new Error('Insufficient text to extract key concepts.');
     }
-    const prompt = `Extract 5 to 8 concise academic key concepts or domain terms from the following research text.
-Return ONLY a JSON array of strings (for example: ["causal inference", "human-AI trust", "literature review"]).
-
-Text:
-${text.slice(0, 4000)}`;
+    const systemInstruction = `Extract 5 to 8 concise academic key concepts or domain terms from the following research text.
+Return ONLY a JSON array of strings (for example: ["causal inference", "human-AI trust", "literature review"]).`;
 
     const response = await runWithRetry<GenerateContentResponse>(() => ai.models.generateContent({
         model: model?.id || "gemini-2.5-flash",
-        contents: prompt,
+        contents: text.slice(0, 4000),
         config: {
+            systemInstruction,
             responseMimeType: "application/json",
             responseSchema: {
                 type: Type.ARRAY,

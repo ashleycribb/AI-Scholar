@@ -2,33 +2,10 @@
 import type { ResearchPaper, AdvancedSearchOptions, AuthorProfile } from '../types';
 import { createPaperId } from './extensionService';
 import { getCache, setCache } from '../utils/cache';
+import { deinvertAbstract } from './utils';
 
 const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes for search
 const METADATA_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours for specific DOI lookups
-
-/**
- * Reconstructs a readable abstract string from OpenAlex's inverted index format.
- */
-function deinvertAbstract(invertedAbstract: { [key: string]: number[] }): string {
-    if (!invertedAbstract) return '';
-    const abstractArray: string[] = [];
-    let maxIndex = -1;
-    for (const word in invertedAbstract) {
-        for (const pos of invertedAbstract[word]) {
-            if (pos > maxIndex) maxIndex = pos;
-        }
-    }
-    if (maxIndex > -1) {
-        abstractArray.length = maxIndex + 1;
-        abstractArray.fill('');
-    }
-    for (const word in invertedAbstract) {
-        for (const pos of invertedAbstract[word]) {
-            abstractArray[pos] = word;
-        }
-    }
-    return abstractArray.join(' ').trim();
-}
 
 const mapOpenAlexWorkToResearchPaper = (work: any, allowShortAbstract = false): ResearchPaper | null => {
     const abstract = work.abstract_inverted_index 

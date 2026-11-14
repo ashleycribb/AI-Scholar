@@ -154,3 +154,117 @@ describe("computeVACS", () => {
      expect(result.verdict).toBe("Questionable");
   });
 });
+
+describe("computeVACS additional cases from #106", () => {
+  const createEvidenceFromScores = (scores: number[]): EvidenceSpan[] =>
+    scores.map((score) => ({
+      source: "source",
+      passage: "passage",
+      score,
+    }));
+
+  test("Questionable paper with uniformly low scores has no valid evidence", () => {
+    const meta = createMetadata({
+      credibilityScore: 0.1,
+      reproducibilityScore: 0.1,
+      temporalScore: 0.1,
+    });
+    const stats = createCitationStats({ supportRatio: 0.1 });
+    const evidence = createEvidenceFromScores([0.1, 0.2]); // Avg = 0.15
+
+    const result = computeVACS(meta, stats, evidence);
+
+    expect(result.vacs).toBeLessThan(40);
+    expect(result.verdict).toBe("Questionable");
+    expect(result.breakdown.evidence).toBe(0);
+  });
+
+  test("Retracted paper is Questionable regardless of high scores", () => {
+    const meta = createMetadata({
+      credibilityScore: 0.9,
+      reproducibilityScore: 0.9,
+      temporalScore: 0.9,
+      isRetracted: true,
+    });
+    const stats = createCitationStats({ supportRatio: 0.9 });
+    const evidence = createEvidenceFromScores([0.9]);
+
+    const result = computeVACS(meta, stats, evidence);
+
+    expect(result.verdict).toBe("Questionable");
+    expect(result.rationale[0]).toContain("CRITICAL: This paper has been marked as retracted.");
+  });
+
+  test("Inconclusive when evidence confidence is below the threshold", () => {
+    const meta = createMetadata({
+      credibilityScore: 0.9,
+      reproducibilityScore: 0.9,
+      temporalScore: 0.9,
+    });
+    const stats = createCitationStats({ supportRatio: 0.9 });
+    const evidence = createEvidenceFromScores([0.7, 0.7]); // Avg = 0.7 < 0.75
+
+    const result = computeVACS(meta, stats, evidence);
+
+    expect(result.breakdown.evidence).toBe(0);
+    expect(result.verdict).not.toBe("Verified");
+    expect(result.verdict).toBe("Inconclusive");
+  });
+
+  test("Inconclusive when there is no evidence, even with high other scores", () => {
+    const meta = createMetadata({
+      credibilityScore: 0.9,
+      reproducibilityScore: 0.9,
+      temporalScore: 0.9,
+    });
+    const stats = createCitationStats({ supportRatio: 0.9 });
+    const evidence: EvidenceSpan[] = [];
+
+    const result = computeVACS(meta, stats, evidence);
+
+    expect(result.breakdown.evidence).toBe(0);
+    expect(result.verdict).toBe("Inconclusive");
+  });
+
+  test("Verified at the evidence confidence boundary (avg = 0.75)", () => {
+    const meta = createMetadata({
+      credibilityScore: 0.9,
+      reproducibilityScore: 0.8,
+      temporalScore: 0.9,
+    });
+    const stats = createCitationStats({ supportRatio: 0.8 });
+    const evidence = createEvidenceFromScores([0.75]);
+
+    const result = computeVACS(meta, stats, evidence);
+
+    expect(result.breakdown.evidence).toBe(0.75);
+    expect(result.verdict).toBe("Verified");
+  });
+
+  test("Applies documented defaults for missing metadata and citation fields", () => {
+    const meta: Metadata = {
+        title: "Default Paper",
+    } as Metadata;
+    const stats: CitationStats = {
+        total: 0,
+        supportCount: 0,
+        contradictCount: 0,
+        supportRatio: 0.5
+    };
+    const result = computeVACS(
+        meta,
+        { ...stats, supportRatio: undefined as any },
+        []
+    );
+
+    // Defaults from computeVACS:
+    // C = meta.credibilityScore ?? 0.5 -> 0.5
+    // R = meta.reproducibilityScore ?? 0 -> 0
+    // T = meta.temporalScore ?? 0.5 -> 0.5
+    // I = citationStats.supportRatio ?? 0.5 -> 0.5
+    expect(result.breakdown.credibility).toBe(0.5);
+    expect(result.breakdown.reproducibility).toBe(0);
+    expect(result.breakdown.temporal).toBe(0.5);
+    expect(result.breakdown.citations).toBe(0.5);
+  });
+});
