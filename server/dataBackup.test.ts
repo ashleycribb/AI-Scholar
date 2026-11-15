@@ -7,7 +7,7 @@ import os from "os";
 import path from "path";
 import { DatabaseSync } from "node:sqlite";
 import { SqlLrsStore } from "./lrsDatabase";
-import { backupDataDir, restoreDataDir, verifyBackup, BACKUP_MANIFEST } from "./dataBackup";
+import { backupDataDir, restoreDataDir, verifyBackup, BACKUP_MANIFEST, runDailyBackup, pruneBackupRoot, listBackupDirs, DEFAULT_BACKUP_KEEP } from "./dataBackup";
 import { dataDirNotice, dataFile, serverDataDir, SERVER_DATA_FILES } from "./dataDir";
 
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), "scholar-data-"));
@@ -102,5 +102,51 @@ describe("backup and restore drill", () => {
 
     fs.rmSync(path.join(good.dir, BACKUP_MANIFEST));
     expect(verifyBackup(good.dir).ok).toBe(false);
+  });
+
+  test("runDailyBackup verifies the new folder and keeps only the newest 30 dailies", () => {
+    const live = tmp();
+    const root = tmp();
+    seed(live);
+    const dates = (n: number) => new Date(Date.UTC(2026, 0, n, 12, 0, 0));
+    for (let d = 1; d <= 32; d++) {
+      const res = backupDataDir(live, root, dates(d));
+      expect(verifyBackup(res.dir).ok).toBe(true);
+    }
+    expect(listBackupDirs(root)).toHaveLength(32);
+
+    const daily = runDailyBackup(live, root, DEFAULT_BACKUP_KEEP, dates(33));
+    expect(daily.verify.ok).toBe(true);
+    expect(fs.existsSync(path.join(daily.backup.dir, BACKUP_MANIFEST))).toBe(true);
+    expect(listBackupDirs(root)).toHaveLength(30);
+    expect(daily.pruned.kept).toHaveLength(30);
+    expect(daily.pruned.deleted).toHaveLength(3); // 32 existing + 1 new - 30 kept
+    expect(daily.pruned.kept[0]).toBe(daily.backup.dir);
+    const names = listBackupDirs(root).map(r => path.basename(r.dir));
+    expect(names.some(n => n.includes("2026-01-01"))).toBe(false);
+    expect(names.some(n => n.includes("2026-01-03"))).toBe(false);
+    expect(names.some(n => n.includes("2026-01-04"))).toBe(true);
+    // Date.UTC(2026, 0, 33) is 2026-02-02
+    expect(names.some(n => n.includes("2026-02-02"))).toBe(true);
+  });
+
+  test("runDailyBackup throws and does not prune when the data directory is missing", () => {
+    const root = tmp();
+    const live = tmp();
+    seed(live);
+    backupDataDir(live, root, new Date("2026-01-01T00:00:00.000Z"));
+    backupDataDir(live, root, new Date("2026-01-02T00:00:00.000Z"));
+    const before = listBackupDirs(root).map(r => r.dir);
+    expect(() => runDailyBackup(path.join(live, "does-not-exist"), root, 30)).toThrow(/does not exist/);
+    expect(listBackupDirs(root).map(r => r.dir)).toEqual(before);
+  });
+
+  test("prune leaves unrelated folders alone and rejects keep < 1", () => {
+    const root = tmp();
+    fs.writeFileSync(path.join(root, "notes.txt"), "not a backup");
+    fs.mkdirSync(path.join(root, "other"));
+    expect(pruneBackupRoot(root, 30)).toEqual({ kept: [], deleted: [] });
+    expect(fs.existsSync(path.join(root, "notes.txt"))).toBe(true);
+    expect(() => pruneBackupRoot(root, 0)).toThrow(/BACKUP_KEEP/);
   });
 });

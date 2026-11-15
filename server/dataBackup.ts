@@ -97,3 +97,65 @@ export function restoreDataDir(backupDir: string, targetDir: string): string[] {
   fs.renameSync(staging, targetDir);
   return restored;
 }
+
+export const DEFAULT_BACKUP_KEEP = 30;
+export const BACKUP_DIR_PREFIX = "scholar-data-";
+
+export interface BackupListing { dir: string; createdAt: string }
+
+/** Backup folders in `backupRoot` named scholar-data-* that contain backup.json or the manifest, newest first. */
+export function listBackupDirs(backupRoot: string): BackupListing[] {
+  if (!fs.existsSync(backupRoot)) return [];
+  const rows: BackupListing[] = [];
+  for (const name of fs.readdirSync(backupRoot)) {
+    if (!name.startsWith(BACKUP_DIR_PREFIX)) continue;
+    const dir = path.join(backupRoot, name);
+    if (!fs.statSync(dir).isDirectory()) continue;
+    const infoPath = path.join(dir, BACKUP_INFO);
+    const manifestPath = path.join(dir, BACKUP_MANIFEST);
+    if (!fs.existsSync(infoPath) && !fs.existsSync(manifestPath)) continue;
+    let createdAt = "";
+    if (fs.existsSync(infoPath)) {
+      try { createdAt = JSON.parse(fs.readFileSync(infoPath, "utf8")).createdAt || ""; } catch { createdAt = ""; }
+    }
+    if (!createdAt) createdAt = name.slice(BACKUP_DIR_PREFIX.length);
+    rows.push({ dir, createdAt });
+  }
+  return rows.sort((a, b) => a.createdAt < b.createdAt ? 1 : a.createdAt > b.createdAt ? -1 : 0);
+}
+
+/**
+ * Keep the newest `keep` backup folders (default 30). Older scholar-data-* folders are removed.
+ * Other files in the root are left alone. `keep` must be at least 1.
+ */
+export function pruneBackupRoot(backupRoot: string, keep: number = DEFAULT_BACKUP_KEEP): { kept: string[]; deleted: string[] } {
+  if (!Number.isFinite(keep) || keep < 1) throw new BackupError(`BACKUP_KEEP must be an integer >= 1 (got ${keep}).`);
+  const listed = listBackupDirs(backupRoot);
+  const kept = listed.slice(0, keep).map(r => r.dir);
+  const deleted: string[] = [];
+  for (const row of listed.slice(keep)) {
+    fs.rmSync(row.dir, { recursive: true, force: true });
+    deleted.push(row.dir);
+  }
+  return { kept, deleted };
+}
+
+export interface DailyBackupResult {
+  backup: BackupResult;
+  verify: BackupCheck;
+  pruned: { kept: string[]; deleted: string[] };
+}
+
+/**
+ * One scheduled run: backup, verify that folder, then prune to `keep` dailies.
+ * If verification fails the new folder is left in place, nothing is pruned, and this throws.
+ */
+export function runDailyBackup(dataDir: string, backupRoot: string, keep: number = DEFAULT_BACKUP_KEEP, now: Date = new Date()): DailyBackupResult {
+  const backup = backupDataDir(dataDir, backupRoot, now);
+  const verify = verifyBackup(backup.dir);
+  if (!verify.ok) {
+    throw new BackupError(`Backup ${backup.dir} failed verification (changed: ${verify.mismatched.join(", ") || "none"}; missing: ${verify.missing.join(", ") || "none"}; corrupt: ${verify.corrupt.join(", ") || "none"}). Retention was not applied.`);
+  }
+  const pruned = pruneBackupRoot(backupRoot, keep);
+  return { backup, verify, pruned };
+}
