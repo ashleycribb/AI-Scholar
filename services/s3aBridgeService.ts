@@ -8,6 +8,7 @@
  */
 
 import { useState, useEffect, useCallback } from 'react';
+import { scholarPackPaperKey } from '../utils/scholarPackKey';
 import type { ResearchPaper } from '../types';
 import { exportS3ASession, stageQueuePapersInSession } from './s3aWasmService';
 
@@ -67,6 +68,8 @@ export function convertPapersToS3APayload(
     papers: papers.map(p => ({
       title: p.title,
       doi: p.doi || undefined,
+      openalex_id: scholarPackPaperKey(p).cleanOpenAlex || undefined,
+      citations: typeof p.citations === 'number' ? p.citations : undefined,
       year: p.year || undefined,
       authors: p.authors ? (typeof p.authors === 'string' ? p.authors.split(',').map(a => a.trim()) : p.authors) : undefined,
       abstract: p.abstract || undefined,
@@ -100,7 +103,7 @@ export function researchPapersFromSnapshotPayload(payload: S3ASnapshotPayload): 
       : (typeof yearRaw === 'string' ? parseInt(yearRaw, 10) : NaN);
     // Missing stays missing: no year 0, and a work id is not relabelled as an OpenAlex id unless it is one.
     const year = Number.isInteger(parsedYear) && parsedYear > 0 ? parsedYear : undefined;
-    const openalex = /^(?:openalex:|https?:\/\/openalex\.org\/)?(W[1-9][0-9]*)$/i.exec(String(ids[i] ?? '').trim())?.[1];
+    const openalex = p.openalex_id || /^(?:openalex:|https?:\/\/openalex\.org\/)?(W[1-9][0-9]*)$/i.exec(String(ids[i] ?? '').trim())?.[1];
     return {
       id,
       openalex_id: openalex ? openalex.toUpperCase() : undefined,
@@ -110,6 +113,7 @@ export function researchPapersFromSnapshotPayload(payload: S3ASnapshotPayload): 
       authors,
       abstract: p.abstract || '',
       pdfURL: p.open_access_pdf_url,
+      citations: typeof p.citations === 'number' ? p.citations : undefined,
     };
   });
 }
@@ -121,13 +125,14 @@ export function researchPapersFromSnapshotPayload(payload: S3ASnapshotPayload): 
  */
 export async function exportS3ASnapshotFromPayload(
   payload: S3ASnapshotPayload,
-  fileName?: string
+  fileName?: string,
+  opts: { download?: boolean } = {}
 ): Promise<{ filename: string; bytes: Uint8Array; warnings: string[] }> {
   const papers = researchPapersFromSnapshotPayload(payload);
   // The payload is the selection queue, so each paper is a researcher selection.
   await stageQueuePapersInSession(papers, { recordInclusionStatement: false, researcherSelected: true });
   const baseName = buildScholarExportBaseName(fileName || payload.query || 'research-session');
-  return exportS3ASession({ projectOrSessionName: baseName });
+  return exportS3ASession({ projectOrSessionName: baseName, download: opts.download });
 }
 
 /**
