@@ -40,7 +40,24 @@ export interface LocalEmbedderOptions {
 async function defaultLoadPipeline(model: string, dtype: string, cacheDir?: string) {
   const { pipeline, env } = await import("@huggingface/transformers");
   if (cacheDir) env.cacheDir = cacheDir;
-  return (await pipeline("feature-extraction", model, { dtype: dtype as any })) as any;
+  try {
+    return (await pipeline("feature-extraction", model, { dtype: dtype as any })) as any;
+  } catch (err: any) {
+    const msg = String(err?.message || err || "");
+    // Recover from a partial/corrupt ONNX cache file (e.g. interrupted download on restart)
+    if (/Protobuf parsing failed|Load model .* failed|invalid wire type|unexpected EOF/i.test(msg) && env.cacheDir) {
+      const fs = await import("fs");
+      const path = await import("path");
+      const resolvedBase = path.resolve(env.cacheDir);
+      const modelCacheDir = path.resolve(resolvedBase, ...model.split("/"));
+      if (modelCacheDir.startsWith(resolvedBase + path.sep)) {
+        console.warn(`[embed] Clearing corrupted model cache at ${modelCacheDir} and retrying download...`);
+        fs.rmSync(modelCacheDir, { recursive: true, force: true });
+        return (await pipeline("feature-extraction", model, { dtype: dtype as any })) as any;
+      }
+    }
+    throw err;
+  }
 }
 
 export function createLocalEmbedder(o: LocalEmbedderOptions = {}): TextEmbedder & { warmup(): Promise<void> } {

@@ -65,7 +65,7 @@ async function startServer() {
     const t0 = Date.now();
     void (embedder as { warmup(): Promise<void> }).warmup()
       .then(() => console.log(`[embed] ${embedder.model} ready in ${Date.now() - t0} ms`))
-      .catch(() => console.warn("[embed] model warmup failed; it will be retried on the first request"));
+      .catch((err) => console.warn(`[embed] model warmup failed (${err?.message || "unknown error"}); it will be retried on the first request`));
   }
 
   // Email magic-link sign-in and server-side sessions. Mounted before the global JSON
