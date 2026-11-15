@@ -58,3 +58,11 @@ time; nothing in it is the researcher's data.
 ## Server copy (`PUT /xapi/activities/state`, state id `workspace`)
 
 Since data fix 5 the document carries `schemaVersion: 1` and `queue` holds fact-only papers (same whitelist).
+
+## Import (data fix 7)
+
+`importExportBundle` (`services/importBundle.ts`) restores a full export into an **empty** profile only. It checks
+the SHA-256 manifest, that every record has a UTC `recordedAt` and a unique `seq`, that every record's version and
+type are known, and that `works.jsonl` lists exactly the queue that `events.jsonl` rebuilds. Records keep their
+original `seq`, `recordedAt`, `schemaVersion` and `migratedFrom`; all text is stored NFC. Anything wrong: nothing is
+written. Exporting again gives byte-identical files (`services/roundTrip.test.ts`).

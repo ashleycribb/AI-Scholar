@@ -12,6 +12,7 @@ export interface CrossrefItem {
   'published-print'?: { 'date-parts'?: number[][] };
   'published-online'?: { 'date-parts'?: number[][] };
   created?: { 'date-parts'?: number[][] };
+  issued?: { 'date-parts'?: number[][] };
   abstract?: string;
   'container-title'?: string[];
   'is-referenced-by-count'?: number;
@@ -20,6 +21,37 @@ export interface CrossrefItem {
   publisher?: string;
   funder?: { name?: string; award?: string[] }[];
   license?: { URL?: string }[];
+}
+
+/** One Crossref /works item as a paper. Missing values stay missing; text is NFC. */
+export function mapCrossrefItemToPaper(item: CrossrefItem): ResearchPaper {
+  const title = item.title?.[0] ? item.title[0].replace(/<[^>]+>/g, '').trim().normalize('NFC') : '';
+  const authors = (item.author || []).map(a => `${a.given || ''} ${a.family || a.name || ''}`.trim()).filter(Boolean).join(', ').normalize('NFC');
+
+  // Publication dates only; `created` is when the DOI was registered, not when the work was published.
+  const dateParts = item.issued?.['date-parts']?.[0] ||
+                    item.published?.['date-parts']?.[0] ||
+                    item['published-online']?.['date-parts']?.[0] ||
+                    item['published-print']?.['date-parts']?.[0];
+  const year = typeof dateParts?.[0] === 'number' && dateParts[0] > 0 ? dateParts[0] : undefined;
+
+  const abstract = item.abstract 
+    ? item.abstract.replace(/<[^>]+>/g, '').trim().normalize('NFC')
+    : '';
+
+  return {
+    id: `crossref:${item.DOI}`,
+    title,
+    authors,
+    year,
+    abstract,
+    doi: item.DOI,
+    sourceURL: item.URL || (item.DOI ? `https://doi.org/${item.DOI}` : undefined),
+    journal: item['container-title']?.[0],
+    citations: typeof item['is-referenced-by-count'] === 'number' ? item['is-referenced-by-count'] : undefined,
+    isOpenAccess: !!item.license?.length,
+    enrichmentSource: item.type ? `Crossref Metadata Registry (${item.type})` : 'Crossref Metadata Registry'
+  };
 }
 
 export const searchCrossref = async (
@@ -43,34 +75,7 @@ export const searchCrossref = async (
     const items: CrossrefItem[] = data.message?.items || [];
     const totalCount: number = data.message?.['total-results'] || items.length;
 
-    const papers: ResearchPaper[] = items.map(item => {
-      const title = item.title?.[0] ? item.title[0].replace(/<[^>]+>/g, '').trim() : 'Untitled Scholarly Work';
-      const authors = (item.author || []).map(a => `${a.given || ''} ${a.family || a.name || ''}`.trim()).filter(Boolean).join(', ') || '';
-      
-      const dateParts = item.published?.['date-parts']?.[0] || 
-                        item['published-online']?.['date-parts']?.[0] || 
-                        item['published-print']?.['date-parts']?.[0] || 
-                        item.created?.['date-parts']?.[0];
-      const year = dateParts?.[0] || undefined;
-
-      const abstract = item.abstract 
-        ? item.abstract.replace(/<[^>]+>/g, '').trim() 
-        : '';
-
-      return {
-        id: `crossref:${item.DOI}`,
-        title,
-        authors,
-        year,
-        abstract,
-        doi: item.DOI,
-        sourceURL: item.URL || (item.DOI ? `https://doi.org/${item.DOI}` : undefined),
-        journal: item['container-title']?.[0],
-        citations: item['is-referenced-by-count'] || 0,
-        isOpenAccess: !!item.license?.length,
-        enrichmentSource: `Crossref Metadata Registry (${item.type || 'Journal Article'})`
-      };
-    });
+    const papers: ResearchPaper[] = items.map(mapCrossrefItemToPaper);
 
     const result = { items, totalCount, papers };
     setCache(cacheKey, result, CACHE_TTL_MS);

@@ -4,7 +4,8 @@
  */
 import type { ResearchPaper } from '../types';
 import { buildExportBundle, type ExportBundle } from './exportBundle';
-import { readWorkspaceLog } from './localWorkspaceLog';
+import { readWorkspaceLog, rebuildWorkspace } from './localWorkspaceLog';
+import { withWorkId } from '../utils/workIds';
 import { convertPapersToS3APayload, exportS3ASnapshotFromPayload } from './s3aBridgeService';
 
 export interface CreateBundleArgs {
@@ -22,9 +23,17 @@ export async function createExportBundle(
 ): Promise<ExportBundle & { filename: string; warnings: string[] }> {
   const now = args.now ?? new Date();
   const records = await (deps.readLog ?? readWorkspaceLog)();
-  const payload = convertPapersToS3APayload(args.queue, args.query, args.querySettings, args.services);
+  // The bundle is built from what is saved, so it always re-imports to the same state. If the screen shows
+  // queue changes that are not in the saved log yet, say so instead of exporting something different.
+  const saved = rebuildWorkspace(records).queue;
+  const savedIds = saved.map(p => withWorkId(p).id).join('\n');
+  const shownIds = args.queue.map(p => withWorkId(p).id).join('\n');
+  if (savedIds !== shownIds) {
+    throw new Error('Some selection-queue changes are not saved in this browser yet. Retry the save, then export.');
+  }
+  const payload = convertPapersToS3APayload(saved, args.query, args.querySettings, args.services);
   const s3a = await exportS3ASnapshotFromPayload(payload, args.fileName || args.query, { download: false });
-  const bundle = await buildExportBundle({ records, queue: args.queue, s3a, now });
+  const bundle = await buildExportBundle({ records, queue: saved, s3a, now });
   return { ...bundle, filename: s3a.filename.replace(/\.s3a$/, '') + '-export.zip', warnings: s3a.warnings };
 }
 

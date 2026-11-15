@@ -16,6 +16,7 @@
 import type { ResearchPaper } from '../types';
 import { canonicalWorkId, extractAliases, sameWork, withWorkId } from '../utils/workIds';
 import { paperFacts } from './paperFacts';
+import { isUtcIso, nfcDeep } from '../utils/nfc';
 
 /**
  * Version of the records this code writes. History (docs/data/MIGRATIONS.md):
@@ -288,7 +289,12 @@ export async function appendWorkspaceRecords(entries: NewWorkspaceLogRecord[], n
     if (entries.length === 0) return [];
     const db = await openDb();
     const recordedAt = now().toISOString();
-    const records = entries.map(e => ({ ...e, schemaVersion: WORKSPACE_LOG_SCHEMA_VERSION, recordedAt }) as WorkspaceLogRecord);
+    // Text is stored NFC (fix 7), so the same note or name always has the same bytes.
+    const records = entries.map(e => nfcDeep({ ...e, schemaVersion: WORKSPACE_LOG_SCHEMA_VERSION, recordedAt }) as WorkspaceLogRecord);
+    return writeRecords(db, records);
+}
+
+function writeRecords(db: IDBDatabase, records: WorkspaceLogRecord[]): Promise<WorkspaceLogRecord[]> {
     return new Promise<WorkspaceLogRecord[]>((resolve, reject) => {
         let tx: IDBTransaction;
         try {
@@ -306,6 +312,39 @@ export async function appendWorkspaceRecords(entries: NewWorkspaceLogRecord[], n
         tx.onerror = () => reject(tx.error ?? new Error('Local save failed'));
         tx.onabort = () => reject(tx.error ?? new Error('Local save was aborted'));
     });
+}
+
+export class WorkspaceImportError extends Error {
+    constructor(message: string) { super(message); this.name = 'WorkspaceImportError'; }
+}
+
+/**
+ * Restores records exported from another browser (events.jsonl) into THIS browser's log, which must be empty:
+ * an import never mixes with or rewrites existing history. Each record keeps its original seq, recordedAt (UTC),
+ * schemaVersion and migratedFrom, so exporting again gives the same events. Everything is checked first and
+ * written in one transaction: either all records are restored or none.
+ */
+export async function importWorkspaceRecords(input: Array<Record<string, unknown>>): Promise<WorkspaceLogRecord[]> {
+    const existing = await readRawWorkspaceLog();
+    if (existing.length > 0) {
+        throw new WorkspaceImportError(`This browser already has ${existing.length} workspace record(s). Import only into an empty profile.`);
+    }
+    const seen = new Set<number>();
+    const records = input.map((r, i) => {
+        if (!r || typeof r !== 'object') throw new WorkspaceImportError(`Record ${i + 1} is not an object.`);
+        if (!isUtcIso(r.recordedAt)) throw new WorkspaceImportError(`Record ${i + 1} has no UTC recordedAt timestamp.`);
+        if (typeof r.seq !== 'number' || !Number.isInteger(r.seq) || r.seq < 1 || seen.has(r.seq)) {
+            throw new WorkspaceImportError(`Record ${i + 1} has a missing or repeated seq.`);
+        }
+        seen.add(r.seq);
+        return nfcDeep(r);
+    });
+    // Same checks as a normal load: unknown versions or record types are refused, never guessed.
+    rebuildWorkspace(records as unknown as WorkspaceLogRecord[]);
+    const ordered = migrateWorkspaceRecords(records as Array<Record<string, any>>);
+    if (ordered.length === 0) return [];
+    const db = await openDb();
+    return writeRecords(db, ordered);
 }
 
 export function appendWorkspaceRecord(entry: NewWorkspaceLogRecord, now?: () => Date): Promise<WorkspaceLogRecord> {
