@@ -1,5 +1,6 @@
 
 import type { ResearchPaper } from '../types';
+import { stableRecordId } from '../utils/workIds';
 import { getCache, setCache } from '../utils/cache';
 
 const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes for searches (Standardized)
@@ -151,7 +152,7 @@ export const searchArxiv = async (query: string, page: number = 1): Promise<{ pa
         const entries = Array.from(xmlDoc.querySelectorAll("entry"));
         
         const papers: ResearchPaper[] = entries.map(entry => ({
-            id: `arxiv:${extractArxivId(entry.querySelector("id")?.textContent?.trim()) || Math.random()}`,
+            id: stableRecordId('arxiv', extractArxivId(entry.querySelector("id")?.textContent?.trim()), { title: entry.querySelector("title")?.textContent, raw: entry.querySelector("id")?.textContent }),
             title: entry.querySelector("title")?.textContent?.trim().replace(/\s+/g, ' ') || 'Untitled',
             abstract: entry.querySelector("summary")?.textContent?.trim().replace(/\s+/g, ' ') || 'No abstract.',
             year: entry.querySelector("published")?.textContent ? new Date(entry.querySelector("published")!.textContent!).getFullYear() : new Date().getFullYear(),

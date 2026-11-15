@@ -1,4 +1,5 @@
 import type { ResearchPaper } from '../types';
+import { stableRecordId } from '../utils/workIds';
 import { getCache, setCache } from '../utils/cache';
 
 const CACHE_TTL_MS = 5 * 60 * 1000;
@@ -34,7 +35,7 @@ export const searchDOAJ = async (
       const sourceURL = linkFulltext ? linkFulltext.url : (doi ? `https://doi.org/${doi}` : undefined);
 
       return {
-        id: `doaj:${r.id || doi || Math.random().toString(36).substring(2, 9)}`,
+        id: stableRecordId('doaj', r.id, { doi, title: bibjson.title, authors, year: bibjson.year ? parseInt(bibjson.year, 10) : undefined, raw: r }),
         title,
         authors,
         year: isNaN(year) ? new Date().getFullYear() : year,

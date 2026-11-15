@@ -1,4 +1,5 @@
 import type { DblpPublication, ResearchPaper } from '../types';
+import { stableRecordId } from '../utils/workIds';
 import { getCache, setCache } from '../utils/cache';
 
 const DBLP_API_BASE = 'https://dblp.org/search/publ/api';
@@ -30,7 +31,7 @@ export const searchDBLP = async (
       const authors = authorsArr.map((a: any) => (typeof a === 'string' ? a : a?.text || '')).filter(Boolean);
 
       return {
-        id: hit['@id'] || info.key || `dblp-${Math.random().toString(36).substring(2, 9)}`,
+        id: stableRecordId('dblp', info.key || hit['@id'], { doi: info.doi, title: info.title, authors: authors.join(', '), year: info.year ? Number(info.year) : undefined, raw: hit }),
         key: info.key || '',
         title: info.title?.replace(/\.$/, '') || 'Untitled CS Publication',
         authors: authors.length > 0 ? authors : ['Computer Science Contributor'],

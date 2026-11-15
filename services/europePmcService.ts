@@ -1,3 +1,4 @@
+import { stableRecordId } from '../utils/workIds';
 import type { EuropePmcArticle, ResearchPaper } from '../types';
 import { getCache, setCache } from '../utils/cache';
 
@@ -24,7 +25,7 @@ export const searchEuropePMC = async (
     const resultList = data.resultList?.result || [];
 
     const articles: EuropePmcArticle[] = resultList.map((item: any) => ({
-      id: item.id || item.pmid || `epmc-${Math.random().toString(36).substring(2, 9)}`,
+      id: stableRecordId('epmc', item.pmid || item.id, { doi: item.doi, title: item.title, authors: item.authorString, year: item.pubYear ? Number(item.pubYear) : undefined, raw: item }),
       pmid: item.pmid,
       pmcid: item.pmcid,
       doi: item.doi,
@@ -43,7 +44,9 @@ export const searchEuropePMC = async (
     }));
 
     const papers: ResearchPaper[] = articles.map(a => ({
-      id: `epmc:${a.pmid || a.pmcid || a.id}`,
+      id: a.pmid ? `pmid:${a.pmid}` : (a.pmcid ? `pmcid:${a.pmcid}` : a.id),
+      pmid: a.pmid || undefined,
+      pmcid: a.pmcid || undefined,
       title: a.title,
       authors: a.authorString || 'Biomedical Researcher',
       year: a.pubYear,

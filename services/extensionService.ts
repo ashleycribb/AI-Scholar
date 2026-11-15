@@ -1,4 +1,5 @@
 import type { ResearchPaper } from '../types';
+import { canonicalWorkId } from '../utils/workIds';
 import { parseExtensionMessage } from './extensionMessages';
 
 const CHANNEL_NAME = 'ai_research_explorer_channel';
@@ -49,16 +50,9 @@ export const requestAllPapers = () => {
     getChannel().postMessage({ type: 'request_all_papers' });
 };
 
-// Function to create a stable ID for a paper, must be identical to the one in background.ts
-export const createPaperId = (paper: Partial<ResearchPaper>): string => {
-    if (paper.doi) return `doi:${paper.doi}`;
-    if (paper.sourceURL) {
-        const arxivIdMatch = paper.sourceURL.match(/arxiv\.org\/(?:abs|pdf)\/([^/]+)/);
-        if (arxivIdMatch) return `arxiv:${arxivIdMatch[1].replace(/v\d+$/, '')}`;
-        return `url:${paper.sourceURL}`;
-    }
-    return `title:${paper.title?.toLowerCase().replace(/\s+/g, '-') || crypto.randomUUID()}`;
-};
+// Stable id for a paper: the permanent work id (utils/workIds.ts). Papers from the browser extension (which keeps
+// its own ids in its own store) are normalized to the same id when they enter the selection queue.
+export const createPaperId = (paper: Partial<ResearchPaper>): string => canonicalWorkId(paper as Partial<ResearchPaper> & Record<string, unknown>);
 
 export const notifyExtensionFavoriteToggled = (paper: ResearchPaper, isFavorite: boolean) => {
     getChannel().postMessage({
