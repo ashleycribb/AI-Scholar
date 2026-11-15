@@ -1,5 +1,6 @@
 
 import React, { useState, useEffect, useRef } from 'react';
+import { recordPaperDecision } from '../services/researcherDecisions';
 import type { ResearchPaper, ScoreExplanation } from '../types';
 import { SparklesIcon } from './icons/SparklesIcon';
 import { buildPaperScoreExplanation } from '../services/rerankService';
@@ -137,6 +138,11 @@ export const SemanticScoreIndicator: React.FC<SemanticScoreIndicatorProps> = ({
         if (paper && onScoreDecision) {
             onScoreDecision(paper, choice);
         }
+        // The researcher's own decision is always kept on this computer, consent or not (consent only gates the
+        // study statement below). A failed write shows "Not saved" + Retry.
+        if (paper) {
+            void recordPaperDecision(paper.id, choice);
+        }
         if (tracingActive && paper) {
             await emitStatement(
                 choice === 'keep' ? 'accepted' : 'rejected',
@@ -158,7 +164,7 @@ export const SemanticScoreIndicator: React.FC<SemanticScoreIndicatorProps> = ({
                     year: paper.year,
                     citations: paper.citations
                 }
-            ).catch(() => {});
+            ).catch(err => console.error('[S3A] Could not record the study statement for this decision:', err));
         }
     };
 

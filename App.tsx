@@ -36,7 +36,8 @@ import { ResearcherWorkspace } from './components/ResearcherWorkspace';
 import { SaveStatusBanner } from './components/SaveStatusBanner';
 import { reportFailed } from './services/saveStatus';
 import { saveAccountCopy, saveQueueChanges } from './services/workspaceSaves';
-import { appendWorkspaceRecords, diffQueue, loadWorkspace, requestPersistentStorage, snapshotPaper } from './services/localWorkspaceLog';
+import { researcherEventsFromLog, type ResearcherEvent } from './services/researcherDecisions';
+import { appendWorkspaceRecords, diffQueue, loadWorkspace, readWorkspaceLog, requestPersistentStorage, snapshotPaper, subscribeWorkspaceLog } from './services/localWorkspaceLog';
 import { ExportSnapshotModal } from './components/ExportSnapshotModal';
 import { ResultsDisplay } from './components/ResultsDisplay';
 import { PaperDetails } from './components/PaperDetails';
@@ -372,6 +373,21 @@ const App: React.FC = () => {
         setLocalQueueReady(true);
       });
     return () => { cancelled = true; };
+  }, []);
+
+  // The researcher's own events (selections, keep/drop decisions, notes) as they will appear in exports.
+  // Recorded with or without study consent; refreshed after every confirmed local write.
+  const [researcherEvents, setResearcherEvents] = useState<ResearcherEvent[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    const refresh = () => {
+      readWorkspaceLog()
+        .then(records => { if (!cancelled) setResearcherEvents(researcherEventsFromLog(records)); })
+        .catch(err => console.warn('[Local log] Could not read events for export:', err));
+    };
+    refresh();
+    const unsubscribe = subscribeWorkspaceLog(refresh);
+    return () => { cancelled = true; unsubscribe(); };
   }, []);
 
   // Append queue changes to the local log, one write at a time. The recorded
@@ -1436,6 +1452,8 @@ const App: React.FC = () => {
           },
           services: scoutServices,
           selected_work_ids: workspacePapers.map(p => p.id),
+          // The researcher's own selections, keep/drop decisions and notes, kept with or without study consent.
+          researcher_events: researcherEvents,
           papers: workspacePapers.map(p => ({
               title: p.title || "Untitled Paper",
               authors: Array.isArray(p.authors) 
@@ -1460,7 +1478,7 @@ const App: React.FC = () => {
           }
       };
       return JSON.stringify(contract, null, 2);
-  }, [workspacePapers, query, scoutTopic, currentSearchOptions, summaryLength, summaryStyle, scoutServices]);
+  }, [workspacePapers, researcherEvents, query, scoutTopic, currentSearchOptions, summaryLength, summaryStyle, scoutServices]);
 
   const handleCopyToClipboard = () => {
       navigator.clipboard.writeText(snapshotJsonString);

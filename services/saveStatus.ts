@@ -4,7 +4,7 @@
  * A channel only becomes 'saved' after the write it tracks has confirmed. Any failure becomes 'error' with a
  * Retry action, and the UI shows "Not saved" for it until a retry succeeds. Nothing here guesses or assumes.
  */
-export type SaveChannel = 'local-queue' | 'server-copy' | 'session-cache';
+export type SaveChannel = 'local-queue' | 'local-decisions' | 'server-copy' | 'session-cache';
 export type SaveState = 'idle' | 'saving' | 'saved' | 'error';
 
 export interface ChannelStatus {
@@ -18,6 +18,7 @@ export interface ChannelStatus {
 
 export const CHANNEL_LABELS: Record<SaveChannel, string> = {
   'local-queue': 'Selection queue on this computer',
+  'local-decisions': 'Your keep/drop decision on this computer',
   'server-copy': 'Copy in your account (server)',
   'session-cache': 'S3A session copy on this computer',
 };
@@ -26,6 +27,7 @@ type Snapshot = Readonly<Record<SaveChannel, ChannelStatus>>;
 
 const initial = (): Snapshot => ({
   'local-queue': { state: 'idle' },
+  'local-decisions': { state: 'idle' },
   'server-copy': { state: 'idle' },
   'session-cache': { state: 'idle' },
 });

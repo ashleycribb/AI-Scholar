@@ -57,7 +57,18 @@ export interface NoteRecord extends BaseRecord {
     text: string;
 }
 
-export type WorkspaceLogRecord = QueueAddRecord | QueueRemoveRecord | NoteRecord;
+/**
+ * The researcher's keep/drop judgment on a paper (the button beside its match score). Recorded whether or not the
+ * researcher consented to a study: consent governs research about them, not keeping their own decisions.
+ */
+export interface PaperDecisionRecord extends BaseRecord {
+    type: 'paper.decision';
+    paperId: string;
+    decision: 'keep' | 'drop';
+    origin: 'researcher';
+}
+
+export type WorkspaceLogRecord = QueueAddRecord | QueueRemoveRecord | NoteRecord | PaperDecisionRecord;
 
 /** Distributive Omit so each union member keeps its own fields. */
 type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never;
@@ -71,9 +82,17 @@ export interface RebuiltNote {
     updatedAt: string;
 }
 
+export interface RebuiltDecision {
+    paperId: string;
+    decision: 'keep' | 'drop';
+    decidedAt: string;
+}
+
 export interface RebuiltWorkspace {
     queue: ResearchPaper[];
     notes: Record<string, RebuiltNote>;
+    /** Latest keep/drop decision per paper id. */
+    decisions: Record<string, RebuiltDecision>;
     recordCount: number;
 }
 
@@ -94,6 +113,7 @@ export function rebuildWorkspace(records: WorkspaceLogRecord[]): RebuiltWorkspac
     const ordered = [...records].sort((a, b) => (a.seq ?? 0) - (b.seq ?? 0));
     const queue: ResearchPaper[] = [];
     const notes: Record<string, RebuiltNote> = {};
+    const decisions: Record<string, RebuiltDecision> = {};
     for (const r of ordered) {
         if (r.schemaVersion !== WORKSPACE_LOG_SCHEMA_VERSION) {
             // Unknown future schema: never guess at its meaning.
@@ -120,11 +140,19 @@ export function rebuildWorkspace(records: WorkspaceLogRecord[]): RebuiltWorkspac
                 };
                 break;
             }
+            case 'paper.decision':
+                decisions[r.paperId] = { paperId: r.paperId, decision: r.decision, decidedAt: r.recordedAt };
+                break;
             default:
                 throw new Error(`Unknown workspace log record type ${String((r as { type?: unknown }).type)}`);
         }
     }
-    return { queue, notes, recordCount: ordered.length };
+    // Restored queue papers carry the researcher's latest keep/drop decision.
+    for (let i = 0; i < queue.length; i++) {
+        const d = decisions[queue[i].id];
+        if (d) queue[i] = { ...queue[i], researcherScoreDecision: d.decision };
+    }
+    return { queue, notes, decisions, recordCount: ordered.length };
 }
 
 /** Queue changes between two lists, as records to append (removals first, then additions in list order). */
@@ -146,6 +174,16 @@ export function diffQueue(previous: ResearchPaper[], next: ResearchPaper[]): New
 // ---------------------------------------------------------------------------
 
 let dbPromise: Promise<IDBDatabase> | null = null;
+
+const logListeners = new Set<() => void>();
+/** Called after every confirmed append (e.g. to refresh what an export will contain). */
+export function subscribeWorkspaceLog(listener: () => void): () => void {
+    logListeners.add(listener);
+    return () => { logListeners.delete(listener); };
+}
+function notifyLogListeners(): void {
+    logListeners.forEach(l => { try { l(); } catch (err) { console.error('[Local log] listener failed:', err); } });
+}
 
 function getIndexedDB(): IDBFactory {
     if (typeof indexedDB === 'undefined') {
@@ -205,7 +243,7 @@ export async function appendWorkspaceRecords(entries: NewWorkspaceLogRecord[], n
             const req = store.add(r);
             req.onsuccess = () => { r.seq = req.result as number; };
         });
-        tx.oncomplete = () => resolve(records);
+        tx.oncomplete = () => { resolve(records); notifyLogListeners(); };
         tx.onerror = () => reject(tx.error ?? new Error('Local save failed'));
         tx.onabort = () => reject(tx.error ?? new Error('Local save was aborted'));
     });

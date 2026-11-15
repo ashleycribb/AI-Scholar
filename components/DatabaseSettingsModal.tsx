@@ -327,10 +327,10 @@ export const DatabaseSettingsModal: React.FC<DatabaseSettingsModalProps> = ({
       // Only record the viewed-log event when recording_active() is true
       const active = await isRecordingActive();
       if (active) {
-        emitStatement('viewed-log', {
+        emitStatement('viewed', {
           id: 'https://ashecribb.dev/xapi/activities/participant-activity-log',
           name: 'Viewed Participant Research Activity Log'
-        }).catch(() => {});
+        }).catch(err => console.error('[S3A] Could not record viewed-log statement:', err));
       }
       const logs = await getHumanActivityLog();
       setHumanLogs(logs);
@@ -348,10 +348,10 @@ export const DatabaseSettingsModal: React.FC<DatabaseSettingsModalProps> = ({
       // Only record the viewed-log event when recording_active() is true
       const active = await isRecordingActive();
       if (active) {
-        emitStatement('viewed-log', {
+        emitStatement('viewed', {
           id: 'https://ashecribb.dev/xapi/activities/ai-activity-log',
           name: 'Viewed AI Assistant Activity Log'
-        }).catch(() => {});
+        }).catch(err => console.error('[S3A] Could not record viewed-log statement:', err));
       }
       const logs = await getAiActivityLog();
       setAiLogs(logs);
