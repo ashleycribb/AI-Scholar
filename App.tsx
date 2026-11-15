@@ -36,6 +36,8 @@ import { ResearcherWorkspace } from './components/ResearcherWorkspace';
 import { SaveStatusBanner } from './components/SaveStatusBanner';
 import { reportFailed } from './services/saveStatus';
 import { saveAccountCopy, saveQueueChanges } from './services/workspaceSaves';
+import { addToQueue, queueContains, removeFromQueue } from './services/selectionQueue';
+import { aliasKey } from './utils/workIds';
 import { researcherEventsFromLog, type ResearcherEvent } from './services/researcherDecisions';
 import { appendWorkspaceRecords, diffQueue, loadWorkspace, readWorkspaceLog, requestPersistentStorage, snapshotPaper, subscribeWorkspaceLog } from './services/localWorkspaceLog';
 import { ExportSnapshotModal } from './components/ExportSnapshotModal';
@@ -431,7 +433,7 @@ const App: React.FC = () => {
             const serverPapers: ResearchPaper[] = res.data.papers;
             queueWriteChainRef.current = queueWriteChainRef.current.then(async () => {
               const current = latestQueueRef.current;
-              const toImport = serverPapers.filter(p => !current.some(c => c.id === p.id));
+              const toImport = addToQueue(current, serverPapers).added;
               if (toImport.length === 0) return;
               try {
                 await appendWorkspaceRecords(toImport.map(p => ({
@@ -448,7 +450,7 @@ const App: React.FC = () => {
               }
               // Restaged from the server copy: not a new inclusion decision.
               toImport.forEach(p => stagePaperInS3ASession(p, { recordInclusionStatement: false }));
-              setWorkspacePapers(prev => [...prev, ...toImport.filter(p => !prev.some(e => e.id === p.id))]);
+              setWorkspacePapers(prev => addToQueue(prev, toImport).queue);
             });
           }
           if (Array.isArray(res.data.projects) && res.data.projects.length > 0) {
@@ -680,22 +682,20 @@ const App: React.FC = () => {
           (paper) => {
               stagePaperInS3ASession(paper);
               setWorkspacePapers(prev => {
-                  if (prev.some(p => p.id === paper.id)) return prev;
+                  const { queue, added } = addToQueue(prev, [paper]);
+                  if (added.length === 0) return prev;
                   setToastMessage(`Added "${paper.title.substring(0, 30)}..." to selection queue.`);
-                  return [paper, ...prev];
+                  return queue;
               });
           },
           (paperId) => {
-              setWorkspacePapers(prev => prev.filter(p => p.id !== paperId));
+              setWorkspacePapers(prev => prev.filter(p => p.id !== paperId && p.sourceId !== paperId));
           },
           (papersList) => {
               papersList.forEach(p => stagePaperInS3ASession(p));
               setWorkspacePapers(prev => {
-                  const newPapers = papersList.filter(p => !prev.some(existing => existing.id === p.id));
-                  if (newPapers.length > 0) {
-                      return [...newPapers, ...prev];
-                  }
-                  return prev;
+                  const { queue, added } = addToQueue(prev, papersList);
+                  return added.length > 0 ? queue : prev;
               });
           }
       );
@@ -1116,13 +1116,13 @@ const App: React.FC = () => {
 
   // Rename "Workspace Paper" as "Selection Queue Paper"
   const handleToggleWorkspacePaper = (paper: ResearchPaper) => {
-      const exists = workspacePapers.some(p => p.id === paper.id);
+      const exists = queueContains(workspacePapers, paper);
       if (!exists) {
           // Add paper to the S3A session once, when the user selects it
           stagePaperInS3ASession(paper);
       }
       setWorkspacePapers(prev => {
-          const alreadyExists = prev.some(p => p.id === paper.id);
+          const alreadyExists = queueContains(prev, paper);
           if (alreadyExists) {
               storageService.removePaperFromCloud(paper.id);
               setToastMessage(`Removed "${paper.title.substring(0, 30)}..." from selection queue.`);
@@ -1142,7 +1142,7 @@ const App: React.FC = () => {
                   paper.title,
                   { doi: paper.doi, paperId: paper.id }
               );
-              return prev.filter(p => p.id !== paper.id);
+              return removeFromQueue(prev, paper);
           } else {
               storageService.syncPaperToCloud(paper);
               setToastMessage(`Added "${paper.title.substring(0, 30)}..." to selection queue.`);
@@ -1162,7 +1162,7 @@ const App: React.FC = () => {
                   paper.title,
                   { doi: paper.doi, paperId: paper.id }
               );
-              return [...prev, paper];
+              return addToQueue(prev, [paper]).queue;
           }
       });
   };
@@ -1171,10 +1171,9 @@ const App: React.FC = () => {
       let addedCount = 0;
       newPapers.forEach(p => stagePaperInS3ASession(p));
       setWorkspacePapers(prev => {
-          const combined = [...prev];
-          newPapers.forEach(p => {
-              if (!combined.some(existing => existing.id === p.id)) {
-                  combined.push(p);
+          const { queue: combined, added } = addToQueue(prev, newPapers);
+          added.forEach(p => {
+              {
                   addedCount++;
                   storageService.syncPaperToCloud(p);
 
@@ -1246,7 +1245,13 @@ const App: React.FC = () => {
       }
   };
 
-  const workspacePaperIds = useMemo(() => new Set(workspacePapers.map(p => p.id)), [workspacePapers]);
+  // Every id a queued work is known by (work id, the source's own id, and each alias), so a search result counts as
+  // "in the queue" whichever id its source used. Use workspacePapers.length for the number of queued works.
+  const workspacePaperIds = useMemo(() => new Set(workspacePapers.flatMap(p => [
+      p.id,
+      ...(p.sourceId ? [p.sourceId] : []),
+      ...(p.aliases ?? []).map(a => a.scheme === 'source' ? a.value : aliasKey(a)),
+  ])), [workspacePapers]);
 
   // --- DYNAMIC ABSTRACT KEYWORD SUGGESTION ENGINE ---
   const [isOnlySelectedKeywords, setIsOnlySelectedKeywords] = useState(false);
@@ -1410,9 +1415,10 @@ const App: React.FC = () => {
       });
       // Add immediately to the primary Selection Queue
       setWorkspacePapers(prev => {
-          if (prev.some(p => p.id === paper.id)) return prev;
-          storageService.syncPaperToCloud(paper);
-          return [...prev, paper];
+          const { queue, added } = addToQueue(prev, [paper]);
+          if (added.length === 0) return prev;
+          storageService.syncPaperToCloud(added[0]);
+          return queue;
       });
       setToastMessage(`Approved! Added "${paper.title.substring(0, 30)}..." to selection queue.`);
 
@@ -1662,7 +1668,7 @@ const App: React.FC = () => {
                               onClearInstitution={() => setUserSettings(prev => ({ ...prev, institutionName: undefined }))}
                               onOpenDeepResearch={() => setShowDeepResearch(true)}
                               academicKeywords={academicKeywords}
-                              selectedPaperCount={workspacePaperIds.size}
+                              selectedPaperCount={workspacePapers.length}
                           />
                       </div>
 
@@ -1671,7 +1677,7 @@ const App: React.FC = () => {
                           <div className="pt-2">
                               <KeywordRefinementDeck
                                   keywords={academicKeywords}
-                                  selectedPaperCount={workspacePaperIds.size}
+                                  selectedPaperCount={workspacePapers.length}
                                   totalPaperCount={activeAbstractPapers.length}
                                   currentQuery={query}
                                   onAddKeywordToQuery={handleAddKeywordToQuery}
@@ -1728,7 +1734,7 @@ const App: React.FC = () => {
                               {academicKeywords.length > 0 && (
                                   <KeywordRefinementDeck
                                       keywords={academicKeywords}
-                                      selectedPaperCount={workspacePaperIds.size}
+                                      selectedPaperCount={workspacePapers.length}
                                       totalPaperCount={papers.length}
                                       currentQuery={query}
                                       onAddKeywordToQuery={handleAddKeywordToQuery}
@@ -2487,11 +2493,7 @@ const App: React.FC = () => {
                       userSettings={userSettings}
                       onAddPapersToWorkspace={(addedPapers) => {
                           addedPapers.forEach(p => stagePaperInS3ASession(p));
-                          setWorkspacePapers(prev => {
-                              const existingIds = new Set(prev.map(p => p.id));
-                              const newOnes = addedPapers.filter(p => !existingIds.has(p.id));
-                              return [...prev, ...newOnes];
-                          });
+                          setWorkspacePapers(prev => addToQueue(prev, addedPapers).queue);
                           setToastMessage(`Admitted ${addedPapers.length} ${addedPapers.length === 1 ? 'work' : 'works'} to Evidence Ledger`);
                       }}
                       onNavigateToWorkspace={() => setActiveNav('queue')}

@@ -1,4 +1,5 @@
 import type { OpenAireProject, ResearchPaper } from '../types';
+import { stableRecordId } from '../utils/workIds';
 import { getCache, setCache } from '../utils/cache';
 
 const OPENAIRE_API_BASE = 'https://api.openaire.eu/search';
@@ -61,7 +62,7 @@ export const searchOpenAireProjects = async (
       const funderObj = metadata.fundingtree?.funder || {};
       
       const rawId = metadata.id || item.header?.['dri:objIdentifier'];
-      const safeId = extractString(rawId) || `openaire-project-${Date.now()}-${idx}-${Math.random().toString(36).substring(2, 7)}`;
+      const safeId = extractString(rawId) || stableRecordId('openaire-project', '', { raw: metadata });
       const title = extractString(metadata.title, 'Untitled Grant Agreement');
       const code = extractString(metadata.code) || extractString(metadata.grantAgreementNumber) || 'N/A';
       const acronym = extractString(metadata.acronym) || undefined;
@@ -148,7 +149,7 @@ export const searchOpenAirePublications = async (
       if (!safeObjId || safeObjId === '[object Object]') {
         safeObjId = (typeof doi === 'string' && doi && doi !== '[object Object]')
           ? doi
-          : `pub-${Date.now()}-${idx}-${Math.random().toString(36).substring(2, 7)}`;
+          : stableRecordId('openaire', '', { title: meta.title, year, raw: meta });
       }
 
       return {

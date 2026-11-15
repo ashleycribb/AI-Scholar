@@ -14,8 +14,15 @@
  * This module writes plain JSON-compatible records. It does not encode S3A.
  */
 import type { ResearchPaper } from '../types';
+import { canonicalWorkId, extractAliases, sameWork, withWorkId } from '../utils/workIds';
 
-export const WORKSPACE_LOG_SCHEMA_VERSION = 1 as const;
+/**
+ * Version of the records this code writes. History (docs/data/MIGRATIONS.md):
+ *   1  fix 1: paperId was whatever id the search source used (W…, crossref:…, random ids from some sources).
+ *   2  fix 4: paperId is the permanent work id (utils/workIds.ts); queue.add papers carry aliases.
+ * Old records are never rewritten (the log is append-only); they are upcast on read by migrateWorkspaceRecords.
+ */
+export const WORKSPACE_LOG_SCHEMA_VERSION = 2 as const;
 export const WORKSPACE_LOG_DB_NAME = 'scholar_explorer_local';
 export const WORKSPACE_LOG_DB_VERSION = 1;
 export const WORKSPACE_LOG_STORE = 'workspace_events';
@@ -27,6 +34,8 @@ export function noteIdForProject(projectName?: string): string {
 
 interface BaseRecord {
     schemaVersion: typeof WORKSPACE_LOG_SCHEMA_VERSION;
+    /** Set on records upcast from an older schema at read time: the version they were written with. */
+    migratedFrom?: number;
     /** Auto-increment key assigned by IndexedDB (insertion order). */
     seq?: number;
     /** UTC ISO-8601 time the action was recorded, e.g. 2026-11-14T22:10:00.000Z. */
@@ -108,9 +117,52 @@ export function snapshotPaper(paper: ResearchPaper): ResearchPaper {
     return copy as unknown as ResearchPaper;
 }
 
-/** Rebuild current queue and notes by replaying the records in order. */
-export function rebuildWorkspace(records: WorkspaceLogRecord[]): RebuiltWorkspace {
+/**
+ * Written migration, v1 -> v2 (upcast on read; stored records are not changed):
+ *  - queue.add: the paper gets its permanent work id and aliases (withWorkId); paperId becomes that id and the
+ *    old id is kept as paper.sourceId.
+ *  - every other record's paperId is mapped through the ids learned from the v1 queue.add records; an id never
+ *    seen in a queue.add is converted when it is itself a recognizable identifier (W…, crossref:<doi>, arxiv:…),
+ *    and otherwise kept unchanged.
+ *  - schemaVersion becomes 2 and migratedFrom records 1.
+ * Records newer than this code understands throw: their meaning is never guessed.
+ */
+export function migrateWorkspaceRecords(records: Array<Record<string, any>>): WorkspaceLogRecord[] {
     const ordered = [...records].sort((a, b) => (a.seq ?? 0) - (b.seq ?? 0));
+    const idMap = new Map<string, string>();
+    for (const r of ordered) {
+        if (r.schemaVersion === 1 && r.type === 'queue.add' && r.paper) {
+            idMap.set(String(r.paperId), withWorkId({ ...r.paper, id: r.paper.id ?? r.paperId }).id);
+        }
+    }
+    const mapId = (id: unknown): string | null => {
+        if (id === null || id === undefined) return null;
+        const old = String(id);
+        if (idMap.has(old)) return idMap.get(old)!;
+        const aliases = extractAliases({ id: old });
+        const best = aliases.find(a => a.scheme !== 'fingerprint');
+        return best ? canonicalWorkId({ id: old }) : old;
+    };
+    return ordered.map(r => {
+        if (r.schemaVersion === WORKSPACE_LOG_SCHEMA_VERSION) return r as WorkspaceLogRecord;
+        if (r.schemaVersion !== 1) {
+            throw new Error(`Unsupported workspace log schemaVersion ${String(r.schemaVersion)}`);
+        }
+        const up: Record<string, any> = { ...r, schemaVersion: WORKSPACE_LOG_SCHEMA_VERSION, migratedFrom: 1 };
+        if (r.type === 'queue.add' && r.paper) {
+            const paper = withWorkId({ ...r.paper, id: r.paper.id ?? r.paperId });
+            up.paper = paper;
+            up.paperId = paper.id;
+        } else if ('paperId' in r) {
+            up.paperId = mapId(r.paperId);
+        }
+        return up as WorkspaceLogRecord;
+    });
+}
+
+/** Rebuild current queue and notes by replaying the records in order (older records are upcast first). */
+export function rebuildWorkspace(input: WorkspaceLogRecord[]): RebuiltWorkspace {
+    const ordered = migrateWorkspaceRecords(input as Array<Record<string, any>>);
     const queue: ResearchPaper[] = [];
     const notes: Record<string, RebuiltNote> = {};
     const decisions: Record<string, RebuiltDecision> = {};
@@ -121,10 +173,10 @@ export function rebuildWorkspace(records: WorkspaceLogRecord[]): RebuiltWorkspac
         }
         switch (r.type) {
             case 'queue.add':
-                if (!queue.some(p => p.id === r.paperId)) queue.push(r.paper);
+                if (!queue.some(p => p.id === r.paperId || sameWork(p, r.paper))) queue.push(r.paper);
                 break;
             case 'queue.remove': {
-                const i = queue.findIndex(p => p.id === r.paperId);
+                const i = queue.findIndex(p => p.id === r.paperId || p.sourceId === r.paperId);
                 if (i >= 0) queue.splice(i, 1);
                 break;
             }
@@ -253,8 +305,13 @@ export function appendWorkspaceRecord(entry: NewWorkspaceLogRecord, now?: () => 
     return appendWorkspaceRecords([entry], now).then(r => r[0]);
 }
 
-/** Read every record in insertion order. */
+/** Every record in insertion order, upcast to the current schema (see migrateWorkspaceRecords). */
 export async function readWorkspaceLog(): Promise<WorkspaceLogRecord[]> {
+    return migrateWorkspaceRecords(await readRawWorkspaceLog() as Array<Record<string, any>>);
+}
+
+/** Every record exactly as stored (any schema version), in insertion order. */
+export async function readRawWorkspaceLog(): Promise<WorkspaceLogRecord[]> {
     const db = await openDb();
     return new Promise<WorkspaceLogRecord[]>((resolve, reject) => {
         const tx = db.transaction(WORKSPACE_LOG_STORE, 'readonly');

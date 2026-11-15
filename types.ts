@@ -133,7 +133,15 @@ export interface PaperReference {
 }
 
 export interface ResearchPaper {
+  /** Permanent work id from utils/workIds.ts (doi:…, openalex:W…, arxiv:…, pmid:…, a stable source id, or fp:…). */
   id: string;
+  /** The id the source that returned this record used for it, when different from `id`. */
+  sourceId?: string;
+  /** Every normalized identifier known for this work (alias table). */
+  aliases?: { scheme: 'doi' | 'openalex' | 'arxiv' | 'pmid' | 'pmcid' | 'source' | 'fingerprint'; value: string }[];
+  arxivId?: string;
+  pmid?: string;
+  pmcid?: string;
   title: string;
   authors: string;
   year: number;

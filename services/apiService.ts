@@ -42,6 +42,7 @@ import * as dissertationService from './dissertationService';
 import * as doajService from './doajService';
 import * as ericService from './ericService';
 import * as coreService from './coreService';
+import { aliasKey, withWorkId } from '../utils/workIds';
 
 /**
  * Service Facade
@@ -61,40 +62,41 @@ export interface SearchProgressCallbacks {
     onSourceNotice?: (notice: string | null) => void;
 }
 
-// Deduplicate and merge research paper lists preserving richest metadata
+// Deduplicate and merge research paper lists preserving richest metadata.
+// Records are the same work when they share any normalized alias (DOI, OpenAlex, arXiv, PMID, PMCID; see
+// utils/workIds.ts). Each result carries its permanent work id, so the same paper has the same id in every search.
 export const deduplicatePapers = (papers: ResearchPaper[]): ResearchPaper[] => {
-    const uniquePapers = new Map<string, ResearchPaper>();
-    
-    for (const paper of papers) {
-        const key = paper.doi ? `doi:${paper.doi.toLowerCase()}` : paper.title.toLowerCase().replace(/[^a-z0-9]/g, '');
-        if (!key || key.length < 5) continue;
+    const groups: ResearchPaper[] = [];
+    const byAlias = new Map<string, number>();
 
-        if (uniquePapers.has(key)) {
-            const existing = uniquePapers.get(key)!;
-            const merged: ResearchPaper = { 
-                ...existing,
-                ...paper,
-                id: existing.id 
-            };
+    for (const raw of papers) {
+        if (!raw || typeof raw.title !== 'string') continue;
+        const paper = withWorkId(raw);
+        const keys = (paper.aliases ?? []).map(aliasKey);
+        const hit = keys.map(k => byAlias.get(k)).find((i): i is number => i !== undefined);
 
+        if (hit !== undefined) {
+            const existing = groups[hit];
+            const merged: ResearchPaper = { ...existing, ...paper };
             merged.citations = Math.max(existing.citations || 0, paper.citations || 0);
             merged.pdfURL = existing.pdfURL || paper.pdfURL;
-            
             const existingAbstractLen = existing.abstract ? existing.abstract.length : 0;
             const paperAbstractLen = paper.abstract ? paper.abstract.length : 0;
-            
-            merged.abstract = (existingAbstractLen > paperAbstractLen) 
-                ? existing.abstract 
-                : paper.abstract;
-                
-            merged.highlights = [...(existing.highlights || []), ...(paper.highlights || [])]; 
-            
-            uniquePapers.set(key, merged);
+            merged.abstract = (existingAbstractLen > paperAbstractLen) ? existing.abstract : paper.abstract;
+            merged.highlights = [...(existing.highlights || []), ...(paper.highlights || [])];
+            const seen = new Set((existing.aliases ?? []).map(aliasKey));
+            merged.aliases = [...(existing.aliases ?? []), ...(paper.aliases ?? []).filter(a => !seen.has(aliasKey(a)))];
+            merged.sourceId = existing.sourceId;
+            // Recompute from the union of aliases: the id is the best alias either record knew, whatever the order.
+            const normalized = withWorkId({ ...merged, id: existing.id });
+            groups[hit] = normalized;
+            for (const k of (normalized.aliases ?? []).map(aliasKey)) byAlias.set(k, hit);
         } else {
-            uniquePapers.set(key, paper);
+            groups.push(paper);
+            for (const k of keys) byAlias.set(k, groups.length - 1);
         }
     }
-    return Array.from(uniquePapers.values());
+    return groups;
 };
 
 export const searchPapers = async (
@@ -107,7 +109,8 @@ export const searchPapers = async (
     // 0. Direct DOI Lookup
     if (options.doi) {
         callbacks?.onStatusChange?.(`Resolving DOI: ${options.doi}...`);
-        const paper = await openalexService.searchOpenAlexByDoi(options.doi);
+        const found = await openalexService.searchOpenAlexByDoi(options.doi);
+        const paper = found ? withWorkId(found) : null;
         const res = { papers: paper ? [paper] : [], hasMore: false };
         if (paper && callbacks?.onInitialPapers) {
             callbacks.onInitialPapers([paper], false);

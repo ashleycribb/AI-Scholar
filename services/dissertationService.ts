@@ -1,4 +1,5 @@
 import type { ResearchPaper } from '../types';
+import { stableRecordId } from '../utils/workIds';
 import { getCache, setCache } from '../utils/cache';
 
 const CACHE_TTL_MS = 5 * 60 * 1000;
@@ -40,7 +41,7 @@ export const searchDissertations = async (
       const institution = item.publisher || item['container-title']?.[0] || 'University Archive';
 
       return {
-        id: `dissertation:${item.DOI || Math.random().toString(36).substring(2, 9)}`,
+        id: stableRecordId('dissertation', item.DOI, { title: item.title?.[0], authors: author, year: dateParts?.[0], raw: item }),
         title,
         author,
         year,

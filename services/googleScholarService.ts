@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { stableRecordId } from '../utils/workIds';
 import type { ResearchPaper, AdvancedSearchOptions } from '../types';
 
 export const searchGoogleScholar = async (
@@ -63,7 +64,7 @@ export const searchGoogleScholar = async (
             }
 
             return {
-                id: result.result_id || `gs_${Math.random().toString(36).substr(2, 9)}`,
+                id: stableRecordId('gs', result.result_id, { title: result.title, authors, year: year ? parseInt(year, 10) : undefined, raw: result }),
                 title: result.title,
                 authors: authors || 'Unknown Authors',
                 authorList,

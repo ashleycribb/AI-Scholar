@@ -43,7 +43,9 @@ export const searchPubMed = async (
       const year = item.pubdate ? parseInt(item.pubdate.substring(0, 4), 10) : new Date().getFullYear();
 
       return {
-        id: `pubmed:${item.uid}`,
+        id: `pmid:${item.uid}`,
+        pmid: item.uid,
+        pmcid: pmcid || undefined,
         title: item.title?.replace(/<[^>]+>/g, '').trim() || 'Untitled Biomedical Work',
         authors,
         year: isNaN(year) ? new Date().getFullYear() : year,

@@ -89,7 +89,7 @@ describe('local-first queue and notes (signed out)', () => {
         expect(records.length).toBe(2);
         for (const r of records) {
             expect(r.schemaVersion).toBe(log.WORKSPACE_LOG_SCHEMA_VERSION);
-            expect(r.schemaVersion).toBe(1);
+            expect(r.schemaVersion).toBe(2);
             expect(r.recordedAt).toMatch(ISO_UTC);
             expect(new Date(r.recordedAt).toISOString()).toBe(r.recordedAt);
             expect(typeof r.seq).toBe('number');
