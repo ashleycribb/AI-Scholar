@@ -62,7 +62,7 @@ export function convertPapersToS3APayload(
   return {
     query: query || 'Scholarly Research Session',
     query_settings: settings || {},
-    services: services || ['openalex', 'semantic_scholar', 'crossref'],
+    services: services || [],
     selected_work_ids: papers.map(p => p.id),
     papers: papers.map(p => ({
       title: p.title,
@@ -70,7 +70,7 @@ export function convertPapersToS3APayload(
       year: p.year || undefined,
       authors: p.authors ? (typeof p.authors === 'string' ? p.authors.split(',').map(a => a.trim()) : p.authors) : undefined,
       abstract: p.abstract || undefined,
-      source_service: p.enrichmentSource || 'Scholar Explorer',
+      source_service: p.enrichmentSource || undefined,
       open_access_pdf_url: p.pdfURL || undefined
     })),
     retrieved_at: new Date().toISOString(),
@@ -95,12 +95,15 @@ export function researchPapersFromSnapshotPayload(payload: S3ASnapshotPayload): 
       ? p.authors.join(', ')
       : (typeof p.authors === 'string' ? p.authors : '');
     const yearRaw = p.year;
-    const year = typeof yearRaw === 'number' && Number.isFinite(yearRaw)
+    const parsedYear = typeof yearRaw === 'number' && Number.isFinite(yearRaw)
       ? Math.floor(yearRaw)
-      : (typeof yearRaw === 'string' ? parseInt(yearRaw, 10) || 0 : 0);
+      : (typeof yearRaw === 'string' ? parseInt(yearRaw, 10) : NaN);
+    // Missing stays missing: no year 0, and a work id is not relabelled as an OpenAlex id unless it is one.
+    const year = Number.isInteger(parsedYear) && parsedYear > 0 ? parsedYear : undefined;
+    const openalex = /^(?:openalex:|https?:\/\/openalex\.org\/)?(W[1-9][0-9]*)$/i.exec(String(ids[i] ?? '').trim())?.[1];
     return {
       id,
-      openalex_id: ids[i] || undefined,
+      openalex_id: openalex ? openalex.toUpperCase() : undefined,
       title: p.title,
       doi: p.doi,
       year,
@@ -121,7 +124,8 @@ export async function exportS3ASnapshotFromPayload(
   fileName?: string
 ): Promise<{ filename: string; bytes: Uint8Array; warnings: string[] }> {
   const papers = researchPapersFromSnapshotPayload(payload);
-  await stageQueuePapersInSession(papers, { recordInclusionStatement: false });
+  // The payload is the selection queue, so each paper is a researcher selection.
+  await stageQueuePapersInSession(papers, { recordInclusionStatement: false, researcherSelected: true });
   const baseName = buildScholarExportBaseName(fileName || payload.query || 'research-session');
   return exportS3ASession({ projectOrSessionName: baseName });
 }

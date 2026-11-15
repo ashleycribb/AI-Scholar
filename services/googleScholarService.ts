@@ -66,9 +66,9 @@ export const searchGoogleScholar = async (
             return {
                 id: stableRecordId('gs', result.result_id, { title: result.title, authors, year: year ? parseInt(year, 10) : undefined, raw: result }),
                 title: result.title,
-                authors: authors || 'Unknown Authors',
+                authors: authors || '',
                 authorList,
-                year: year ? parseInt(year, 10) : new Date().getFullYear(),
+                year: year ? parseInt(year, 10) : undefined,
                 abstract: result.snippet || '',
                 sourceURL: result.link || '',
                 pdfURL: result.resources && result.resources.length > 0 ? result.resources[0].link : undefined,

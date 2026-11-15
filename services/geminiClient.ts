@@ -8,7 +8,7 @@
  */
 import type { Content, GenerateContentConfig, GenerateContentResponse, Part } from "@google/genai";
 
-export type GeminiResponse = GenerateContentResponse & { text: string | undefined; functionCalls: any[] | undefined };
+export type GeminiResponse = GenerateContentResponse & { text: string | undefined; functionCalls: any[] | undefined; servedBy: ServedBy };
 
 export interface GeminiClientOptions {
   /** Base URL of the proxy, no trailing slash. May be async (extension reads chrome.storage). */
@@ -40,13 +40,22 @@ export function parseRetryAfter(value: string | null | undefined, now = Date.now
 }
 
 /** Re-attach the `text` / `functionCalls` accessors the SDK adds, which JSON transport drops. */
-export function hydrateResponse(raw: any): GeminiResponse {
+/** Who actually produced a response, from the proxy's X-LLM-Provider / X-LLM-Model headers and the body. */
+export interface ServedBy {
+  provider: string | null;
+  model: string | null;
+  /** Provider-reported model version (Gemini `modelVersion`), or null when the provider gives none. */
+  modelVersion: string | null;
+}
+
+export function hydrateResponse(raw: any, servedBy?: ServedBy): GeminiResponse {
   const parts: Part[] = raw?.candidates?.[0]?.content?.parts ?? [];
   const text = parts.filter((p: any) => typeof p.text === "string" && !p.thought).map((p: any) => p.text).join("");
   const calls = parts.filter((p: any) => p.functionCall).map((p: any) => p.functionCall);
   return Object.defineProperties({ ...raw }, {
     text: { value: text === "" ? undefined : text, enumerable: false },
     functionCalls: { value: calls.length ? calls : undefined, enumerable: false },
+    servedBy: { value: servedBy ?? { provider: null, model: null, modelVersion: typeof raw?.modelVersion === "string" ? raw.modelVersion : null }, enumerable: false },
   }) as GeminiResponse;
 }
 
@@ -64,6 +73,10 @@ export function createGeminiClient(options: GeminiClientOptions = {}) {
   };
 
   async function post(path: "generate" | "embed" | "embed-batch", body: unknown): Promise<any> {
+    return (await postWithMeta(path, body)).data;
+  }
+
+  async function postWithMeta(path: "generate" | "embed" | "embed-batch", body: unknown): Promise<{ data: any; servedBy: ServedBy }> {
     const base = await resolveBase();
     let res: Response;
     try {
@@ -82,12 +95,19 @@ export function createGeminiClient(options: GeminiClientOptions = {}) {
         err?.code ?? res.status, err?.status ?? "UNKNOWN", err?.message ?? `Gemini proxy error (${res.status})`,
         parseRetryAfter(res.headers?.get?.("Retry-After")));
     }
-    return data;
+    return {
+      data,
+      servedBy: {
+        provider: res.headers?.get?.("X-LLM-Provider") ?? null,
+        model: res.headers?.get?.("X-LLM-Model") ?? null,
+        modelVersion: typeof data?.modelVersion === "string" ? data.modelVersion : null,
+      },
+    };
   }
 
   const models = {
     generateContent: async (params: { model: string; contents: any; config?: GenerateContentConfig | Record<string, any> }) =>
-      hydrateResponse(await post("generate", params)),
+      { const r = await postWithMeta("generate", params); return hydrateResponse(r.data, r.servedBy); },
     embedContent: async (params: { model: string; contents: any; config?: Record<string, any> }): Promise<any> =>
       post("embed", params),
     /** One vector per text, in order (server enforces the batch caps). Returns `{ embeddings: [{ values }] }`. */

@@ -144,7 +144,7 @@ export interface ResearchPaper {
   pmcid?: string;
   title: string;
   authors: string;
-  year: number;
+  year?: number;
   abstract: string;
   sourceURL?: string;
   pdfURL?: string;
@@ -152,6 +152,7 @@ export interface ResearchPaper {
   citations?: number;
   semanticScore?: number; // 0-100 match to the search term (keyword match first, upgraded to meaning + keyword match). Never a quality rating.
   scoreSource?: 'keyword' | 'semantic'; // which stage produced semanticScore
+  scoreModel?: string; // embedding model the server reported for a meaning match (absent for keyword-only scores)
   keywordMatch?: number; // 0-100 BM25+ keyword match to the search term
   rawSemanticSimilarity?: number; // 0-100 calibrated embedding (meaning) match to the search term
   rawKeywordScore?: number; // 0-9 keyword/phrase/proximity/title points
@@ -192,6 +193,7 @@ export interface ResearchPaper {
   sciteTally?: SciteTally;
   sciteTallyState?: 'idle' | 'loading' | 'loaded' | 'error';
   laymanSummary?: string;
+  laymanSummaryModel?: string; // model that actually wrote laymanSummary (from the server response)
   isLaymanLoading?: boolean;
 
   // Reference lists & citations
@@ -216,7 +218,7 @@ export interface Cluster {
 
 export interface GraphNode {
   id: string;
-  year: number;
+  year?: number;
 }
 
 export interface GraphEdge {
@@ -263,7 +265,7 @@ export interface ModelDefinition {
 export interface ConnectedPaper {
   title: string;
   authors: string;
-  year: number;
+  year?: number;
   connection: string;
   summary: string;
   sourceURL?: string;
@@ -417,7 +419,7 @@ export interface Metadata {
   title: string;
   authors: string[];
   journal?: string;
-  year: number;
+  year?: number;
   citations?: number;
   isRetracted?: boolean;
   isOpenAccess?: boolean;
@@ -435,7 +437,7 @@ export interface GoldStandardPaper {
   title: string;
   abstract: string;
   authors: string;
-  year: number;
+  year?: number;
   source?: string;
   crossref_verified: boolean;
   peer_reviewed: boolean;
@@ -671,7 +673,7 @@ export interface DataCiteWork {
   title: string;
   description?: string;
   creators: { name: string; orcid?: string }[];
-  publicationYear: number;
+  publicationYear?: number;
   resourceTypeGeneral?: string; // Dataset, Software, Preprint, Instrument, Audiovisual, Text
   resourceType?: string;
   citationsCount?: number;
@@ -737,7 +739,7 @@ export interface DblpPublication {
   key: string;
   title: string;
   authors: string[];
-  year: number;
+  year?: number;
   venue?: string;
   type?: string; // Conference, Article, Book, Informational
   doi?: string;

@@ -25,7 +25,7 @@ export const searchBioRxiv = async (
       const authors = (item.author || []).map((a: any) => `${a.given || ''} ${a.family || ''}`.trim()).filter(Boolean).join(', ') || 'Cold Spring Harbor Preprint Author';
       
       const dateParts = item.published?.['date-parts']?.[0] || item.created?.['date-parts']?.[0];
-      const year = dateParts?.[0] || new Date().getFullYear();
+      const year = dateParts?.[0] || undefined;
 
       const abstract = item.abstract 
         ? item.abstract.replace(/<[^>]+>/g, '').trim() 

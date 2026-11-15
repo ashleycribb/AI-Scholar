@@ -101,7 +101,19 @@ export const generateSearchQueries = async (question: string): Promise<string[]>
  * Generates a plain-language (layman) summary of an academic abstract.
  * Inspired by the "Get The Research" plain language translation feature.
  */
-export const generateLaymanSummary = async (paper: ResearchPaper): Promise<string> => {
+export interface LaymanSummaryResult {
+    text: string;
+    /** Model that actually answered, from the server (X-LLM-Model); marked as only requested when the server did not say. */
+    model: string;
+    /** Provider-reported model version, or null when none was reported. */
+    modelRevision: string | null;
+    /** Exactly what was sent, for the derived cache's input hash. */
+    input: { model: string; prompt: string };
+}
+
+/** Throws when the model gives no summary: an error message is never returned as if it were a summary. */
+export const generateLaymanSummary = async (paper: ResearchPaper): Promise<LaymanSummaryResult> => {
+    const requestedModel = "gemini-3-flash-preview";
     const prompt = `Translate the following academic abstract into plain language that a curious non-specialist (e.g., a high school student or a patient) can understand perfectly. 
     
     Guidelines:
@@ -115,16 +127,20 @@ export const generateLaymanSummary = async (paper: ResearchPaper): Promise<strin
     
     Layman Summary:`;
 
-    try {
-        const response = await runWithRetry<GenerateContentResponse>(() => ai.models.generateContent({
-            model: "gemini-3-flash-preview",
-            contents: prompt,
-        }));
-        return response.text || "No summary could be generated.";
-    } catch (error) {
-        console.error("Error generating layman summary:", error);
-        return "Error generating layman summary. The scientific content may be too complex for a simple translation or quota has been reached.";
-    }
+    const response = await runWithRetry<GenerateContentResponse>(() => ai.models.generateContent({
+        model: requestedModel,
+        contents: prompt,
+    }));
+    const text = (response.text || '').trim();
+    if (!text) throw new Error('The model returned no plain-language summary.');
+    const servedBy = (response as { servedBy?: { model: string | null; modelVersion: string | null } }).servedBy;
+    return {
+        text,
+        // Without the server's X-LLM-Model header only the request is known, and the label says so.
+        model: servedBy?.model || `${requestedModel} (requested; server did not confirm)`,
+        modelRevision: servedBy?.modelVersion ?? null,
+        input: { model: requestedModel, prompt },
+    };
 };
 
 /**

@@ -85,7 +85,7 @@ describe('S3A Scholar Pack Round-Trip Wire (Tiles 12, 13, 15)', () => {
     };
 
     // 2. Act: Write paper to the Scholar pack
-    const writeResult = await writePaperToScholarPack(paper);
+    const writeResult = await writePaperToScholarPack(paper, { researcherSelected: true });
     expect(writeResult.added).toBe(true);
     expect(writeResult.duplicate).toBe(false);
     expect(writeResult.edgesCount).toBe(7); // 1 PDF + 2 sections + 1 figure + 1 table + 2 references = 7
@@ -123,6 +123,7 @@ describe('S3A Scholar Pack Round-Trip Wire (Tiles 12, 13, 15)', () => {
     const flagsNum = Number(paperRec.flags);
     expect(flagsNum & ACADEMIC_PAPER_FLAGS.HAS_OA_URL_REF).toBe(ACADEMIC_PAPER_FLAGS.HAS_OA_URL_REF);
     expect(flagsNum & ACADEMIC_PAPER_FLAGS.RESEARCHER_APPROVED).toBe(ACADEMIC_PAPER_FLAGS.RESEARCHER_APPROVED);
+    expect(flagsNum & ACADEMIC_PAPER_FLAGS.SOURCE_OPENALEX).toBe(ACADEMIC_PAPER_FLAGS.SOURCE_OPENALEX);
 
     // 7. Assert: Tile 13 RESEARCH_GRAPH
     expect(parsed.hasTile13).toBe(true);

@@ -17,7 +17,8 @@
  *
  * Provider layer: this router only validates, rate-limits and shapes HTTP. Calls go through an LLMService
  * (server/llm/), which owns provider selection, failover (generate only), timeouts and circuit breaking;
- * the Gemini SDK lives in server/llm/providers/gemini.ts. Responses carry an X-LLM-Provider header.
+ * the Gemini SDK lives in server/llm/providers/gemini.ts. Responses carry X-LLM-Provider and X-LLM-Model headers
+ * naming who actually answered (so AI results can be labelled with the real model).
  *
  * Embedding note: use /embed-batch for more than one text. /embed with an array `contents` is
  * forwarded as-is, and gemini-embedding-2* aggregates a flat list of parts into a single vector.
@@ -295,6 +296,7 @@ export function createGeminiProxyRouter(opts: ProxyOptions = {}): Router {
     try {
       const out = embed ? await llm.embed(v.value) : await llm.generate(v.value);
       res.setHeader("X-LLM-Provider", out.providerId);
+      res.setHeader("X-LLM-Model", out.model);
       res.json(out.raw);
     } catch (err) {
       sendError(res, err);
@@ -308,6 +310,7 @@ export function createGeminiProxyRouter(opts: ProxyOptions = {}): Router {
     try {
       const out = await llm.embedBatch(v.value!);
       res.setHeader("X-LLM-Provider", out.providerId);
+      res.setHeader("X-LLM-Model", out.model);
       res.json({ embeddings: out.embeddings, providerId: out.providerId });
     } catch (err) {
       sendError(res, err);

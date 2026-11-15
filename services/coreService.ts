@@ -23,16 +23,16 @@ export const searchCORE = async (
 
     const papers: ResearchPaper[] = results.map(r => {
       const title = r.title || 'Untitled Open Access Manuscript';
-      const authors = (r.authors || []).map((a: any) => typeof a === 'string' ? a : a.name).filter(Boolean).join(', ') || 'Institutional Repository Author';
-      const year = r.yearPublished ? parseInt(r.yearPublished, 10) : new Date().getFullYear();
-      const abstract = r.abstract || `Research paper deposited in global open access institutional repositories via CORE aggregator.`;
+      const authors = (r.authors || []).map((a: any) => typeof a === 'string' ? a : a.name).filter(Boolean).join(', ') || '';
+      const year = r.yearPublished ? parseInt(r.yearPublished, 10) : undefined;
+      const abstract = r.abstract || '';
       const doi = r.doi;
 
       return {
         id: stableRecordId('core', r.id, { doi, title: r.title, authors, year: r.yearPublished ? parseInt(r.yearPublished, 10) : undefined, raw: r }),
         title,
         authors,
-        year: isNaN(year) ? new Date().getFullYear() : year,
+        year: year !== undefined && Number.isFinite(year) ? year : undefined,
         abstract,
         doi,
         sourceURL: r.downloadUrl || (doi ? `https://doi.org/${doi}` : undefined),

@@ -15,6 +15,7 @@ import { scorePapersLexical } from '../utils/bm25';
 import { cosineSimilarity } from '../utils/math';
 import { buildPaperScoreExplanation } from './rerankService';
 import { generateHypotheticalAnswer } from './geminiService';
+import { derivedRecord, putDerived, type DerivedRecord } from './derivedCache';
 
 export const KEYWORD_METHOD = 'Keyword match to your search term (BM25+)';
 export const SEMANTIC_METHOD = 'Meaning match (text embeddings) + keyword match to your search term';
@@ -111,6 +112,8 @@ export interface SemanticScoreOptions {
   /** Text to embed as the query; defaults to the raw search term (e.g. a HyDE expansion when enabled). */
   queryText?: string;
   signal?: AbortSignal;
+  /** Where meaning-match results are cached with their model and input hash (default: services/derivedCache.ts). */
+  cache?: (records: DerivedRecord[]) => Promise<unknown>;
 }
 
 /** Stage 2: meaning + keyword match (0-100). Returns null when embeddings are unavailable (keep keyword scores). */
@@ -130,15 +133,26 @@ export async function semanticScorePapers(papers: ResearchPaper[], query: string
       vectors.push(...r.documents);
     }
     if (!qv || qv.length === 0) return null;
+    // A meaning match must say which model produced it; without a model name the result is not used.
+    if (!model) return null;
     const kw = keywordMatch(papers, query);
-    return papers.map((p, i) => {
+    const scored = papers.map((p, i) => {
       const meaning = vectors[i]?.length ? calibrateSimilarity(cosineSimilarity(qv!, vectors[i]), model) : 0;
       const keywordPct = Math.round(kw[i] * 100);
       const score = Math.round(MEANING_WEIGHT * meaning + (1 - MEANING_WEIGHT) * keywordPct);
-      const out: ResearchPaper = { ...p, semanticScore: score, keywordMatch: keywordPct, rawSemanticSimilarity: meaning, scoreSource: 'semantic' };
+      const out: ResearchPaper = { ...p, semanticScore: score, keywordMatch: keywordPct, rawSemanticSimilarity: meaning, scoreSource: 'semantic', scoreModel: model };
       out.scoreExplanation = explain(out, query, SEMANTIC_METHOD, keywordPct, meaning);
       return out;
     });
+    // Rebuildable cache, best effort: a failed cache write never changes what the researcher sees or saves.
+    void Promise.all(scored.map((p, i) => derivedRecord({
+      workId: p.id, kind: 'match-score', model, modelRevision: null,
+      input: { method: SEMANTIC_METHOD, query: queryText, keywordQuery: query, text: docs[i].text, meaningWeight: MEANING_WEIGHT },
+      value: { score: p.semanticScore, keywordMatch: p.keywordMatch, meaning: p.rawSemanticSimilarity },
+    })))
+      .then(records => (o.cache ?? putDerived)(records))
+      .catch(e => console.warn('[scoring] Match scores were not cached:', e?.message ?? e));
+    return scored;
   } catch (e: any) {
     if (e?.name !== 'AbortError') console.warn(`[scoring] Meaning match unavailable (${e?.status ?? e?.message ?? 'error'}); keeping keyword match.`);
     return null;

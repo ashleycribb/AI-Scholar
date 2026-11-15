@@ -23,7 +23,7 @@ export const searchERIC = async (
     const papers: ResearchPaper[] = docs.map(doc => {
       const title = doc.title || 'Untitled Education Research Paper';
       const authors = (doc.author || []).join(', ') || 'Education Researcher';
-      const year = doc.publicationdateyear ? parseInt(doc.publicationdateyear, 10) : new Date().getFullYear();
+      const year = doc.publicationdateyear ? parseInt(doc.publicationdateyear, 10) : NaN;
       const abstract = doc.description || `Education research study cataloged in the Institute of Education Sciences (IES) ERIC registry (${doc.id}).`;
       const isPeerReviewed = doc.peerreviewed === 'T';
 
@@ -31,7 +31,7 @@ export const searchERIC = async (
         id: `eric:${doc.id}`,
         title: isPeerReviewed ? `[Peer-Reviewed Education] ${title}` : `[Education Research] ${title}`,
         authors,
-        year: isNaN(year) ? new Date().getFullYear() : year,
+        year: isNaN(year) ? undefined : year,
         abstract,
         sourceURL: doc.url || `https://eric.ed.gov/?id=${doc.id}`,
         journal: doc.source,

@@ -131,18 +131,18 @@ export const searchOpenAirePublications = async (
 
       const authorsRaw = meta.creator || [];
       const authorsArr = Array.isArray(authorsRaw) ? authorsRaw : [authorsRaw];
-      const authors = authorsArr.map((a: any) => extractString(a?.['$'] || a?.name || a)).filter(Boolean).join(', ') || 'OpenAIRE Contributor';
+      const authors = authorsArr.map((a: any) => extractString(a?.['$'] || a?.name || a)).filter(Boolean).join(', ') || '';
 
       const title = extractString(meta.title, 'Untitled OpenAIRE Work');
       const yearRaw = extractString(meta.dateofacceptance) || extractString(meta.publicationYear);
-      let year = new Date().getFullYear();
+      let year: number | undefined;
       if (yearRaw) {
         const parsed = parseInt(yearRaw.slice(0, 4), 10);
         if (Number.isFinite(parsed) && parsed > 1800) {
           year = parsed;
         }
       }
-      const description = extractString(meta.description, 'Open science publication indexed in European OpenAIRE Graph.');
+      const description = extractString(meta.description, '');
 
       const rawObjId = item.header?.['dri:objIdentifier'];
       let safeObjId = extractString(rawObjId);

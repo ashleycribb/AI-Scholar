@@ -45,17 +45,17 @@ export const searchCrossref = async (
 
     const papers: ResearchPaper[] = items.map(item => {
       const title = item.title?.[0] ? item.title[0].replace(/<[^>]+>/g, '').trim() : 'Untitled Scholarly Work';
-      const authors = (item.author || []).map(a => `${a.given || ''} ${a.family || a.name || ''}`.trim()).filter(Boolean).join(', ') || 'Scholarly Contributor';
+      const authors = (item.author || []).map(a => `${a.given || ''} ${a.family || a.name || ''}`.trim()).filter(Boolean).join(', ') || '';
       
       const dateParts = item.published?.['date-parts']?.[0] || 
                         item['published-online']?.['date-parts']?.[0] || 
                         item['published-print']?.['date-parts']?.[0] || 
                         item.created?.['date-parts']?.[0];
-      const year = dateParts?.[0] || new Date().getFullYear();
+      const year = dateParts?.[0] || undefined;
 
       const abstract = item.abstract 
         ? item.abstract.replace(/<[^>]+>/g, '').trim() 
-        : `Peer-reviewed publication registered with Crossref DOI: ${item.DOI}.`;
+        : '';
 
       return {
         id: `crossref:${item.DOI}`,

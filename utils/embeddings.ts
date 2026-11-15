@@ -278,7 +278,8 @@ export function createEmbedder(o: EmbedderOptions) {
     for (const raw of texts) {
       const text = typeof raw === "string" ? raw.trim().slice(0, EMBED_TEXT_MAX_CHARS) : "";
       if (!text) { keys.push(null); results.push(Promise.resolve([])); continue; }
-      const key = hashText(text);
+      // Keyed by model as well as text: a vector from one model is never reused for another.
+      const key = hashText(`${model}\u0000${text}`);
       keys.push(key);
       const hit = memGet(key);
       if (hit) { results.push(Promise.resolve(hit)); continue; }

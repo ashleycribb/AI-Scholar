@@ -154,8 +154,8 @@ export const searchArxiv = async (query: string, page: number = 1): Promise<{ pa
         const papers: ResearchPaper[] = entries.map(entry => ({
             id: stableRecordId('arxiv', extractArxivId(entry.querySelector("id")?.textContent?.trim()), { title: entry.querySelector("title")?.textContent, raw: entry.querySelector("id")?.textContent }),
             title: entry.querySelector("title")?.textContent?.trim().replace(/\s+/g, ' ') || 'Untitled',
-            abstract: entry.querySelector("summary")?.textContent?.trim().replace(/\s+/g, ' ') || 'No abstract.',
-            year: entry.querySelector("published")?.textContent ? new Date(entry.querySelector("published")!.textContent!).getFullYear() : new Date().getFullYear(),
+            abstract: entry.querySelector("summary")?.textContent?.trim().replace(/\s+/g, ' ') || '',
+            year: entry.querySelector("published")?.textContent ? new Date(entry.querySelector("published")!.textContent!).getUTCFullYear() : undefined,
             authors: Array.from(entry.querySelectorAll("author > name")).map(n => n.textContent?.trim()).filter(Boolean).join(', '),
             pdfURL: Array.from(entry.querySelectorAll("link")).find(l => l.getAttribute('title') === 'pdf')?.getAttribute('href') || undefined,
             sourceURL: entry.querySelector("id")?.textContent?.trim() || '',
