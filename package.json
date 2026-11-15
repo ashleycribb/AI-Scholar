@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "tsx server.ts",
     "start": "node dist/server.cjs",
-    "build": "vite build && esbuild server.ts --bundle --platform=node --target=node18 --packages=external --outfile=dist/server.cjs",
+    "build": "vite build && esbuild server.ts --bundle --platform=node --target=node18 --packages=external --outfile=dist/server.cjs && esbuild scripts/data-backup.ts --bundle --platform=node --target=node18 --packages=external --outfile=dist/data-backup.cjs",
     "build-extension": "vite build -c vite.extension.config.ts && node copy-extension-assets.js",
     "preview": "vite preview",
     "lint": "tsc --noEmit",
@@ -14,7 +14,8 @@
     "data:backup": "tsx scripts/data-backup.ts backup",
     "data:verify": "tsx scripts/data-backup.ts verify",
     "data:restore": "tsx scripts/data-backup.ts restore",
-    "check:no-cdn": "node scripts/check-no-cdn.mjs dist dist-extension"
+    "check:no-cdn": "node scripts/check-no-cdn.mjs dist dist-extension",
+    "data:daily": "tsx scripts/data-backup.ts daily"
   },
   "dependencies": {
     "@citation-js/core": "0.7.6",

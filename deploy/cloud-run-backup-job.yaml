@@ -1,0 +1,59 @@
+# Cloud Run Job + Scheduler for daily Scholar data backups.
+# Status: documented, not deployed. Placeholders in ALL_CAPS must be filled in.
+# Prefer scripts/deploy-data-backup-job.sh (dry-run by default; --apply deploys).
+# This YAML is the same job shape for review; NFS volumes are applied via gcloud flags
+# (see the deploy script) because job YAML volume support varies by API version.
+#
+# What one run does (scripts/backup-job.sh):
+#   1. npm/node data:daily — VACUUM INTO backup of SCHOLAR_DATA_DIR
+#   2. verify that folder (SHA-256 + PRAGMA integrity_check)
+#   3. prune BACKUP_ROOT to the newest 30 daily folders
+#   4. optional copy to BACKUP_GCS_URI if that env var is set and gcloud is in the image
+#
+# Fill in: PROJECT, REGION, IMAGE, NETWORK, SUBNET, FILESTORE_IP, SCHEDULER_SA
+
+apiVersion: run.googleapis.com/v1
+kind: Job
+metadata:
+  name: scholar-data-backup
+  annotations:
+    run.googleapis.com/launch-stage: BETA
+spec:
+  template:
+    metadata:
+      annotations:
+        run.googleapis.com/execution-environment: gen2
+        run.googleapis.com/network-interfaces: '[{"network":"NETWORK","subnetwork":"SUBNET"}]'
+    spec:
+      parallelism: 1
+      taskCount: 1
+      template:
+        spec:
+          containers:
+            - name: backup
+              image: IMAGE
+              command: ["sh", "scripts/backup-job.sh"]
+              env:
+                - name: SCHOLAR_DATA_DIR
+                  value: /mnt/scholar-data
+                - name: BACKUP_ROOT
+                  value: /mnt/scholar-data/backups
+                - name: BACKUP_KEEP
+                  value: "30"
+                # Optional off-site copy:
+                # - name: BACKUP_GCS_URI
+                #   value: gs://BUCKET/scholar-backups
+              resources:
+                limits:
+                  memory: 1Gi
+          maxRetries: 1
+          timeoutSeconds: 1800
+---
+# Cloud Scheduler (create with gcloud; YAML here is documentary)
+# gcloud scheduler jobs create http scholar-data-backup-daily \
+#   --project=PROJECT --location=REGION \
+#   --schedule="0 7 * * *" --time-zone="America/New_York" \
+#   --uri=https://run.googleapis.com/v2/projects/PROJECT/locations/REGION/jobs/scholar-data-backup:run \
+#   --http-method=POST \
+#   --oauth-service-account-email=SCHEDULER_SA \
+#   --oauth-token-audience=https://run.googleapis.com/

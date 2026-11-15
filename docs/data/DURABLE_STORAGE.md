@@ -54,15 +54,25 @@ redeploy, sign in, and the queue and statements are still there.
 npm run data:backup -- /path/to/backups        # consistent copy of every .sqlite (VACUUM INTO) and .json
 npm run data:verify -- /path/to/backups/scholar-data-<UTC time>
 npm run data:restore -- /path/to/backups/scholar-data-<UTC time> /path/to/empty/dir
+npm run data:daily  -- /path/to/backups        # backup, verify that folder, prune to the newest 30
 ```
 
 - A backup folder holds the files, `backup.json` (UTC time, file list) and `manifest.sha256` (`sha256sum -c`).
 - `VACUUM INTO` gives a consistent copy while the server keeps running, including committed WAL content.
 - Restore checks every SHA-256 and runs `PRAGMA integrity_check` on each database, then writes into an **empty**
   directory only (all-or-nothing). Point `SCHOLAR_DATA_DIR` at it and restart; live data is never overwritten.
-- Daily: run `npm run data:backup` once a day against the mounted directory (for example a Cloud Run job on the same
-  volume, triggered by Cloud Scheduler) and copy the folder off the share (for example to a Cloud Storage bucket),
-  or use Filestore's own scheduled backups. Neither is set up yet.
+- Daily schedule (data fix 11, **not deployed**): `npm run data:daily` backs up `SCHOLAR_DATA_DIR`, verifies that
+  folder (`manifest.sha256` + `PRAGMA integrity_check`), then keeps the newest 30 daily folders in `BACKUP_ROOT`
+  (default 30, override with `BACKUP_KEEP`). If verification fails the new folder is left in place, nothing is
+  pruned, and the process exits non-zero so Cloud Scheduler can see the failure.
+- Cloud Run Job + Cloud Scheduler config is in `deploy/cloud-run-backup-job.yaml` and
+  `scripts/deploy-data-backup-job.sh` (dry-run by default; pass `--apply` to deploy). The job uses the same
+  service image, gen2 + the same Filestore NFS mount, writes to `/mnt/scholar-data/backups` (a subfolder of the
+  data dir; only top-level `.sqlite`/`.json` are backed up, so the backups folder is not copied into itself),
+  and is triggered at 07:00 America/New_York. Optional `BACKUP_GCS_URI=gs://bucket/path` copies each verified
+  folder off the share after verify. Fill in PROJECT, REGION, IMAGE, NETWORK, SUBNET, FILESTORE_IP, SCHEDULER_SA.
+  Check after applying: `gcloud run jobs execute scholar-data-backup` produces a verified `scholar-data-<UTC>`
+  folder and the job log shows `"verified": true`.
 - Restore drill: `server/dataBackup.test.ts` backs up a live directory, deletes it, restores into an empty
   directory and checks that statements, workspace state, other databases and JSON files are identical.
 
