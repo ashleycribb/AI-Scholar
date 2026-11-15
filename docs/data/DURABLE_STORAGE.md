@@ -83,5 +83,7 @@ Known limits:
   an edge, so this cannot be replaced by an engine call until the engine exposes one (the Rust graph has `add_edge`,
   but it is not exported to WebAssembly).
 - The page still loads Tailwind (cdn.tailwindcss.com), jsPDF (cdnjs) and citation-js (jsDelivr) from CDNs, and
-  fonts from Google Fonts. With those blocked the app and the S3A engine still load and work, but styling is
-  missing, "download as PDF" fails and citation formatting falls back to the model.
+  fonts from Google Fonts. Checked in headless Chrome against the built server with those hosts blocked: the page
+  renders and the bundled S3A engine initialises. By construction, Tailwind styling is then absent, "download as
+  PDF" (`window.jspdf` in ReportModal) cannot work, and citation formatting (`window.Cite`) falls back to the
+  model; those three were not exercised in the browser.
