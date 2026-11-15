@@ -131,7 +131,7 @@ const createDefaultExecutionState = (): SystemExecutionState => ({
         semantic_scoring: {
             id: 'semantic_scoring',
             label: 'AI Relevance',
-            sublabel: 'Neural embedding & ranking',
+            sublabel: 'Match to search term: keywords, then meaning',
             status: 'pending'
         },
         scite_citations: {
@@ -310,7 +310,9 @@ const App: React.FC = () => {
   const [hasMore, setHasMore] = useState(false);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [currentSearchOptions, setCurrentSearchOptions] = useState<AdvancedSearchOptions>({});
-  const [cachedQueryEmbedding, setCachedQueryEmbedding] = useState<number[] | null>(null);
+  // Scoring: keyword match on screen at once, upgraded in place to meaning + keyword match (services/embeddingService.ts).
+  // Bumped on every new search so late results from an earlier search never overwrite the current one.
+  const scoringRunRef = useRef(0);
   
   // --- SORTING ---
   const [sortConfig, setSortConfig] = useState<SortConfig>({ key: 'relevance', direction: 'desc' });
@@ -505,24 +507,37 @@ const App: React.FC = () => {
         .finally(() => setIsSummaryLoading(false));
   }, [papers, summaryLength, summaryStyle]);
 
+  /** Copy only the score fields onto the current papers (other fields, e.g. citation tallies, may have changed meanwhile). */
+  const mergeScores = React.useCallback((scored: ResearchPaper[]) => {
+      const byId = new Map(scored.map(p => [p.id, p]));
+      const pick = (p: ResearchPaper): ResearchPaper => {
+          const s = byId.get(p.id);
+          return s ? {
+              ...p,
+              semanticScore: s.semanticScore,
+              keywordMatch: s.keywordMatch,
+              rawSemanticSimilarity: s.rawSemanticSimilarity,
+              scoreSource: s.scoreSource,
+              scoreExplanation: s.scoreExplanation,
+          } : p;
+      };
+      setPapers(prev => prev.map(pick));
+      setSelectedPaper(prev => (prev ? pick(prev) : prev));
+  }, []);
+
+  /** Keyword scores synchronously, then meaning match in place. Resolves with the stage that produced the final scores. */
+  const runScoring = React.useCallback((list: ResearchPaper[], searchTerm: string) => {
+      const run = scoringRunRef.current;
+      return apiService.scorePapersProgressively(list, searchTerm, {
+          hyde: !!userSettings.enableHydeQueryExpansion,
+          onUpdate: scored => { if (run === scoringRunRef.current) mergeScores(scored); },
+      });
+  }, [mergeScores, userSettings.enableHydeQueryExpansion]);
+
   const handleRetryScoring = React.useCallback(async () => {
       if (papers.length === 0) return;
-      const targetQuery = query || 'research';
-      try {
-          const queryEmbedding = cachedQueryEmbedding || (await apiService.precomputeQueryEmbedding(targetQuery));
-          if (!cachedQueryEmbedding && queryEmbedding) {
-              setCachedQueryEmbedding(queryEmbedding);
-          }
-          const scoredResults = await apiService.computeScores(papers, queryEmbedding, targetQuery);
-          setPapers(scoredResults);
-          setSelectedPaper(prev => {
-              if (!prev) return null;
-              return scoredResults.find(p => p.id === prev.id) || prev;
-          });
-      } catch (err) {
-          console.error("Retry scoring failed:", err);
-      }
-  }, [papers, query, cachedQueryEmbedding]);
+      await runScoring(papers, query || 'research');
+  }, [papers, query, runScoring]);
 
   useEffect(() => {
       const onRetryScoringEvent = () => { handleRetryScoring(); };
@@ -651,7 +666,7 @@ const App: React.FC = () => {
   const handleSearch = async (searchQuery: string, options: AdvancedSearchOptions) => {
     setIsLoading(true);
     setError(null);
-    setCachedQueryEmbedding(null);
+    scoringRunRef.current += 1;
     setPapers([]);
     setSelectedPaper(null);
     setSummary('');
@@ -691,7 +706,7 @@ const App: React.FC = () => {
             semantic_scoring: {
                 id: 'semantic_scoring',
                 label: 'AI Relevance',
-                sublabel: 'Neural query embedding & ranking',
+                sublabel: 'Match to search term: keywords, then meaning',
                 status: 'pending',
                 detail: 'Awaiting initial paper batch...'
             },
@@ -720,8 +735,6 @@ const App: React.FC = () => {
     }, { actor: 'human', domain: options.domain, query: searchQuery }).catch(() => {});
 
     try {
-      const queryEmbeddingPromise = apiService.precomputeQueryEmbedding(searchQuery);
-
       const { papers: results, hasMore: moreAvailable } = await apiService.searchPapers(
           searchQuery, 
           options, 
@@ -733,6 +746,7 @@ const App: React.FC = () => {
                   setPapers(initialPapers);
                   setHasMore(hasMoreInitial);
                   setIsLoading(false); // Stop blocking loading state! Papers are on screen!
+                  void runScoring(initialPapers, searchQuery); // keyword match now, meaning match in place shortly
 
                   // Update system execution state: Fast index complete, secondary capabilities running
                   setSystemExecution(prev => ({
@@ -751,7 +765,7 @@ const App: React.FC = () => {
                           semantic_scoring: {
                               ...prev.stages.semantic_scoring,
                               status: 'running',
-                              detail: 'Computing neural embeddings...'
+                              detail: 'Keyword match shown; adding meaning match...'
                           },
                           scite_citations: {
                               ...prev.stages.scite_citations,
@@ -768,6 +782,7 @@ const App: React.FC = () => {
               // 2. FEDERATED BATCH: As ArXiv, Crossref, PubMed, etc. arrive, seamlessly merge them
               onFederatedBatch: (mergedPapers, newCount) => {
                   setPapers(mergedPapers);
+                  void runScoring(mergedPapers, searchQuery);
                   setSystemExecution(prev => ({
                       ...prev,
                       totalPaperCount: mergedPapers.length,
@@ -810,14 +825,8 @@ const App: React.FC = () => {
       fetchSciteTallies(results);
 
       try {
-          const queryEmbedding = await queryEmbeddingPromise;
-          setCachedQueryEmbedding(queryEmbedding);
-          const scoredResults = await apiService.computeScores(results, queryEmbedding, searchQuery);
-          setPapers(scoredResults);
-          setSelectedPaper(prev => {
-              if (!prev) return null;
-              return scoredResults.find(p => p.id === prev.id) || prev;
-          });
+          const finalStage = await runScoring(results, searchQuery);
+          const scoredCount = results.length;
 
           setSystemExecution(prev => ({
               ...prev,
@@ -831,8 +840,10 @@ const App: React.FC = () => {
                   semantic_scoring: {
                       ...prev.stages.semantic_scoring,
                       status: 'completed',
-                      detail: `Ranked ${scoredResults.length} articles by neural relevance`,
-                      metric: '100% scored'
+                      detail: finalStage === 'keyword'
+                          ? `Scored ${scoredCount} articles by keyword match (meaning match unavailable)`
+                          : `Scored ${scoredCount} articles by match to your search term`,
+                      metric: finalStage === 'keyword' ? 'Keyword match' : 'Meaning + keyword match'
                   },
                   scite_citations: {
                       ...prev.stages.scite_citations,
@@ -852,11 +863,10 @@ const App: React.FC = () => {
               'Classified Candidate Papers by Semantic Relevance',
               `urn:scholarexplorer:scoring:${encodeURIComponent(searchQuery)}`,
               `Semantic Embeddings for: "${searchQuery}"`,
-              { paperCount: scoredResults.length, query: searchQuery }
+              { paperCount: scoredCount, query: searchQuery, scoringStage: finalStage }
           );
       } catch (scoreError) {
-          console.error("Scoring failed silently:", scoreError);
-          setPapers(prev => prev.map(p => ({ ...p, semanticScore: 0 })));
+          console.error("Scoring failed:", scoreError);
           setSystemExecution(prev => ({
               ...prev,
               stages: {
@@ -970,21 +980,10 @@ const App: React.FC = () => {
           setIsLoadingMore(false);
 
           try {
-              let queryEmbedding = cachedQueryEmbedding;
-              if (!queryEmbedding) {
-                  queryEmbedding = await apiService.precomputeQueryEmbedding(query);
-                  setCachedQueryEmbedding(queryEmbedding);
-              }
-              const scoredNewPapers = await apiService.computeScores(newPapers, queryEmbedding, query);
-              
-              setPapers(prev => {
-                  const scoredMap = new Map(scoredNewPapers.map(p => [p.id, p]));
-                  return prev.map(p => {
-                      const scored = scoredMap.get(p.id);
-                      if (scored) return scored;
-                      return p;
-                  });
-              });
+              // Score the whole list, not just the new page, so keyword match stays comparable across pages
+              // (vectors for papers already scored come from the server cache).
+              const seen = new Set(papers.map(p => p.id));
+              await runScoring([...papers, ...newPapers.filter(p => !seen.has(p.id))], query);
           } catch (e) {
               console.warn("Scoring failed for new page", e);
           }

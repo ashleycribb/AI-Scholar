@@ -28,7 +28,7 @@ interface ResultsDisplayProps {
 }
 
 const sortOptions: { key: SortKey; label: string }[] = [
-    { key: 'relevance', label: 'Relevance' },
+    { key: 'relevance', label: 'Match to search' },
     { key: 'year', label: 'Year (Newest)' },
     { key: 'citations', label: 'Citations' },
 ];

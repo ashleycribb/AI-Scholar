@@ -45,6 +45,7 @@ export const ROUTE_POLICY: Rule[] = [
   // --- handled by their own routers, mounted before this policy ---
   pub("auth", ALL_METHODS, "/api/auth/**", "Magic-link sign-in; own limits, CSRF and origin checks (server/auth)"),
   pub("gemini", ALL_METHODS, "/api/gemini/**", "Gemini proxy; own same-origin policy and limits (server/geminiProxy.ts)"),
+  pub("embed", ["POST"], "/api/embed", "Search-result embeddings; own same-origin policy and limits (server/embed/embedRoute.ts)"),
 
   // --- public ---
   pub("health", ["GET"], "/api/health", "Liveness"),

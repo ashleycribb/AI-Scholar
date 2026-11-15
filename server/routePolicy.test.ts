@@ -99,7 +99,7 @@ describe("completeness: no route in server.ts or server/lrsRoutes.ts is outside 
 
   test("routes mounted through routers are covered too", () => {
     // app.use("/api/local", createLocalVerifyRouter()) -> POST /verify; mcpServer.mount(app, "/mcp"); approval router; gemini; auth.
-    for (const [m, p] of [["POST", "/api/local/verify"], ["GET", "/mcp"], ["POST", "/mcp/messages"], ["GET", "/api/sources/approve-token"], ["POST", "/api/sources/approve-token"], ["POST", "/api/gemini/generate"], ["POST", "/api/auth/logout"]] as const) {
+    for (const [m, p] of [["POST", "/api/local/verify"], ["GET", "/mcp"], ["POST", "/mcp/messages"], ["GET", "/api/sources/approve-token"], ["POST", "/api/sources/approve-token"], ["POST", "/api/gemini/generate"], ["POST", "/api/embed"], ["POST", "/api/auth/logout"]] as const) {
       expect(matchRule(m, p), `${m} ${p}`).not.toBe(DEFAULT_RULE);
     }
     const server = fs.readFileSync(path.join(process.cwd(), "server.ts"), "utf8");
@@ -107,7 +107,7 @@ describe("completeness: no route in server.ts or server/lrsRoutes.ts is outside 
     expect(server).toContain('mcpServer.mount(app, "/mcp")');
     // every app.use mount under a governed prefix is one we know about
     const mounts = [...server.matchAll(/\bapp\.use\(\s*"(\/(?:api|xapi|mcp)[^"]*)"/g)].map(m => m[1]).sort();
-    expect(mounts).toEqual(["/api/auth", "/api/gemini", "/api/local", "/api/sources", "/xapi"].sort());
+    expect(mounts).toEqual(["/api/auth", "/api/embed", "/api/gemini", "/api/local", "/api/sources", "/xapi"].sort());
   });
 
   test("the wildcard CORS header is gone", () => {
