@@ -2,6 +2,7 @@
 import React from 'react';
 import type { VerificationResult, ValidationResult } from '../types';
 import { ShieldCheckIcon } from './icons/ShieldCheckIcon';
+import { formatVacs, isKnownScore } from '../utils/verificationDisplay';
 
 interface VacsScoreBadgeProps {
     verificationResult?: VerificationResult;
@@ -19,7 +20,8 @@ export const VacsScoreBadge: React.FC<VacsScoreBadgeProps> = ({ verificationResu
     };
 
     const style = styles[verdict] || styles.Inconclusive;
-    const title = `VACS: ${vacs}/100 - Verdict: ${verdict}`;
+    const vacsLabel = formatVacs(vacs);
+    const title = isKnownScore(vacs) ? `VACS: ${vacs}/100 - Verdict: ${verdict}` : `VACS: ${vacsLabel} - Verdict: ${verdict}`;
 
     return (
         <div 
@@ -27,7 +29,7 @@ export const VacsScoreBadge: React.FC<VacsScoreBadgeProps> = ({ verificationResu
             title={title}
         >
             <ShieldCheckIcon className="w-3.5 h-3.5" />
-            <span>{vacs}</span>
+            <span>{vacsLabel}</span>
         </div>
     );
 };

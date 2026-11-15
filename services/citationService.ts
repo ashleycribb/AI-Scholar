@@ -1,5 +1,6 @@
 
-import type { ResearchPaper, CitationStyle, ModelDefinition, CitationStats } from '../types';
+import type { ResearchPaper, CitationStyle, ModelDefinition, CitationStats, SciteTally } from '../types';
+import { sciteService } from './sciteService';
 import { exportToBibTeX } from '../utils/sourceExport';
 import * as geminiService from './geminiService';
 import * as crossrefService from './crossrefService';
@@ -243,21 +244,75 @@ export const downloadMetadataExport = (
     setTimeout(() => URL.revokeObjectURL(url), 1000);
 };
 
-export async function analyzeCitations(doi: string): Promise<CitationStats> {
-  try {
-    const response = await fetch(`https://api.semanticscholar.org/graph/v1/paper/DOI:${encodeURIComponent(doi)}?fields=citationCount`);
-    if (!response.ok) return { total: 0, supportCount: 0, contradictCount: 0, supportRatio: 0.5 };
-    const data = await response.json();
-    const total = data?.citationCount || 0;
-    const supportCount = Math.round(total * 0.7);
-    const contradictCount = Math.round(total * 0.05);
-    return {
-      total,
-      supportCount,
-      contradictCount,
-      supportRatio: total === 0 ? 0.5 : (supportCount - contradictCount) / Math.max(1, total)
-    };
-  } catch (e) {
-    return { total: 0, supportCount: 0, contradictCount: 0, supportRatio: 0.5 };
+/** Intent counts are unknown; no citation-intent check ran or the source had nothing to report. */
+export const UNAVAILABLE_CITATION_STATS: CitationStats = {
+  total: null,
+  supportCount: null,
+  contradictCount: null,
+  supportRatio: null,
+  source: 'unavailable',
+};
+
+function isFiniteNumber(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value);
+}
+
+/**
+ * Build citation-intent stats from a real scite.ai tally.
+ * supportRatio is supporting / (supporting + contrasting) when that sum is > 0;
+ * it is null when both counts are 0 (no intent citations, not a 50% default).
+ * Mentions are not part of the ratio. Missing numeric fields are treated as unavailable.
+ */
+export function citationStatsFromSciteTally(tally: SciteTally): CitationStats | null {
+  if (!tally || !isFiniteNumber(tally.supporting) || !isFiniteNumber(tally.contrasting)) {
+    return null;
   }
+  const supportCount = tally.supporting;
+  const contradictCount = tally.contrasting;
+  const intentTotal = supportCount + contradictCount;
+  const total = isFiniteNumber(tally.total) ? tally.total : (intentTotal > 0 ? intentTotal : null);
+  return {
+    total,
+    supportCount,
+    contradictCount,
+    supportRatio: intentTotal > 0 ? supportCount / intentTotal : null,
+    source: 'scite',
+  };
+}
+
+async function fetchSemanticScholarCitationTotal(doi: string): Promise<number | null> {
+  try {
+    const response = await fetch(
+      `https://api.semanticscholar.org/graph/v1/paper/DOI:${encodeURIComponent(doi)}?fields=citationCount`
+    );
+    if (!response.ok) return null;
+    const data = await response.json();
+    return isFiniteNumber(data?.citationCount) ? data.citationCount : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Supporting / contrasting counts come only from a real citation-intent source
+ * (currently scite.ai, already integrated). Semantic Scholar's citationCount is a
+ * total only — it is never turned into 70%/5% intent counts. On failure or with
+ * no intent source, counts are null and source is 'unavailable'.
+ */
+export async function analyzeCitations(doi: string, existingTally?: SciteTally | null): Promise<CitationStats> {
+  const tally = existingTally ?? (doi ? await sciteService.getTally(doi) : null);
+  const fromScite = tally ? citationStatsFromSciteTally(tally) : null;
+  if (fromScite) {
+    if (fromScite.total == null && doi) {
+      const total = await fetchSemanticScholarCitationTotal(doi);
+      return { ...fromScite, total };
+    }
+    return fromScite;
+  }
+
+  const total = doi ? await fetchSemanticScholarCitationTotal(doi) : null;
+  return {
+    ...UNAVAILABLE_CITATION_STATS,
+    total,
+  };
 }

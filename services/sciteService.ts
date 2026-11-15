@@ -7,6 +7,26 @@ export interface SciteNotice {
     url: string;
 }
 
+function readCount(value: unknown): number | null {
+    return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+/** Only return a tally when supporting and contrasting are real numbers (0 is allowed; missing is not filled in as 0). */
+function tallyFromPayload(doi: string, data: any): SciteTally | null {
+    const supporting = readCount(data?.supporting);
+    const contrasting = readCount(data?.contrasting);
+    if (supporting === null || contrasting === null) return null;
+    const mentioning = readCount(data?.mentioning);
+    const total = readCount(data?.total);
+    return {
+        doi: typeof data?.doi === 'string' && data.doi ? data.doi : doi,
+        supporting,
+        contrasting,
+        mentioning: mentioning ?? 0,
+        total: total ?? (supporting + contrasting + (mentioning ?? 0)),
+    };
+}
+
 class SciteService {
     private baseUrl = 'https://api.scite.ai';
 
@@ -24,13 +44,7 @@ class SciteService {
             }
             
             const data = await response.json();
-            return {
-                doi: data.doi,
-                supporting: data.supporting || 0,
-                mentioning: data.mentioning || 0,
-                contrasting: data.contrasting || 0,
-                total: data.total || 0
-            };
+            return tallyFromPayload(doi, data);
         } catch (error) {
             console.error(`[Scite] Failed to fetch tally for ${doi}:`, error);
             return null;
@@ -68,13 +82,8 @@ class SciteService {
             
             if (data.tallies) {
                 Object.entries(data.tallies).forEach(([doi, tally]: [string, any]) => {
-                    results[doi] = {
-                        doi,
-                        supporting: tally.supporting || 0,
-                        mentioning: tally.mentioning || 0,
-                        contrasting: tally.contrasting || 0,
-                        total: tally.total || 0
-                    };
+                    const parsed = tallyFromPayload(doi, tally);
+                    if (parsed) results[doi] = parsed;
                 });
             }
             

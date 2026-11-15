@@ -28,16 +28,20 @@ export async function verifyPaper(
     // Pass the local abstract to avoid an API call
     const candidatePassages = await retrievalService.findSupportingPassages(paper.doi, claim, paper.abstract);
     
-    // 3. Check entailment for each passage
+    // 3. Check entailment for each passage. No model is integrated, so this
+    // returns source 'unavailable' and is not treated as a 0 evidence score.
     const evidenceResults: EvidenceSpan[] = [];
+    let evidenceSource: scoringService.EvidenceSource = 'unavailable';
     if (candidatePassages.length > 0) {
         const entailmentPromises = candidatePassages.map(p => 
             entailmentService.checkEntailment(claim, p.passage).then(ent => ({...p, ...ent}))
         );
         const allEntailments = await Promise.all(entailmentPromises);
-        
+        const anyReal = allEntailments.some(p => p.source !== 'unavailable');
+        if (anyReal) evidenceSource = 'entailment';
+
         for (const p of allEntailments) {
-            if (p.verdict === 'SUPPORT' && p.confidence >= MIN_SUPPORT_EVIDENCE_CONFIDENCE) {
+            if (p.verdict === 'SUPPORT' && p.confidence != null && p.confidence >= MIN_SUPPORT_EVIDENCE_CONFIDENCE) {
                 evidenceResults.push({
                     source: p.source,
                     passage: p.passage,
@@ -47,16 +51,19 @@ export async function verifyPaper(
         }
     }
 
-    // 4. Analyze citation context
-    // This still requires an external call if we want accurate citation sentiment,
-    // as the local object usually only has the count.
-    // We only run this if we have a DOI.
-    const citationStats = paper.doi 
-        ? await citationService.analyzeCitations(paper.doi) 
-        : { total: paper.citations || 0, supportCount: 0, contradictCount: 0, supportRatio: 0.5 };
+    // 4. Citation intent only from a real source (scite tally already on the
+    // paper, or sciteService). Never fill supporting/contradicting with a ratio.
+    const citationStats = paper.sciteTally
+        ? (citationService.citationStatsFromSciteTally(paper.sciteTally) ?? {
+            ...citationService.UNAVAILABLE_CITATION_STATS,
+            total: paper.citations ?? paper.sciteTally.total ?? null,
+          })
+        : paper.doi
+            ? await citationService.analyzeCitations(paper.doi)
+            : { ...citationService.UNAVAILABLE_CITATION_STATS, total: paper.citations ?? null };
     
-    // 5. Compute the final VACS score and verdict
-    const result: VerificationResult = scoringService.computeVACS(meta, citationStats, evidenceResults);
+    // 5. Compute the final VACS score and verdict (unknown components omitted)
+    const result: VerificationResult = scoringService.computeVACS(meta, citationStats, evidenceResults, evidenceSource);
 
     // 6. Apply final business logic
     if (result.verdict === 'Verified' && result.evidence.length < MIN_EVIDENCE_SPANS_FOR_VERIFIED) {

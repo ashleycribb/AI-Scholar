@@ -19,7 +19,16 @@ const createCitationStats = (overrides: Partial<CitationStats> = {}): CitationSt
   supportCount: 80,
   contradictCount: 10,
   supportRatio: 0.8,
+  source: 'scite',
   ...overrides,
+});
+
+const unavailableCitationStats = (total: number | null = null): CitationStats => ({
+  total,
+  supportCount: null,
+  contradictCount: null,
+  supportRatio: null,
+  source: 'unavailable',
 });
 
 const createEvidenceSpans = (count: number, score: number = 0.9): EvidenceSpan[] => {
@@ -106,25 +115,23 @@ describe("computeVACS", () => {
     expect(result.breakdown.evidence).toBe(0);
   });
 
-  test("handles missing metadata fields gracefully (defaults)", () => {
-     // Passing undefined explicitly where possible or relying on partial type
+  test("missing metadata and citation-intent fields are omitted, not defaulted to 0.5", () => {
      const meta = { doi: "123", title: "Test" } as Metadata;
-     const stats = {} as CitationStats;
+     const stats = unavailableCitationStats();
      const evidence: EvidenceSpan[] = [];
 
      const result = computeVACS(meta, stats, evidence);
 
-     // Defaults: C=0.5, R=0, T=0.5, I=0.5 (from stats default in code is 0.5)
-     // Wait, check code: const I = Math.max(0, Math.min(1, citationStats.supportRatio ?? 0.5));
-     // So I=0.5
-
-     // E=0
-     // Total = 0.25*0.5 + 0 + 0.20*0 + 0.15*0.5 + 0.10*0.5
-     //       = 0.125 + 0 + 0 + 0.075 + 0.05 = 0.25
-     // VACS = 25
-
-     expect(result.vacs).toBe(25);
-     expect(result.verdict).toBe("Questionable"); // < 40
+     // Only evidence ran (empty spans → 0). C, R, I, T are unknown and must not
+     // contribute a 0.5 default. Renormalized: vacs = 0, evidence = 0.
+     expect(result.breakdown.credibility).toBeNull();
+     expect(result.breakdown.reproducibility).toBeNull();
+     expect(result.breakdown.temporal).toBeNull();
+     expect(result.breakdown.citations).toBeNull();
+     expect(result.breakdown.evidence).toBe(0);
+     expect(result.vacs).toBe(0);
+     expect(result.verdict).toBe("Questionable");
+     expect(result.rationale.join(' ')).toContain('Citation context is not available');
   });
 
   test("verdict is Verified if criteria met", () => {
@@ -241,30 +248,64 @@ describe("computeVACS additional cases from #106", () => {
     expect(result.verdict).toBe("Verified");
   });
 
-  test("Applies documented defaults for missing metadata and citation fields", () => {
+  test("undefined supportRatio is treated as unknown, not 0.5", () => {
     const meta: Metadata = {
         title: "Default Paper",
     } as Metadata;
-    const stats: CitationStats = {
-        total: 0,
-        supportCount: 0,
-        contradictCount: 0,
-        supportRatio: 0.5
-    };
     const result = computeVACS(
         meta,
-        { ...stats, supportRatio: undefined as any },
+        { total: 0, supportCount: null, contradictCount: null, supportRatio: undefined as any, source: 'unavailable' },
         []
     );
 
-    // Defaults from computeVACS:
-    // C = meta.credibilityScore ?? 0.5 -> 0.5
-    // R = meta.reproducibilityScore ?? 0 -> 0
-    // T = meta.temporalScore ?? 0.5 -> 0.5
-    // I = citationStats.supportRatio ?? 0.5 -> 0.5
-    expect(result.breakdown.credibility).toBe(0.5);
-    expect(result.breakdown.reproducibility).toBe(0);
-    expect(result.breakdown.temporal).toBe(0.5);
-    expect(result.breakdown.citations).toBe(0.5);
+    expect(result.breakdown.credibility).toBeNull();
+    expect(result.breakdown.reproducibility).toBeNull();
+    expect(result.breakdown.temporal).toBeNull();
+    expect(result.breakdown.citations).toBeNull();
+    expect(result.breakdown.evidence).toBe(0);
+  });
+});
+
+describe("unknown citation counts do not raise or lower the verification result", () => {
+  test("missing counts produce the same result regardless of total, and match a score that omits the citations weight", () => {
+    const meta = createMetadata({ credibilityScore: 0.8, reproducibilityScore: 0.6, temporalScore: 0.9 });
+    const evidence = createEvidenceSpans(1, 0.8);
+
+    const unknownA = computeVACS(meta, unavailableCitationStats(null), evidence);
+    const unknownB = computeVACS(meta, unavailableCitationStats(999), evidence);
+
+    expect(unknownA.vacs).toBe(unknownB.vacs);
+    expect(unknownA.verdict).toBe(unknownB.verdict);
+    expect(unknownA.breakdown.citations).toBeNull();
+
+    // C=0.8, E=0.8, R=0.6, T=0.9; weights 0.25+0.30+0.20+0.10 = 0.85
+    // (0.25*0.8 + 0.30*0.8 + 0.20*0.6 + 0.10*0.9) / 0.85 = 0.65/0.85
+    const expected = Math.round(100 * (0.25 * 0.8 + 0.30 * 0.8 + 0.20 * 0.6 + 0.10 * 0.9) / 0.85);
+    expect(unknownA.vacs).toBe(expected);
+
+    // A default of 0.5 for I would have produced a different score (73). Missing counts must not do that.
+    const withFakeHalf = 0.25 * 0.8 + 0.30 * 0.8 + 0.20 * 0.6 + 0.15 * 0.5 + 0.10 * 0.9;
+    expect(unknownA.vacs).not.toBe(Math.round(100 * withFakeHalf));
+  });
+
+  test("a real support ratio still raises or lowers the result", () => {
+    const meta = createMetadata({ credibilityScore: 0.8, reproducibilityScore: 0.6, temporalScore: 0.9 });
+    const evidence = createEvidenceSpans(1, 0.8);
+    const unknown = computeVACS(meta, unavailableCitationStats(), evidence);
+    const high = computeVACS(meta, createCitationStats({ supportRatio: 1 }), evidence);
+    const low = computeVACS(meta, createCitationStats({ supportRatio: 0 }), evidence);
+    expect(high.vacs).not.toBe(unknown.vacs);
+    expect(low.vacs).not.toBe(unknown.vacs);
+    expect(high.vacs!).toBeGreaterThan(low.vacs!);
+  });
+
+  test("unavailable evidence (no entailment model) is omitted, not scored as 0", () => {
+    const meta = createMetadata({ credibilityScore: 0.8, reproducibilityScore: 0.6, temporalScore: 0.9 });
+    const checkedEmpty = computeVACS(meta, unavailableCitationStats(), [], 'entailment');
+    const unavailable = computeVACS(meta, unavailableCitationStats(), [], 'unavailable');
+    expect(checkedEmpty.breakdown.evidence).toBe(0);
+    expect(unavailable.breakdown.evidence).toBeNull();
+    expect(unavailable.vacs).not.toBe(checkedEmpty.vacs);
+    expect(unavailable.rationale.join(' ')).toContain('Evidence is not available');
   });
 });

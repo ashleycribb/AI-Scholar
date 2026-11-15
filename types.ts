@@ -388,14 +388,15 @@ export type Verdict = 'Verified' | 'Inconclusive' | 'Questionable' | 'Refuted' |
 export interface VerificationResult {
     doi?: string;
     title: string;
-    vacs: number;
+    /** Null when no scored components were available (nothing to compute from). */
+    vacs: number | null;
     verdict: Verdict;
     breakdown: {
-        credibility: number;
-        evidence: number;
-        reproducibility: number;
-        citations: number;
-        temporal: number;
+        credibility: number | null;
+        evidence: number | null;
+        reproducibility: number | null;
+        citations: number | null;
+        temporal: number | null;
     };
     evidence: EvidenceSpan[];
     rationale: string[];
@@ -407,11 +408,17 @@ export interface EvidenceSpan {
   score?: number;
 }
 
+export type CitationIntentSource = 'scite' | 'unavailable';
+
 export interface CitationStats {
-  total: number;
-  supportCount: number;
-  contradictCount: number;
-  supportRatio: number;
+  /** Total citation count when a source reported one; null if unknown. */
+  total: number | null;
+  /** Supporting / contrasting counts only when a real citation-intent source supplied them. */
+  supportCount: number | null;
+  contradictCount: number | null;
+  supportRatio: number | null;
+  /** Names the check that produced the intent counts, or 'unavailable' when none ran. */
+  source: CitationIntentSource;
 }
 
 export interface Metadata {
