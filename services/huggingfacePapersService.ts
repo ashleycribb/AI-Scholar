@@ -23,14 +23,11 @@ export const searchHuggingFacePapers = async (query: string, options: AdvancedSe
         }
         
         const papers: ResearchPaper[] = data.map((item: any) => {
-            let publishedYear = new Date().getFullYear();
-            if (item.publishedAt) {
-                publishedYear = new Date(item.publishedAt).getFullYear();
-            }
+            const publishedYear = item.publishedAt ? new Date(item.publishedAt).getUTCFullYear() : undefined;
             
             const authorsStr = Array.isArray(item.authors) 
                 ? item.authors.map((a: any) => a.name).join(', ') 
-                : 'Unknown Author';
+                : '';
                 
             const pdfURL = item.id ? `https://arxiv.org/pdf/${item.id}.pdf` : undefined;
             const sourceURL = item.id ? `https://huggingface.co/papers/${item.id}` : undefined;

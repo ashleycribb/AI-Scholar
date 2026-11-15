@@ -10,7 +10,7 @@ const METADATA_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours for specific DOI lookup
 const mapOpenAlexWorkToResearchPaper = (work: any, allowShortAbstract = false): ResearchPaper | null => {
     const abstract = work.abstract_inverted_index 
         ? deinvertAbstract(work.abstract_inverted_index) 
-        : 'No abstract available for this paper.';
+        : '';
     
     if (!allowShortAbstract && (!abstract || abstract.length < 50)) return null;
 
@@ -32,9 +32,9 @@ const mapOpenAlexWorkToResearchPaper = (work: any, allowShortAbstract = false): 
 
     const paperData: Omit<ResearchPaper, 'id'> = {
         title: work.title || work.display_name || 'Untitled Scholarly Work',
-        authors: authorList.length > 0 ? authorList.map(a => a.name).join(', ') : 'Unknown Author',
+        authors: authorList.length > 0 ? authorList.map(a => a.name).join(', ') : '',
         authorList,
-        year: work.publication_year || 0,
+        year: work.publication_year || undefined,
         abstract,
         openalex_id: openalexId,
         sourceURL: work.doi ? `https://doi.org/${work.doi.replace('https://doi.org/', '')}` : work.id,
@@ -253,7 +253,7 @@ export const fetchOpenAlexCitationGraph = async (paper: {
                 doi: wDoi,
                 title: w.title || w.display_name || 'Untitled Work',
                 authors,
-                year: w.publication_year || 0,
+                year: w.publication_year || undefined,
                 citations: w.cited_by_count ?? 0,
                 sourceURL: wDoi ? `https://doi.org/${wDoi}` : (w.id || undefined)
             };

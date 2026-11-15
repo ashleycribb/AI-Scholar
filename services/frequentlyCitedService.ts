@@ -281,7 +281,7 @@ export function countFrequentlyCitedReferences(
           doi: normDoi || undefined,
           openalex_id: normOa || undefined,
           title: ref.title || (normDoi ? `Paper (DOI: ${normDoi})` : 'Untitled Reference'),
-          authors: ref.authors || 'Unknown Author',
+          authors: ref.authors || '',
           year: ref.year,
           sourceURL: ref.sourceURL,
           citingPapers: new Map()
@@ -297,7 +297,7 @@ export function countFrequentlyCitedReferences(
         const acc = accumulators.get(canonicalKey)!;
         if (!acc.doi && normDoi) acc.doi = normDoi;
         if (!acc.openalex_id && normOa) acc.openalex_id = normOa;
-        if ((!acc.authors || acc.authors === 'Unknown Author') && ref.authors) acc.authors = ref.authors;
+        if (!acc.authors && ref.authors) acc.authors = ref.authors;
         if (!acc.year && ref.year) acc.year = ref.year;
         if (!acc.sourceURL && ref.sourceURL) acc.sourceURL = ref.sourceURL;
         if ((acc.title.startsWith('Paper (DOI:') || acc.title.startsWith('Work ')) && ref.title && !ref.title.startsWith('Paper (')) {
@@ -353,7 +353,7 @@ export function suggestionToResearchPaper(item: FrequentlyCitedItem): ResearchPa
   return {
     id: item.doi ? `doi:${cleanDoi}` : (item.openalex_id || item.id || `freq_${Date.now()}`),
     title: item.title,
-    authors: item.authors || 'Unknown Author',
+    authors: item.authors || '',
     year: item.year || 0,
     abstract: `Referenced work frequently cited across your selection queue (${item.count} ${item.count === 1 ? 'citation' : 'citations'}).`,
     doi: cleanDoi,

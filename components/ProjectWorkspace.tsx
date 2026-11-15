@@ -48,7 +48,7 @@ export const ProjectWorkspace: React.FC<ProjectWorkspaceProps> = (props) => {
             reader.readAsDataURL(file);
             reader.onload = async () => {
                 const base64 = (reader.result as string).split(',')[1];
-                const extractedPaper = await apiService.handlePdfUpload(base64);
+                const extractedPaper = await apiService.handlePdfUpload(base64, file.name);
                 onAddPapersToWorkspace([extractedPaper]);
                 setIsUploading(false);
             };

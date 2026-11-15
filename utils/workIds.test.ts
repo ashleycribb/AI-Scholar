@@ -146,10 +146,10 @@ describe('the same paper from Crossref and OpenAlex', () => {
   });
 });
 
-describe('v1 local records are migrated (schemaVersion 1 -> 2)', () => {
+describe('v1 local records are migrated (schemaVersion 1 -> current)', () => {
   test('v1 Crossref + OpenAlex copies rebuild as one entry; removals and decisions follow the new id', async () => {
     const log = await import(`../services/localWorkspaceLog.ts?workids=${Date.now()}`) as typeof import('../services/localWorkspaceLog');
-    expect(log.WORKSPACE_LOG_SCHEMA_VERSION).toBe(2);
+    expect(log.WORKSPACE_LOG_SCHEMA_VERSION).toBe(3);
     const v1 = (seq: number, rec: Record<string, unknown>) => ({ schemaVersion: 1, seq, recordedAt: '2026-11-14T22:00:00.000Z', ...rec });
     const oa = { id: 'W2741809807', openalex_id: 'W2741809807', doi: '10.7717/peerj.4375', title: 'The state of OA', authors: 'Heather Piwowar', year: 2018, abstract: 'x' };
     const cr = { id: 'crossref:10.7717/PEERJ.4375', doi: '10.7717/PEERJ.4375', title: 'The state of OA', authors: 'Heather Piwowar', year: 2018, abstract: 'x' };
@@ -162,7 +162,7 @@ describe('v1 local records are migrated (schemaVersion 1 -> 2)', () => {
       v1(5, { type: 'queue.remove', paperId: 'W1', origin: 'researcher' }),
     ];
     const migrated = log.migrateWorkspaceRecords(records);
-    expect(migrated.every(r => r.schemaVersion === 2 && r.migratedFrom === 1)).toBe(true);
+    expect(migrated.every(r => r.schemaVersion === 3 && r.migratedFrom === 1)).toBe(true);
     expect(migrated.map(r => (r as any).paperId)).toEqual(['doi:10.7717/peerj.4375', 'doi:10.7717/peerj.4375', 'openalex:W1', 'doi:10.7717/peerj.4375', 'openalex:W1']);
     const ws = log.rebuildWorkspace(records as any);
     expect(ws.queue.map(p => p.id)).toEqual(['doi:10.7717/peerj.4375']);
@@ -181,10 +181,10 @@ describe('v1 local records are migrated (schemaVersion 1 -> 2)', () => {
     });
     db.close();
     const raw = await log.readRawWorkspaceLog();
-    expect(raw.map(r => r.schemaVersion)).toEqual([2, 1, 1, 1, 1, 1]);
+    expect(raw.map(r => r.schemaVersion)).toEqual([3, 1, 1, 1, 1, 1]);
     const fromDisk = await log.loadWorkspace();
     expect(fromDisk.queue.map(p => p.id)).toEqual(['doi:10.7717/peerj.4375']);
     expect(fromDisk.notes.n1.text).toBe('keep for ch. 3'); // the v1 note was appended after the v2 edit
-    expect(() => log.rebuildWorkspace([{ ...records[0], schemaVersion: 3 } as any])).toThrow(/Unsupported workspace log schemaVersion 3/);
+    expect(() => log.rebuildWorkspace([{ ...records[0], schemaVersion: 4 } as any])).toThrow(/Unsupported workspace log schemaVersion 4/);
   });
 });

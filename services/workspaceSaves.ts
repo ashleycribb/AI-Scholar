@@ -8,6 +8,21 @@ import type { ResearchPaper } from '../types';
 import { appendWorkspaceRecords, diffQueue } from './localWorkspaceLog';
 import { getState, putState, SCHOLAR_WORKSPACE_ACTIVITY_ID, SCHOLAR_WORKSPACE_STATE_ID } from './lrsClient';
 import { reportFailed, reportIdle, reportSaved, reportSaving } from './saveStatus';
+import { paperFacts, PAPER_FACTS_SCHEMA_VERSION } from './paperFacts';
+
+/** Version of the server copy document. History in docs/data/MIGRATIONS.md. */
+export const ACCOUNT_COPY_SCHEMA_VERSION = 1 as const;
+
+/** The server copy document: fact-only papers (no AI scores or summaries), the projects, and a UTC timestamp. */
+export function accountCopyDocument(payload: { papers: ResearchPaper[]; projects: unknown[] }, now: Date = new Date()) {
+  return {
+    schemaVersion: ACCOUNT_COPY_SCHEMA_VERSION,
+    paperFactsSchemaVersion: PAPER_FACTS_SCHEMA_VERSION,
+    papers: payload.papers.map(p => paperFacts(p)),
+    projects: payload.projects,
+    lastModified: now.toISOString(),
+  };
+}
 
 export interface QueueSaveDeps {
   append?: typeof appendWorkspaceRecords;
@@ -60,7 +75,7 @@ export async function saveAccountCopy(
   try {
     let ifMatch = etag;
     if (opts.refreshEtag) ifMatch = (await get(SCHOLAR_WORKSPACE_ACTIVITY_ID, SCHOLAR_WORKSPACE_STATE_ID))?.etag ?? null;
-    const res = await put(SCHOLAR_WORKSPACE_ACTIVITY_ID, SCHOLAR_WORKSPACE_STATE_ID, { ...payload, lastModified: new Date().toISOString() }, ifMatch);
+    const res = await put(SCHOLAR_WORKSPACE_ACTIVITY_ID, SCHOLAR_WORKSPACE_STATE_ID, accountCopyDocument(payload), ifMatch);
     if (res.skipped) {
       // No server session (local identity only): there is no account copy, which is not a failure.
       reportIdle('server-copy');

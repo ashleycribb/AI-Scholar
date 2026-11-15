@@ -2613,6 +2613,11 @@ export interface WritePaperToScholarPackOptions {
    * not a new inclusion decision. Default true (real selection).
    */
   recordInclusionStatement?: boolean;
+  /**
+   * True only when the caller is writing a paper the researcher put in their selection queue. Sets the
+   * RESEARCHER_APPROVED flag; never assumed (default false).
+   */
+  researcherSelected?: boolean;
 }
 
 export async function writePaperToScholarPack(
@@ -2634,7 +2639,11 @@ export async function writePaperToScholarPack(
   }
 
   const hasPdf = Boolean(paper.pdfURL || paper.openAccessPdfUrl);
-  let flags = ACADEMIC_PAPER_FLAGS.SOURCE_OPENALEX | ACADEMIC_PAPER_FLAGS.RESEARCHER_APPROVED;
+  // Flags describe only what is known: an OpenAlex id that is really present, a Crossref record, a researcher selection.
+  let flags = 0;
+  if (cleanOpenAlex) flags |= ACADEMIC_PAPER_FLAGS.SOURCE_OPENALEX;
+  if (/crossref/i.test(paper.enrichmentSource || '') || /^crossref:/i.test(paper.sourceId || '')) flags |= ACADEMIC_PAPER_FLAGS.SOURCE_CROSSREF;
+  if (options?.researcherSelected === true) flags |= ACADEMIC_PAPER_FLAGS.RESEARCHER_APPROVED;
   if (hasPdf) {
     flags |= ACADEMIC_PAPER_FLAGS.HAS_OA_URL_REF;
   }

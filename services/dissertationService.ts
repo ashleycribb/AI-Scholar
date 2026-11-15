@@ -35,9 +35,9 @@ export const searchDissertations = async (
 
     const dissertations: DissertationItem[] = items.map(item => {
       const title = item.title?.[0] ? item.title[0].replace(/<[^>]+>/g, '').trim() : 'Doctoral Dissertation';
-      const author = (item.author || []).map((a: any) => `${a.given || ''} ${a.family || ''}`.trim()).filter(Boolean).join(', ') || 'Doctoral Candidate';
+      const author = (item.author || []).map((a: any) => `${a.given || ''} ${a.family || ''}`.trim()).filter(Boolean).join(', ') || '';
       const dateParts = item.published?.['date-parts']?.[0] || item.created?.['date-parts']?.[0];
-      const year = dateParts?.[0] || new Date().getFullYear();
+      const year = dateParts?.[0] || undefined;
       const institution = item.publisher || item['container-title']?.[0] || 'University Archive';
 
       return {

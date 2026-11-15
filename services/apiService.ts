@@ -477,15 +477,23 @@ export const findConnectedPapers = async (paper: ResearchPaper, _model: ModelDef
     return graph.connections;
 };
 
-export const handlePdfUpload = async (base64: string): Promise<ResearchPaper> => {
+/**
+ * A researcher's own PDF as a workspace record. Only what is actually known is stored: the file name as the
+ * working title and a content hash as the permanent id. No author, year or abstract is invented; the researcher
+ * can add them, and nothing is parsed out of the PDF here.
+ */
+export const handlePdfUpload = async (base64: string, fileName: string): Promise<ResearchPaper> => {
+    const bytes = Uint8Array.from(atob(base64), c => c.charCodeAt(0));
+    const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', bytes));
+    const hex = Array.from(digest, b => b.toString(16).padStart(2, '0')).join('');
+    const id = `upload:sha256-${hex.slice(0, 32)}`;
     return {
-        id: `uploaded_${Date.now()}`,
-        title: "Uploaded PDF Document",
-        authors: "Unknown Author",
-        year: new Date().getFullYear(),
-        abstract: "Content extracted from uploaded PDF.",
-        sourceURL: "",
-        citations: 0
+        id,
+        sourceId: id,
+        title: fileName.replace(/\.pdf$/i, '').normalize('NFC') || 'Uploaded PDF',
+        authors: '',
+        abstract: '',
+        sourceURL: '',
     };
 };
 

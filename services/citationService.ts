@@ -1,5 +1,6 @@
 
 import type { ResearchPaper, CitationStyle, ModelDefinition, CitationStats } from '../types';
+import { exportToBibTeX } from '../utils/sourceExport';
 import * as geminiService from './geminiService';
 import * as crossrefService from './crossrefService';
 
@@ -40,21 +41,9 @@ const getCiteConstructor = (): Promise<any> => {
 };
 
 /**
- * Generates professional-grade BibTeX entries.
+ * BibTeX for one paper: the same writer as the export bundle (utils/sourceExport.ts). Missing fields are omitted.
  */
-export const generateBibTeX = (paper: ResearchPaper): string => {
-    const firstAuthor = paper.authorList?.[0]?.name || (typeof paper.authors === 'string' && paper.authors ? paper.authors.split(',')[0] : 'Unknown');
-    const primaryAuthor = firstAuthor.trim().split(' ').pop() || 'Unknown';
-    const citeKey = `${primaryAuthor.toLowerCase().replace(/[^a-z0-9]/g, '')}${paper.year || new Date().getFullYear()}`;
-    return `@article{${citeKey},
-  title = {${(paper.title || 'Untitled').replace(/[{}]/g, '')}},
-  author = {${typeof paper.authors === 'string' ? paper.authors : firstAuthor}},
-  year = {${paper.year || new Date().getFullYear()}},
-  journal = {${paper.journal || paper.enrichmentSource || 'Scholarly Repository'}},
-  doi = {${paper.doi || ''}},
-  url = {${paper.sourceURL || (paper.doi ? `https://doi.org/${paper.doi}` : '')}}
-}`;
-};
+export const generateBibTeX = (paper: ResearchPaper): string => exportToBibTeX([paper]).trimEnd();
 
 /**
  * Instant deterministic citation generator for zero-latency scholar copying.
@@ -64,31 +53,32 @@ export const formatInstantCitation = (paper: ResearchPaper, style: 'apa' | 'chic
         return generateBibTeX(paper);
     }
 
-    const authors = (paper.authors || 'Unknown Author').trim();
-    const year = paper.year || new Date().getFullYear();
+    // Missing stays missing: no author -> the title leads (APA/MLA practice), no year -> "n.d.", no venue -> omitted.
     const title = paper.title.trim().replace(/\.$/, '');
-    const venue = paper.journal || paper.enrichmentSource || 'Peer-Reviewed Literature';
+    const authors = (paper.authors || '').trim() || title;
+    const year = paper.year || 'n.d.';
+    const venue = paper.journal || '';
     const doiUrl = paper.doi ? `https://doi.org/${paper.doi}` : (paper.sourceURL || '');
 
     switch (style) {
         case 'apa':
             // APA 7th Edition: Author, A. A. (Year). Title. Journal. https://doi.org/...
-            return `${authors} (${year}). ${title}. ${venue}.${doiUrl ? ` ${doiUrl}` : ''}`;
+            return `${authors} (${year}). ${title}.${venue ? ` ${venue}.` : ''}${doiUrl ? ` ${doiUrl}` : ''}`;
         
         case 'chicago':
             // Chicago 17th: Author. Year. "Title." Journal. https://doi.org/...
-            return `${authors}. ${year}. "${title}." ${venue}.${doiUrl ? ` ${doiUrl}` : ''}`;
+            return `${authors}. ${year}. "${title}."${venue ? ` ${venue}.` : ''}${doiUrl ? ` ${doiUrl}` : ''}`;
         
         case 'mla':
             // MLA 9th: Author. "Title." Journal, Year. doi:...
-            return `${authors}. "${title}." ${venue}, ${year}.${paper.doi ? ` https://doi.org/${paper.doi}` : (doiUrl ? ` ${doiUrl}` : '')}`;
+            return `${authors}. "${title}."${venue ? ` ${venue},` : ''} ${year}.${paper.doi ? ` https://doi.org/${paper.doi}` : (doiUrl ? ` ${doiUrl}` : '')}`;
 
         case 'harvard':
             // Harvard: Author, Year. Title. Journal. Available at: URL.
-            return `${authors}, ${year}. ${title}. ${venue}.${doiUrl ? ` Available at: ${doiUrl}` : ''}`;
+            return `${authors}, ${year}. ${title}.${venue ? ` ${venue}.` : ''}${doiUrl ? ` Available at: ${doiUrl}` : ''}`;
 
         default:
-            return `${authors} (${year}). ${title}. ${venue}.`;
+            return `${authors} (${year}). ${title}.${venue ? ` ${venue}.` : ''}`;
     }
 };
 
@@ -104,12 +94,8 @@ const sanitizeCslData = (data: any): any => {
         });
     } else if (typeof data.author === 'string') {
         data.author = [{ literal: data.author }];
-    } else {
-        data.author = [{ literal: 'Unknown Author' }];
     }
-    if (!data.issued || !data.issued['date-parts'] || !Array.isArray(data.issued['date-parts'][0]) || data.issued['date-parts'][0].length === 0) {
-        data.issued = { 'date-parts': [[new Date().getFullYear()]] };
-    }
+    // No author or date is invented: citation-js renders a missing author or "n.d." from the absent fields.
     return data;
 };
 

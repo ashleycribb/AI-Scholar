@@ -39,8 +39,8 @@ export const searchPubMed = async (
       const pmcidObj = item.articleids?.find(id => id.idtype === 'pmc');
       const pmcid = pmcidObj ? pmcidObj.value : undefined;
 
-      const authors = (item.authors || []).map(a => a.name).filter(Boolean).join(', ') || 'Biomedical Researcher';
-      const year = item.pubdate ? parseInt(item.pubdate.substring(0, 4), 10) : new Date().getFullYear();
+      const authors = (item.authors || []).map(a => a.name).filter(Boolean).join(', ') || '';
+      const year = item.pubdate ? parseInt(item.pubdate.substring(0, 4), 10) : NaN;
 
       return {
         id: `pmid:${item.uid}`,
@@ -48,7 +48,7 @@ export const searchPubMed = async (
         pmcid: pmcid || undefined,
         title: item.title?.replace(/<[^>]+>/g, '').trim() || 'Untitled Biomedical Work',
         authors,
-        year: isNaN(year) ? new Date().getFullYear() : year,
+        year: isNaN(year) ? undefined : year,
         abstract: `Biomedical article indexed in National Library of Medicine (NLM) PubMed / MEDLINE under PMID ${item.uid}.`,
         doi,
         sourceURL: `https://pubmed.ncbi.nlm.nih.gov/${item.uid}/`,

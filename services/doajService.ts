@@ -24,9 +24,9 @@ export const searchDOAJ = async (
     const papers: ResearchPaper[] = results.map(r => {
       const bibjson = r.bibjson || {};
       const title = bibjson.title || 'Untitled Open Access Article';
-      const authors = (bibjson.author || []).map((a: any) => a.name).filter(Boolean).join(', ') || 'DOAJ Open Researcher';
-      const year = parseInt(bibjson.year || `${new Date().getFullYear()}`, 10);
-      const abstract = bibjson.abstract || `Peer-reviewed article indexed in Directory of Open Access Journals (DOAJ).`;
+      const authors = (bibjson.author || []).map((a: any) => a.name).filter(Boolean).join(', ') || '';
+      const year = bibjson.year ? parseInt(bibjson.year, 10) : NaN;
+      const abstract = bibjson.abstract || '';
       
       const identifierDoi = (bibjson.identifier || []).find((id: any) => id.type === 'doi');
       const doi = identifierDoi ? identifierDoi.id : undefined;
@@ -38,7 +38,7 @@ export const searchDOAJ = async (
         id: stableRecordId('doaj', r.id, { doi, title: bibjson.title, authors, year: bibjson.year ? parseInt(bibjson.year, 10) : undefined, raw: r }),
         title,
         authors,
-        year: isNaN(year) ? new Date().getFullYear() : year,
+        year: isNaN(year) ? undefined : year,
         abstract,
         doi,
         sourceURL,

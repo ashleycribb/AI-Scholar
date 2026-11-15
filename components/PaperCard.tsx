@@ -195,9 +195,12 @@ export const PaperCard: React.FC<PaperCardProps> = ({ paper, isSelected, onSelec
                                 <div className="h-3 bg-slate-200 rounded w-5/6" />
                             </div>
                         ) : (
-                            <p className="text-sm text-slate-700 leading-relaxed italic">
-                                {paper.laymanSummary}
-                            </p>
+                            <>
+                                <p className="text-sm text-slate-700 leading-relaxed italic">
+                                    {paper.laymanSummary}
+                                </p>
+                                {paper.laymanSummaryModel && <p className="text-[11px] text-slate-500 mt-1">AI summary by {paper.laymanSummaryModel}</p>}
+                            </>
                         )}
                     </div>
                 )}

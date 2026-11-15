@@ -111,10 +111,10 @@ export const queryDataCiteGraphQL = async (
       title: node.titles?.[0]?.title || 'Untitled DataCite Object',
       description: node.descriptions?.[0]?.description || '',
       creators: (node.creators || []).map((c: any) => ({
-        name: c.name || `${c.givenName || ''} ${c.familyName || ''}`.trim() || 'Unknown Creator',
+        name: c.name || `${c.givenName || ''} ${c.familyName || ''}`.trim(),
         orcid: c.nameIdentifiers?.find((id: any) => id.nameIdentifierScheme === 'ORCID')?.nameIdentifier
       })),
-      publicationYear: node.publicationYear || new Date().getFullYear(),
+      publicationYear: node.publicationYear || undefined,
       resourceTypeGeneral: node.types?.resourceTypeGeneral || 'Dataset',
       resourceType: node.types?.resourceType || '',
       citationsCount: node.citationCount || 0,
@@ -157,10 +157,10 @@ export const searchDataCiteREST = async (
         title: attrs.titles?.[0]?.title || 'Untitled Object',
         description: attrs.descriptions?.[0]?.description || '',
         creators: (attrs.creators || []).map((c: any) => ({
-          name: c.name || `${c.givenName || ''} ${c.familyName || ''}`.trim() || 'Unknown Creator',
+          name: c.name || `${c.givenName || ''} ${c.familyName || ''}`.trim(),
           orcid: c.nameIdentifiers?.find((id: any) => id.nameIdentifierScheme === 'ORCID')?.nameIdentifier
         })),
-        publicationYear: attrs.publicationYear || new Date().getFullYear(),
+        publicationYear: attrs.publicationYear || undefined,
         resourceTypeGeneral: attrs.types?.resourceTypeGeneral || 'Dataset',
         resourceType: attrs.types?.resourceType || '',
         citationsCount: attrs.citationCount || 0,
@@ -192,7 +192,7 @@ export const searchDataCiteAsResearchPapers = async (
     id: `datacite:${w.doi || w.id}`,
     title: `[${w.resourceTypeGeneral || 'Dataset'}] ${w.title}`,
     authors: w.creators.map(c => c.name).join(', ') || 'DataCite Contributor',
-    year: w.publicationYear || 0,
+    year: w.publicationYear || undefined,
     abstract: w.description || `DataCite registered ${w.resourceTypeGeneral || 'dataset/software'} artifact with DOI ${w.doi}.`,
     sourceURL: w.url || (w.doi ? `https://doi.org/${w.doi}` : undefined),
     doi: w.doi,

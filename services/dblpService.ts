@@ -34,7 +34,7 @@ export const searchDBLP = async (
         id: stableRecordId('dblp', info.key || hit['@id'], { doi: info.doi, title: info.title, authors: authors.join(', '), year: info.year ? Number(info.year) : undefined, raw: hit }),
         key: info.key || '',
         title: info.title?.replace(/\.$/, '') || 'Untitled CS Publication',
-        authors: authors.length > 0 ? authors : ['Computer Science Contributor'],
+        authors,
         year: parseInt(info.year || '0', 10),
         venue: info.venue || info.journal || info.booktitle,
         type: info.type || 'Publication',

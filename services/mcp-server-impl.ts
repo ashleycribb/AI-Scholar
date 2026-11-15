@@ -29,11 +29,8 @@ import { recordClaim, linkClaimEvidence, getClaimProvenance, getResearchGraph } 
 export class WorkspaceMcpServer {
   private server: Server;
   
-  // Mock local library for demonstration
-  private localLibrary = [
-    { id: "loc_1", title: "Attention Is All You Need", author: "Vaswani et al.", year: 2017, status: "read" },
-    { id: "loc_2", title: "Language Models are Few-Shot Learners", author: "Brown et al.", year: 2020, status: "to-read" }
-  ];
+  // Papers ingested in this server session (starts empty: no demo entries).
+  private localLibrary: Array<{ id: string; title: string; author?: string; year?: number; ingestedAt?: string; status: string }> = [];
 
   constructor() {
     this.server = new Server(
@@ -270,7 +267,7 @@ export class WorkspaceMcpServer {
         const query = (args?.query as string || "").toLowerCase();
         const results = this.localLibrary.filter(p => 
           p.title.toLowerCase().includes(query) || 
-          p.author.toLowerCase().includes(query)
+          (p.author ?? "").toLowerCase().includes(query)
         );
         return {
           content: [{ type: "text", text: JSON.stringify(results, null, 2) }]
@@ -316,8 +313,7 @@ export class WorkspaceMcpServer {
               this.localLibrary.push({ 
                 id: `loc_${Date.now()}`, 
                 title, 
-                author: "Local AI Ingested", 
-                year: new Date().getFullYear(),
+                ingestedAt: new Date().toISOString(),
                 status: "vaulted"
               });
               resolve({

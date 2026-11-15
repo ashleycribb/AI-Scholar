@@ -72,7 +72,7 @@ export const searchSemanticScholar = async (query: string, options: AdvancedSear
             title: p.title || 'Untitled Paper',
             authors: (p.authors || []).map((a: any) => a.name).join(', '),
             year: p.year,
-            abstract: p.abstract || 'No abstract available.',
+            abstract: p.abstract || '',
             sourceURL: p.url,
             pdfURL: p.openAccessPdf?.url || undefined,
             citations: p.citationCount,

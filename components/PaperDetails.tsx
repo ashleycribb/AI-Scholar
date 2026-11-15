@@ -745,9 +745,12 @@ const PaperDetailsInner: React.FC<PaperDetailsProps> = (props) => {
                                         <div className="h-4 bg-slate-200 rounded w-4/6" />
                                     </div>
                                 ) : (
-                                    <p className="text-sm font-medium text-indigo-900 leading-relaxed italic">
-                                        {paper.laymanSummary}
-                                    </p>
+                                    <>
+                                        <p className="text-sm font-medium text-indigo-900 leading-relaxed italic">
+                                            {paper.laymanSummary}
+                                        </p>
+                                        {paper.laymanSummaryModel && <p className="text-[11px] text-slate-500 mt-1">AI summary by {paper.laymanSummaryModel}</p>}
+                                    </>
                                 )}
                             </div>
                         ) : (

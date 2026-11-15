@@ -49,7 +49,7 @@ export const searchZenodo = async (
       const meta = r.metadata || ({} as any);
       const title = meta.title ? meta.title.replace(/<[^>]+>/g, '').trim() : 'Untitled Open Science Record';
       const authors = (meta.creators || []).map((c: any) => c.name).filter(Boolean).join(', ') || 'CERN / Zenodo Researcher';
-      const year = meta.publication_date ? new Date(meta.publication_date).getFullYear() : new Date().getFullYear();
+      const year = meta.publication_date ? new Date(meta.publication_date).getUTCFullYear() : undefined;
       const rawDesc = meta.description ? meta.description.replace(/<[^>]+>/g, '').trim() : '';
       const typeTitle = meta.resource_type?.title || meta.resource_type?.type || 'Open Science Artifact';
 

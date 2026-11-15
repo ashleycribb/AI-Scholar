@@ -36,3 +36,25 @@ Upcast rules:
 
 Two v1 queue entries for the same work (for example the Crossref and the OpenAlex copy) rebuild as one queue entry,
 because they share a DOI alias.
+
+### v2 → v3 (data fix 5: facts only)
+
+v2 `queue.add` records saved the whole paper object as shown, including model output: match scores
+(`semanticScore`, `keywordMatch`, `rawSemanticSimilarity`, …), `scoreExplanation`, `semanticHighlights`,
+`laymanSummary`, `keyConcepts`, `knowledgeGraph`, validation results and UI flags.
+
+v3 saves only the fields listed in `services/paperFacts.ts` (`PAPER_FACT_FIELDS`): ids and aliases, title, authors,
+year, abstract, venue, links, citation counts, open-access and retraction flags, references and extracted structure.
+A missing value is left out, never filled in (no default year or author).
+
+Upcast rule: a v1/v2 `queue.add` paper is reduced to its facts with `paperFacts`; `migratedFrom` records the version
+it was written with. Other record types are unchanged by this step.
+
+Model output now lives in the derived cache (`IndexedDB scholar_explorer_derived / derived`,
+`services/derivedCache.ts`). Each entry names its `model`, `modelRevision` (null when the provider does not pin
+one), the SHA-256 `inputHash` of exactly what was sent to the model, and `createdAt`. The cache can be deleted at any
+time; nothing in it is the researcher's data.
+
+## Server copy (`PUT /xapi/activities/state`, state id `workspace`)
+
+Since data fix 5 the document carries `schemaVersion: 1` and `queue` holds fact-only papers (same whitelist).

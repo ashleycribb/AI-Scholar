@@ -15,14 +15,16 @@
  */
 import type { ResearchPaper } from '../types';
 import { canonicalWorkId, extractAliases, sameWork, withWorkId } from '../utils/workIds';
+import { paperFacts } from './paperFacts';
 
 /**
  * Version of the records this code writes. History (docs/data/MIGRATIONS.md):
  *   1  fix 1: paperId was whatever id the search source used (W…, crossref:…, random ids from some sources).
  *   2  fix 4: paperId is the permanent work id (utils/workIds.ts); queue.add papers carry aliases.
+ *   3  fix 5: queue.add papers carry facts only (services/paperFacts.ts); no AI scores, summaries or UI state.
  * Old records are never rewritten (the log is append-only); they are upcast on read by migrateWorkspaceRecords.
  */
-export const WORKSPACE_LOG_SCHEMA_VERSION = 2 as const;
+export const WORKSPACE_LOG_SCHEMA_VERSION = 3 as const;
 export const WORKSPACE_LOG_DB_NAME = 'scholar_explorer_local';
 export const WORKSPACE_LOG_DB_VERSION = 1;
 export const WORKSPACE_LOG_STORE = 'workspace_events';
@@ -105,16 +107,12 @@ export interface RebuiltWorkspace {
     recordCount: number;
 }
 
-/** Fields that only describe transient UI loading state; never written to the log. */
-const TRANSIENT_PAPER_FIELDS = new Set(['isLaymanLoading']);
-
-/** JSON-compatible copy of a paper without transient UI state (e.g. `*State` loading flags). */
+/**
+ * The paper as saved in a queue.add record: facts only (services/paperFacts.ts). Match scores, summaries and other
+ * model output, and transient UI state, are never written to the log.
+ */
 export function snapshotPaper(paper: ResearchPaper): ResearchPaper {
-    const copy = JSON.parse(JSON.stringify(paper)) as Record<string, unknown>;
-    for (const key of Object.keys(copy)) {
-        if (TRANSIENT_PAPER_FIELDS.has(key) || /State$/.test(key)) delete copy[key];
-    }
-    return copy as unknown as ResearchPaper;
+    return paperFacts(paper) as ResearchPaper;
 }
 
 /**
@@ -125,6 +123,10 @@ export function snapshotPaper(paper: ResearchPaper): ResearchPaper {
  *    seen in a queue.add is converted when it is itself a recognizable identifier (W…, crossref:<doi>, arxiv:…),
  *    and otherwise kept unchanged.
  *  - schemaVersion becomes 2 and migratedFrom records 1.
+ * Written migration, v2 -> v3 (also on read):
+ *  - queue.add papers keep only their facts (paperFacts); AI scores, summaries, explanations and UI flags that older
+ *    records saved are dropped, since they are rebuildable output and not the researcher's data.
+ *  - schemaVersion becomes 3 and migratedFrom records the version the record was written with.
  * Records newer than this code understands throw: their meaning is never guessed.
  */
 export function migrateWorkspaceRecords(records: Array<Record<string, any>>): WorkspaceLogRecord[] {
@@ -145,17 +147,22 @@ export function migrateWorkspaceRecords(records: Array<Record<string, any>>): Wo
     };
     return ordered.map(r => {
         if (r.schemaVersion === WORKSPACE_LOG_SCHEMA_VERSION) return r as WorkspaceLogRecord;
-        if (r.schemaVersion !== 1) {
+        if (r.schemaVersion !== 1 && r.schemaVersion !== 2) {
             throw new Error(`Unsupported workspace log schemaVersion ${String(r.schemaVersion)}`);
         }
-        const up: Record<string, any> = { ...r, schemaVersion: WORKSPACE_LOG_SCHEMA_VERSION, migratedFrom: 1 };
-        if (r.type === 'queue.add' && r.paper) {
-            const paper = withWorkId({ ...r.paper, id: r.paper.id ?? r.paperId });
-            up.paper = paper;
-            up.paperId = paper.id;
-        } else if ('paperId' in r) {
-            up.paperId = mapId(r.paperId);
+        const up: Record<string, any> = { ...r, schemaVersion: WORKSPACE_LOG_SCHEMA_VERSION, migratedFrom: r.schemaVersion };
+        if (r.schemaVersion === 1) {
+            // v1 -> v2
+            if (r.type === 'queue.add' && r.paper) {
+                const paper = withWorkId({ ...r.paper, id: r.paper.id ?? r.paperId });
+                up.paper = paper;
+                up.paperId = paper.id;
+            } else if ('paperId' in r) {
+                up.paperId = mapId(r.paperId);
+            }
         }
+        // v2 -> v3
+        if (r.type === 'queue.add' && up.paper) up.paper = paperFacts(up.paper);
         return up as WorkspaceLogRecord;
     });
 }

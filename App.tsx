@@ -36,6 +36,8 @@ import { ResearcherWorkspace } from './components/ResearcherWorkspace';
 import { SaveStatusBanner } from './components/SaveStatusBanner';
 import { reportFailed } from './services/saveStatus';
 import { saveAccountCopy, saveQueueChanges } from './services/workspaceSaves';
+import { derivedRecord, putDerived } from './services/derivedCache';
+import { buildDiscoveryContract } from './services/discoveryContract';
 import { addToQueue, queueContains, removeFromQueue } from './services/selectionQueue';
 import { aliasKey } from './utils/workIds';
 import { researcherEventsFromLog, type ResearcherEvent } from './services/researcherDecisions';
@@ -286,7 +288,8 @@ const App: React.FC = () => {
   const [s3aExportError, setS3aExportError] = useState<string | null>(null);
 
   const stagePaperInS3ASession = (paper: ResearchPaper, options?: { recordInclusionStatement?: boolean }) => {
-      writePaperToScholarPack(paper, options).then(res => {
+      // Every caller is a selection-queue add (search, scout approval, assistant, extension, or restoring the queue).
+      writePaperToScholarPack(paper, { ...options, researcherSelected: true }).then(res => {
           setS3aSessionWarnings(getSkippedPaperWarnings());
           if (res.skipped && res.warning) {
               setToastMessage(res.warning);
@@ -1220,13 +1223,19 @@ const App: React.FC = () => {
       
       const sessionUuid = generateSessionUuid('layman');
       try {
-          const laySummary = await apiService.generateLaymanSummary(paper);
-          setPapers(prev => prev.map(p => p.id === paper.id ? { ...p, laymanSummary: laySummary, isLaymanLoading: false } : p));
-          setScoutCandidates(prev => prev.map(p => p.id === paper.id ? { ...p, laymanSummary: laySummary, isLaymanLoading: false } : p));
+          const result = await apiService.generateLaymanSummary(paper);
+          const laySummary = result.text;
+          const withSummary = { laymanSummary: laySummary, laymanSummaryModel: result.model, isLaymanLoading: false };
+          setPapers(prev => prev.map(p => p.id === paper.id ? { ...p, ...withSummary } : p));
+          setScoutCandidates(prev => prev.map(p => p.id === paper.id ? { ...p, ...withSummary } : p));
           
           if (selectedPaper?.id === paper.id) {
-              setSelectedPaper(prev => prev ? { ...prev, laymanSummary: laySummary, isLaymanLoading: false } : null);
+              setSelectedPaper(prev => prev ? { ...prev, ...withSummary } : null);
           }
+          // Rebuildable cache entry naming the model and the exact input; never part of the saved workspace.
+          void derivedRecord({ workId: paper.id, kind: 'plain-language-summary', model: result.model, modelRevision: result.modelRevision, input: result.input, value: laySummary })
+              .then(r => putDerived([r]))
+              .catch(e => console.warn('[Derived cache] Summary not cached:', e?.message ?? e));
 
           // Trace AI Extraction to DuckDB Vertical LRS
           recordAgentStatement(
@@ -1446,10 +1455,11 @@ const App: React.FC = () => {
 
   // --- DYNAMIC DISCOVERY SNAPSHOT EXPORT CONTRACT ---
   const snapshotJsonString = useMemo(() => {
-      const contract = {
-          source: "scholar-explorer",
+      const contract = buildDiscoveryContract({
+          papers: workspacePapers,
+          researcherEvents,
           query: query || scoutTopic || "Source Discovery Exploration",
-          query_settings: {
+          querySettings: {
               domain: currentSearchOptions.domain || "all",
               depth: summaryLength,
               style: summaryStyle,
@@ -1457,32 +1467,9 @@ const App: React.FC = () => {
               ai_source_scout: scoutCandidates.length > 0
           },
           services: scoutServices,
-          selected_work_ids: workspacePapers.map(p => p.id),
-          // The researcher's own selections, keep/drop decisions and notes, kept with or without study consent.
-          researcher_events: researcherEvents,
-          papers: workspacePapers.map(p => ({
-              title: p.title || "Untitled Paper",
-              authors: Array.isArray(p.authors) 
-                  ? p.authors 
-                  : (typeof p.authors === 'string' && p.authors ? p.authors.split(',').map(a => a.trim()).filter(Boolean) : (p.authorList?.map(a => a.name) || [])),
-              year: String(p.year || "n.d."),
-              doi: p.doi || "",
-              openalex_id: (p.id && !p.id.startsWith('uploaded_')) ? p.id : (p.openalex_id || ""),
-              semantic_scholar_id: (p.id && !p.id.startsWith('uploaded_')) ? p.id : "",
-              crossref_id: p.doi || "",
-              arxiv_id: p.pdfURL && p.pdfURL.includes('arxiv.org') && p.pdfURL.includes('/pdf/') ? (p.pdfURL.split('/pdf/')[1]?.replace('.pdf', '') || "") : "",
-              open_access_pdf_url: p.pdfURL || "",
-              abstract: p.abstract || "",
-              source_service: p.enrichmentSource || "OpenAlex"
-          })),
-          retrieved_at: new Date().toISOString(),
-          provenance: {
-              app_url: window.location.origin,
-              snapshot_id: `sc-snap-${Math.random().toString(36).substring(2, 11)}`,
-              model: "gemini-flash",
-              researcher_approved: true
-          }
-      };
+          appUrl: window.location.origin,
+          snapshotId: `sc-snap-${crypto.randomUUID()}`,
+      });
       return JSON.stringify(contract, null, 2);
   }, [workspacePapers, researcherEvents, query, scoutTopic, currentSearchOptions, summaryLength, summaryStyle, scoutServices]);
 
