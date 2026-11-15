@@ -39,6 +39,7 @@ import { saveAccountCopy, saveQueueChanges } from './services/workspaceSaves';
 import { derivedRecord, putDerived } from './services/derivedCache';
 import { buildDiscoveryContract } from './services/discoveryContract';
 import { createExportBundle, downloadBytes } from './services/exportBundleDownload';
+import { importExportBundle } from './services/importBundle';
 import { addToQueue, queueContains, removeFromQueue } from './services/selectionQueue';
 import { aliasKey } from './utils/workIds';
 import { researcherEventsFromLog, type ResearcherEvent } from './services/researcherDecisions';
@@ -2086,6 +2087,31 @@ const App: React.FC = () => {
                                           <HardDrive className="w-3.5 h-3.5 text-slate-500" />
                                           <span>{isBuildingBundle ? 'Building export…' : 'Download full export (.zip)'}</span>
                                       </button>
+                                      <label
+                                          title="Restore a full export into this browser. Only works in an empty profile; checksums are verified first."
+                                          className="inline-flex items-center gap-2 px-3.5 py-2 bg-white text-slate-700 hover:bg-slate-50 border border-slate-200 rounded-lg text-xs font-medium transition-colors shadow-2xs cursor-pointer"
+                                      >
+                                          <HardDrive className="w-3.5 h-3.5 text-slate-500" />
+                                          <span>Import full export (.zip)</span>
+                                          <input
+                                              type="file"
+                                              accept=".zip,application/zip"
+                                              className="hidden"
+                                              onChange={async (e) => {
+                                                  const file = e.target.files?.[0];
+                                                  e.target.value = '';
+                                                  if (!file) return;
+                                                  try {
+                                                      const restored = await importExportBundle(new Uint8Array(await file.arrayBuffer()));
+                                                      setToastMessage(`Imported ${restored.imported.length} records (${restored.queue.length} papers). Reloading…`);
+                                                      setTimeout(() => window.location.reload(), 800);
+                                                  } catch (err: any) {
+                                                      setS3aExportError(err?.message || String(err));
+                                                      setToastMessage(err?.message || 'Import failed. Nothing was imported.');
+                                                  }
+                                              }}
+                                          />
+                                      </label>
                                       <label className="inline-flex items-center gap-2 px-3.5 py-2 bg-white text-slate-700 hover:bg-slate-50 disabled:opacity-40 border border-slate-200 rounded-lg text-xs font-medium transition-colors shadow-2xs cursor-pointer">
                                           <HardDrive className="w-3.5 h-3.5 text-slate-500" />
                                           <span>Import .s3a Snapshot</span>

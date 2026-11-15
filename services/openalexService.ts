@@ -7,18 +7,21 @@ import { deinvertAbstract } from './utils';
 const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes for search
 const METADATA_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours for specific DOI lookups
 
-const mapOpenAlexWorkToResearchPaper = (work: any, allowShortAbstract = false): ResearchPaper | null => {
+export const mapOpenAlexWorkToResearchPaper = (work: any, allowShortAbstract = false): ResearchPaper | null => {
     const abstract = work.abstract_inverted_index 
         ? deinvertAbstract(work.abstract_inverted_index) 
         : '';
     
     if (!allowShortAbstract && (!abstract || abstract.length < 50)) return null;
 
-    const authorList: AuthorProfile[] = (work.authorships || []).map((a: any) => ({
-        id: a.author?.id?.replace('https://openalex.org/', '') || undefined,
-        name: a.author?.display_name || 'Unknown Author',
-        orcid: a.author?.orcid?.replace('https://orcid.org/', '') || undefined
-    }));
+    // Authors without a name are left out rather than labelled 'Unknown Author'.
+    const authorList: AuthorProfile[] = (work.authorships || [])
+        .filter((a: any) => typeof a.author?.display_name === 'string' && a.author.display_name.trim())
+        .map((a: any) => ({
+            id: a.author?.id?.replace('https://openalex.org/', '') || undefined,
+            name: a.author.display_name.normalize('NFC'),
+            orcid: a.author?.orcid?.replace('https://orcid.org/', '') || undefined
+        }));
 
     const doi = work.doi ? work.doi.replace('https://doi.org/', '') : undefined;
     const journal = work.primary_location?.source?.display_name || undefined;
@@ -31,7 +34,7 @@ const mapOpenAlexWorkToResearchPaper = (work: any, allowShortAbstract = false): 
     const uniqueConcepts = Array.from(new Set(rawConcepts)).slice(0, 8);
 
     const paperData: Omit<ResearchPaper, 'id'> = {
-        title: work.title || work.display_name || 'Untitled Scholarly Work',
+        title: (work.title || work.display_name || '').normalize('NFC'),
         authors: authorList.length > 0 ? authorList.map(a => a.name).join(', ') : '',
         authorList,
         year: work.publication_year || undefined,
@@ -39,7 +42,7 @@ const mapOpenAlexWorkToResearchPaper = (work: any, allowShortAbstract = false): 
         openalex_id: openalexId,
         sourceURL: work.doi ? `https://doi.org/${work.doi.replace('https://doi.org/', '')}` : work.id,
         pdfURL: work.primary_location?.pdf_url || undefined,
-        citations: work.cited_by_count ?? 0,
+        citations: typeof work.cited_by_count === 'number' ? work.cited_by_count : undefined,
         doi,
         journal,
         isOpenAccess: work.open_access?.is_oa || false,

@@ -10,6 +10,7 @@
  * A whitelist, not a blacklist: a new field is not saved until someone decides it is a fact.
  */
 import type { ResearchPaper } from '../types';
+import { nfcDeep } from '../utils/nfc';
 
 /** Version of the saved paper-fact shape. History in docs/data/MIGRATIONS.md. */
 export const PAPER_FACTS_SCHEMA_VERSION = 1 as const;
@@ -32,8 +33,8 @@ export function nonFactFields(paper: object): string[] {
 }
 
 /**
- * JSON-compatible copy of a paper with only its facts. Empty values are dropped rather than replaced:
- * a missing year stays missing.
+ * JSON-compatible copy of a paper with only its facts, all text NFC. Empty values are dropped rather than
+ * replaced: a missing year stays missing.
  */
 export function paperFacts(paper: ResearchPaper | Record<string, unknown>): PaperFacts {
     const src = paper as Record<string, unknown>;
@@ -42,7 +43,7 @@ export function paperFacts(paper: ResearchPaper | Record<string, unknown>): Pape
         const v = src[key];
         if (v === undefined || v === null) continue;
         if (key === 'year' && !(typeof v === 'number' && Number.isInteger(v) && v > 0)) continue;
-        out[key] = typeof v === 'string' ? v.normalize('NFC') : JSON.parse(JSON.stringify(v));
+        out[key] = nfcDeep(JSON.parse(JSON.stringify(v)));
     }
     return out as PaperFacts;
 }
