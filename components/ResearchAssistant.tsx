@@ -45,6 +45,7 @@ import {
 } from '../services/s3aWasmService';
 import { trackExplorerPrompt, trackExplorerAiResponse } from '../services/explorerTrackingService';
 import { generateStatementUuid } from '../services/s3aOutboxService';
+import { ScoutScreeningList, SCOUT_UNCERTAINTY_FALLBACK } from './ScoutScreeningList';
 
 export type AssistantMode = 'coach' | 'scout';
 
@@ -308,19 +309,19 @@ export const ResearchAssistant: React.FC<ResearchAssistantProps> = ({
 
         try {
             const { papers: searchResults } = await apiService.searchPapers(scoutTopic, { domain: 'all' }, 1, userSettings);
-            const topCandidates = searchResults.slice(0, 4);
+            const screeningList = searchResults;
 
-            if (topCandidates.length === 0) {
+            if (screeningList.length === 0) {
                 setScoutRationale("Cross-referenced OpenAlex, Crossref, and Semantic Scholar catalogs. No immediate unread candidate records were indexed for this specific formulation.");
                 setIsScouting(false);
                 return;
             }
 
             let rationale = "Identified seminal empirical and theoretical works mapping adjacent theoretical parameters and foundational methodology frameworks.";
-            let uncertainty = "Contains preliminary preprint distributions and non-blinded datasets. Recommend secondary verification in the Local Lab before doctoral submission.";
+            let uncertainty = SCOUT_UNCERTAINTY_FALLBACK;
 
             try {
-                const ratResp = await apiService.generateSummary(topCandidates, 'short', 'paragraph');
+                const ratResp = await apiService.generateSummary(screeningList, 'short', 'paragraph');
                 if (ratResp) rationale = `Topical cluster identified via co-citation network: ${ratResp.substring(0, 220)}...`;
             } catch (e) { /* silent fallback */ }
 
@@ -330,33 +331,33 @@ export const ResearchAssistant: React.FC<ResearchAssistantProps> = ({
                 '/ontologies/agent_traceability.owl#classified',
                 'Compiled Candidate Evidence Dossier',
                 `urn:research-assistant:scout:dossier:${accession}`,
-                `Compiled ${topCandidates.length} candidate papers for doctoral review`,
-                { candidateCount: topCandidates.length, candidateIds: topCandidates.map(p => p.id) }
+                `Compiled ${screeningList.length} candidate papers for doctoral review`,
+                { candidateCount: screeningList.length, candidateIds: screeningList.map(p => p.id) }
             );
 
             // Emit xAPI statement: AI answer shown (actor: agent)
             emitStatement('ai-answered', {
                 id: `urn:ai:scout:${accession}`,
-                name: `Scout Candidate Dossier (${topCandidates.length} works)`,
+                name: `Scout screening list (${screeningList.length} works)`,
                 type: 'ai-response'
             }, { 
                 actor: 'agent', 
                 agentSlug: 'source-scout', 
-                candidateCount: topCandidates.length,
+                candidateCount: screeningList.length,
                 rationale: rationale.slice(0, 200) 
             }).catch(() => {});
 
-            setScoutCandidates(topCandidates);
+            setScoutCandidates(screeningList);
             setScoutRationale(rationale);
             setScoutUncertainty(uncertainty);
 
             try {
                 await trackExplorerAiResponse({
                     promptedStatementId: scoutPromptId || generateStatementUuid(),
-                    aiAnswerText: `Recommended ${topCandidates.length} candidate sources for "${scoutTopic}". Rationale: ${rationale}`,
+                    aiAnswerText: `Screening list of ${screeningList.length} sources matching "${scoutTopic}". Rationale: ${rationale}`,
                     agentSlug: 'source-scout',
                     action: 'recommended-sources',
-                    sources: topCandidates.map(p => p.openalex_id || p.id).filter(Boolean),
+                    sources: screeningList.map(p => p.openalex_id || p.id).filter(Boolean),
                     tokens: Math.ceil(rationale.length / 4)
                 });
             } catch (e) {
@@ -765,110 +766,14 @@ export const ResearchAssistant: React.FC<ResearchAssistantProps> = ({
                     )}
 
                     {!isScouting && scoutCandidates.length > 0 && (
-                        <div className="space-y-6">
-                            {/* Rationale and uncertainty */}
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                <div className="bg-slate-900 text-white rounded-2xl p-5 shadow-2xs">
-                                    <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block mb-1">
-                                        Query & Adjacency Rationale
-                                    </span>
-                                    <p className="text-xs text-slate-200 leading-relaxed italic">
-                                        "{scoutRationale}"
-                                    </p>
-                                </div>
-
-                                <div className="bg-amber-50 border border-amber-200/80 text-amber-950 rounded-2xl p-5 shadow-2xs">
-                                    <span className="text-[10px] font-bold uppercase tracking-wider text-amber-700 block mb-1">
-                                        Uncertainty & Empirical Caveats
-                                    </span>
-                                    <p className="text-xs text-amber-900 leading-relaxed font-medium italic">
-                                        "{scoutUncertainty}"
-                                    </p>
-                                </div>
-                            </div>
-
-                            {/* Candidate paper grid */}
-                            <div className="space-y-3">
-                                <div className="flex items-center justify-between">
-                                    <h3 className="text-xs font-bold uppercase tracking-wider text-slate-700">
-                                        Discovered Candidate Evidence ({scoutCandidates.length} Works)
-                                    </h3>
-                                    <span className="text-[11px] text-slate-500">
-                                        Human approval required before admission into Evidence Ledger
-                                    </span>
-                                </div>
-
-                                <div className="grid grid-cols-1 gap-4">
-                                    {scoutCandidates.map((paper) => {
-                                        const isApproved = scoutApprovedIds.has(paper.id) || workspacePaperIds.has(paper.id);
-                                        return (
-                                            <div 
-                                                key={paper.id} 
-                                                className="bg-white border border-slate-200/80 rounded-2xl p-5 shadow-2xs space-y-3 transition-all hover:border-slate-300"
-                                            >
-                                                <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3">
-                                                    <div className="space-y-1 pr-2">
-                                                        <div className="flex items-center gap-2 flex-wrap">
-                                                            <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-purple-50 text-purple-700 border border-purple-200/60">
-                                                                Candidate Evidence
-                                                            </span>
-                                                            {paper.isOpenAccess && (
-                                                                <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200/60">
-                                                                    Open Access
-                                                                </span>
-                                                            )}
-                                                            {paper.citations !== undefined && (
-                                                                <span className="text-[11px] text-slate-500 font-medium">
-                                                                    {paper.citations.toLocaleString()} Citations
-                                                                </span>
-                                                            )}
-                                                        </div>
-                                                        <h4 
-                                                            onClick={() => onSelectPaper(paper)}
-                                                            className="text-base font-bold text-slate-900 hover:text-indigo-600 transition-colors cursor-pointer leading-snug"
-                                                        >
-                                                            {paper.title}
-                                                        </h4>
-                                                        <p className="text-xs text-slate-500 font-medium">
-                                                            {paper.authors ? `${paper.authors.split(',')[0]} et al.` : 'Scholarly Authors'} • {paper.year}
-                                                        </p>
-                                                    </div>
-
-                                                    <button
-                                                        type="button"
-                                                        onClick={() => handleApproveScoutCandidate(paper)}
-                                                        disabled={isApproved}
-                                                        className={`px-4 py-2 rounded-xl text-xs font-semibold transition-all shrink-0 flex items-center gap-1.5 ${
-                                                            isApproved
-                                                                ? 'bg-emerald-50 text-emerald-800 border border-emerald-200 cursor-default'
-                                                                : 'bg-slate-900 hover:bg-slate-800 text-white shadow-2xs'
-                                                        }`}
-                                                    >
-                                                        {isApproved ? (
-                                                            <>
-                                                                <Check className="w-3.5 h-3.5" />
-                                                                <span>Admitted to Ledger</span>
-                                                            </>
-                                                        ) : (
-                                                            <>
-                                                                <ShieldCheck className="w-3.5 h-3.5" />
-                                                                <span>Approve & Stage</span>
-                                                            </>
-                                                        )}
-                                                    </button>
-                                                </div>
-
-                                                {paper.abstract && (
-                                                    <p className="text-xs text-slate-600 leading-relaxed line-clamp-2">
-                                                        {paper.abstract}
-                                                    </p>
-                                                )}
-                                            </div>
-                                        );
-                                    })}
-                                </div>
-                            </div>
-                        </div>
+                        <ScoutScreeningList
+                            papers={scoutCandidates}
+                            approvedIds={new Set([...scoutApprovedIds, ...workspacePaperIds])}
+                            rationale={scoutRationale}
+                            uncertainty={scoutUncertainty}
+                            onApprove={handleApproveScoutCandidate}
+                            onSelectPaper={onSelectPaper}
+                        />
                     )}
                 </div>
             )}
