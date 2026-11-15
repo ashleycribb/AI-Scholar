@@ -1,194 +1,226 @@
-
-import type { ResearchPaper, SemanticSpan } from '../types';
-import { generateHypotheticalAnswer, getEmbedding } from './geminiService';
-import { cosineSimilarity } from '../utils/math';
-import { batchEmbedText } from '../utils/embeddings';
+/**
+ * Search-result scoring: how well each paper matches the search term. Never a quality rating.
+ *
+ *  1. keywordScorePapers: BM25+ keyword match, synchronous, shown on every card at once.
+ *  2. semanticScorePapers: ONE call to the server's POST /api/embed (a local open embedding model by default,
+ *     no Gemini quota) with the raw query and one text per paper (title + abstract, truncated). Cards are
+ *     upgraded in place to meaning + keyword match. On any failure it returns null and the keyword scores stay.
+ *  3. passageHighlights: passage-level matches, only for the paper the researcher opened.
+ *  4. HyDE query expansion is optional (UserSettings.enableHydeQueryExpansion, off by default) and never blocks.
+ *
+ * The server caches paper vectors (per model + DOI/OpenAlex id); relevance is always computed here, fresh per query.
+ */
+import type { ResearchPaper, ScoreExplanation, SemanticSpan } from '../types';
 import { scorePapersLexical } from '../utils/bm25';
-import { rerankResults, buildPaperScoreExplanation } from './rerankService';
+import { cosineSimilarity } from '../utils/math';
+import { buildPaperScoreExplanation } from './rerankService';
+import { generateHypotheticalAnswer } from './geminiService';
+
+export const KEYWORD_METHOD = 'Keyword match to your search term (BM25+)';
+export const SEMANTIC_METHOD = 'Meaning match (text embeddings) + keyword match to your search term';
+/** Share of the final match that comes from meaning (embeddings); the rest is keyword match. */
+export const MEANING_WEIGHT = 0.7;
+/** Characters of title + abstract embedded per paper (bge-small reads ~512 tokens). */
+export const PAPER_TEXT_MAX_CHARS = 2000;
+/** Papers per /api/embed call (server cap is 200). */
+const EMBED_CALL_MAX_DOCS = 200;
 
 /**
- * Splits text into overlapping chunks (passages) to improve retrieval context.
- * Window size: 3 sentences. Stride: 2 sentences.
+ * Cosine -> 0-100 "meaning match", per embedding model. bge-small calibrated on tests/fixtures/papers50.json
+ * (50 real OpenAlex abstracts, 5 topics, the 5 topic names as queries): off-topic cosine p50 0.48 / p99 0.60 /
+ * max 0.61; on-topic min 0.73 / p50 0.85 / p90 0.905. So 0.60 -> 0% and 0.90 -> 100%
+ * (checked by server/embed/localModel.test.ts; re-run scripts/calibrate-embeddings.ts after a model change).
  */
-const chunkTextIntoPassages = (text: string): string[] => {
-    if (!text || text.length < 50) return [text];
-    
-    // Simple sentence splitting that respects common academic abbreviations
-    const sentences = text.match(/[^.!?]+[.!?]+(?=\s|$)/g) || [text];
-    
-    if (sentences.length <= 3) return [text.trim()];
+export const MATCH_CALIBRATION: Record<string, { min: number; max: number }> = {
+  'BAAI/bge-small-en-v1.5': { min: 0.60, max: 0.90 },
+  'gemini-embedding-2-preview': { min: 0.45, max: 0.88 },
+};
+const DEFAULT_CALIBRATION = { min: 0.5, max: 0.9 };
 
-    const chunks: string[] = [];
-    // Sliding window: size 3, stride 2
-    for (let i = 0; i < sentences.length; i += 2) {
-        const chunk = sentences.slice(i, i + 3).join(' ').trim();
-        if (chunk.length > 30) { // Filter out fragments
-            chunks.push(chunk);
-        }
-        // Break if we've reached the end
-        if (i + 3 >= sentences.length) break;
-    }
-    return chunks;
+export const calibrateSimilarity = (cos: number, model: string): number => {
+  const { min, max } = MATCH_CALIBRATION[model.split(':')[0]] ?? DEFAULT_CALIBRATION;
+  return Math.max(0, Math.min(100, Math.round(((cos - min) / (max - min)) * 100)));
 };
 
-/**
- * Generates the embedding for the hypothetical answer.
- * Implement 'Hypothetical Document Expansion' using local LLMs (Gemini)
- * to transform sparse queries into rich keyword-dense text before traditional indexing.
- */
-export const precomputeQueryEmbedding = async (query: string): Promise<number[]> => {
-    try {
-        console.log(`[SemanticSearch] Generating HyDE for: "${query.substring(0, 50)}..."`);
-        // 1. Generate Hypothetical Answer (Expansion)
-        const hypotheticalAnswer = await generateHypotheticalAnswer(query);
-        console.log(`[SemanticSearch] HyDE Answer: "${hypotheticalAnswer.substring(0, 100)}..."`);
-        
-        // 2. Get Embedding for it
-        const queryEmbedding = await getEmbedding(hypotheticalAnswer);
-        
-        if (queryEmbedding.length === 0) {
-            console.warn("[SemanticSearch] Embedding generation failed for HyDE answer, falling back to raw query.");
-            return await getEmbedding(query);
-        }
-        return queryEmbedding;
-    } catch (e) {
-        console.error("[SemanticSearch] Error precomputing query embedding:", e);
-        return [];
-    }
+const STOP = new Set(['the', 'and', 'for', 'with', 'that', 'this', 'from', 'are', 'was', 'were', 'what', 'how', 'why', 'when',
+  'where', 'who', 'which', 'can', 'does', 'into', 'about', 'between', 'using', 'based', 'study', 'paper', 'research', 'of', 'in', 'on', 'to', 'an', 'a', 'is', 'or', 'by']);
+const tokens = (t: string) => (t || '').toLowerCase().replace(/[^\p{L}\p{N}\s]/gu, ' ').split(/\s+/).filter(w => w.length > 1);
+const hasAbstract = (p: ResearchPaper) => !!p.abstract && p.abstract.length > 50 && !p.abstract.includes('No abstract');
+
+/** 0-1 keyword match per paper: BM25+ (relative to the best paper) x share of query terms the paper contains. */
+export function keywordMatch(papers: ResearchPaper[], query: string): number[] {
+  const terms = [...new Set(tokens(query).filter(t => !STOP.has(t)))];
+  if (papers.length === 0 || terms.length === 0) return papers.map(() => 0);
+  const bm25 = scorePapersLexical(papers.map(p => ({ title: p.title || '', abstract: hasAbstract(p) ? p.abstract : '' })), terms.join(' '));
+  return papers.map((p, i) => {
+    const words = new Set(tokens(`${p.title || ''} ${hasAbstract(p) ? p.abstract : ''}`));
+    const coverage = terms.filter(t => words.has(t)).length / terms.length;
+    return (bm25[i] || 0) * coverage;
+  });
+}
+
+const explain = (paper: ResearchPaper, query: string, method: string, keywordPct: number, meaningPct?: number): ScoreExplanation => {
+  const base = buildPaperScoreExplanation(paper, query, method);
+  const inputs = meaningPct === undefined
+    ? [
+        { label: 'Keyword match', value: `${keywordPct}%`, weight: '100% (meaning match loading)' },
+        { label: 'Meaning match', value: 'Calculating…', weight: `${Math.round(MEANING_WEIGHT * 100)}% once ready`, isLoading: true },
+      ]
+    : [
+        { label: 'Meaning match', value: `${meaningPct}%`, weight: `${Math.round(MEANING_WEIGHT * 100)}%` },
+        { label: 'Keyword match', value: `${keywordPct}%`, weight: `${Math.round((1 - MEANING_WEIGHT) * 100)}%` },
+      ];
+  return { ...base, method, inputs: [...inputs, { label: 'Citations, venue, recency', value: 'Not used: this is a match to your search term, not a quality rating', weight: '0%' }] };
 };
 
-/**
- * Calculates semantic scores using PASSAGE-LEVEL ranking.
- * This is "Cross-Passage Scoring": matching the query vector against multiple windows of the abstract.
- */
-export const computeScores = async (papers: ResearchPaper[], queryEmbedding: number[], queryFallback?: string): Promise<ResearchPaper[]> => {
-    if (papers.length === 0) return [];
-    
-    // If query embedding failed, return Lexical-First scores immediately
-    if (queryEmbedding.length === 0) {
-        if (queryFallback) {
-            console.warn("[SemanticSearch] Query embedding is empty, using BM25+ Lexical-First fallback.");
-            const lexicalScored = computeLexicalScores(papers, queryFallback);
-            return await rerankResults(lexicalScored, queryFallback);
-        }
-        console.warn("[SemanticSearch] Query embedding is empty, skipping scoring.");
-        return papers.map(p => ({ ...p, semanticScore: 0 }));
-    }
+/** Stage 1: immediate keyword scores (0-100) on every paper. */
+export function keywordScorePapers(papers: ResearchPaper[], query: string): ResearchPaper[] {
+  const kw = keywordMatch(papers, query);
+  return papers.map((p, i) => {
+    const pct = Math.round(kw[i] * 100);
+    const out: ResearchPaper = { ...p, semanticScore: pct, keywordMatch: pct, scoreSource: 'keyword', rawSemanticSimilarity: undefined };
+    out.scoreExplanation = explain(out, query, KEYWORD_METHOD, pct);
+    return out;
+  });
+}
 
-    let scoredPapers: ResearchPaper[] = [];
+export interface EmbedRequestBody { query?: string; documents?: { id?: string; text: string }[] }
+export interface EmbedResponseBody { model: string; provider: string; dims: number; query?: number[]; documents?: number[][]; cached?: number }
+export type EmbedFn = (body: EmbedRequestBody, signal?: AbortSignal) => Promise<EmbedResponseBody>;
 
-    try {
-        // 1. Prepare every passage of every paper up front, so the whole result set is embedded in
-        //    as few proxy calls as possible (batchEmbedText chunks, de-duplicates and caches).
-        const allChunks: { text: string; paperIdx: number }[] = [];
-        papers.forEach((paper, paperIdx) => {
-            const text = (paper.abstract && paper.abstract.length > 50 && !paper.abstract.includes("No abstract"))
-              ? paper.abstract
-              : `${paper.title}. ${paper.abstract || ""}`;
-            chunkTextIntoPassages(text).forEach(p => allChunks.push({ text: p, paperIdx }));
-        });
+export class EmbedHttpError extends Error {
+  constructor(readonly status: number, message: string) { super(message); }
+}
 
-        // 2. Embed all passages (one call per ~100 texts; never throws, failures come back as []).
-        const passageEmbeddings = await batchEmbedText(allChunks.map(c => c.text));
-
-        // Graceful degradation: if no passage could be embedded (rate limit, outage), rank lexically
-        // instead of scoring everything 0. The embedder has already logged a single warning.
-        if (!passageEmbeddings.some(e => e && e.length > 0)) {
-            const fallbackQuery = queryFallback ?? '';
-            const lexicalScored = computeLexicalScores(papers, fallbackQuery);
-            return queryFallback ? await rerankResults(lexicalScored, queryFallback) : lexicalScored;
-        }
-
-        // 3. Score passages using Cosine Similarity, grouped per paper
-        const passagesByPaper: { text: string; score: number }[][] = papers.map(() => []);
-        allChunks.forEach((chunk, idx) => {
-            const embedding = passageEmbeddings[idx];
-            const similarity = (embedding && embedding.length > 0)
-                ? cosineSimilarity(queryEmbedding, embedding)
-                : 0;
-            passagesByPaper[chunk.paperIdx].push({ text: chunk.text, score: similarity });
-        });
-
-        // 4. Aggregate passage scores back to their respective papers
-        scoredPapers = papers.map((paper, paperIdx) => {
-            const paperPassages = passagesByPaper[paperIdx];
-            // Sort by similarity descending
-            paperPassages.sort((a, b) => b.score - a.score);
-
-            const bestPassage = paperPassages[0];
-            const similarity = bestPassage ? bestPassage.score : 0;
-
-            // Normalization:
-            // In gemini-embedding-2-preview, typical related hits are between 0.6 and 0.85
-            const minSim = 0.45; // Threshold for "0%"
-            const maxSim = 0.88; // Threshold for "100%"
-            const score = Math.max(0, Math.min(100, Math.round(((similarity - minSim) / (maxSim - minSim)) * 100)));
-
-            // Store top matching snippets for UI display
-            const highlights: SemanticSpan[] = paperPassages
-                .filter(p => p.score > minSim) // Only keep semi-relevant ones
-                .slice(0, 2)
-                .map(p => ({
-                    text: p.text,
-                    score: Math.round(((p.score - minSim) / (maxSim - minSim)) * 100)
-                }));
-
-            return {
-                ...paper,
-                semanticScore: score / 100, // Normalize to 0-1 for reranker
-                rawSemanticSimilarity: score,
-                semanticHighlights: highlights
-            };
-        });
-
-        // 5. Local Reranking Step
-        if (queryFallback) {
-            return await rerankResults(scoredPapers, queryFallback, 'Embedding similarity + keyword boost');
-        }
-
-        // Fallback: convert back to 0-100 if no reranking happened
-        return scoredPapers.map(p => {
-            const finalScore = Math.round((p.semanticScore || 0) * 100);
-            const finalPaper: ResearchPaper = {
-                ...p,
-                semanticScore: finalScore,
-                rawSemanticSimilarity: p.rawSemanticSimilarity !== undefined ? p.rawSemanticSimilarity : finalScore
-            };
-            finalPaper.scoreExplanation = buildPaperScoreExplanation(
-                finalPaper,
-                queryFallback || '',
-                'Embedding similarity + keyword boost'
-            );
-            return finalPaper;
-        });
-    } catch (e) {
-        console.error("[SemanticSearch] Error computing passage-level scores:", e);
-        return papers.map(p => ({ ...p, semanticScore: 0 }));
-    }
+export const httpEmbed: EmbedFn = async (body, signal) => {
+  const res = await fetch('/api/embed', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal });
+  if (!res.ok) throw new EmbedHttpError(res.status, `embed ${res.status}`);
+  return res.json();
 };
 
-/**
- * Lexical-First scoring using BM25+ to ensure high availability and baseline recall.
- */
-const computeLexicalScores = (papers: ResearchPaper[], query: string): ResearchPaper[] => {
-    const scores = scorePapersLexical(papers, query);
-    return papers.map((paper, i) => ({
-        ...paper,
-        semanticScore: scores[i],
-        rawSemanticSimilarity: Math.round((scores[i] || 0) * 100)
-    }));
-};
+export const paperEmbeddingText = (p: ResearchPaper): string =>
+  (hasAbstract(p) ? `${p.title || ''}. ${p.abstract}` : `${p.title || ''}. ${p.abstract || ''}`).trim().slice(0, PAPER_TEXT_MAX_CHARS);
 
-/**
- * Legacy combined function for backward compatibility.
- */
-export const calculatePaperScores = async (papers: ResearchPaper[], query: string): Promise<ResearchPaper[]> => {
-  const queryEmbedding = await precomputeQueryEmbedding(query);
-  if (queryEmbedding.length === 0) {
-      console.warn("[SemanticSearch] Embedding failed, using BM25+ Lexical-First scoring fallback.");
-      const lexicalScored = computeLexicalScores(papers, query);
-      return await rerankResults(lexicalScored, query);
+/** Cache identity on the server: DOI, else OpenAlex id, else none (the server then keys by a hash of the text). */
+export const paperEmbeddingId = (p: ResearchPaper): string | undefined =>
+  p.doi ? `doi:${p.doi.toLowerCase().replace(/^https?:\/\/(dx\.)?doi\.org\//, '')}`
+    : p.openalex_id ? `openalex:${p.openalex_id.replace(/^https?:\/\/openalex\.org\//, '')}` : undefined;
+
+export interface SemanticScoreOptions {
+  embed?: EmbedFn;
+  /** Text to embed as the query; defaults to the raw search term (e.g. a HyDE expansion when enabled). */
+  queryText?: string;
+  signal?: AbortSignal;
+}
+
+/** Stage 2: meaning + keyword match (0-100). Returns null when embeddings are unavailable (keep keyword scores). */
+export async function semanticScorePapers(papers: ResearchPaper[], query: string, o: SemanticScoreOptions = {}): Promise<ResearchPaper[] | null> {
+  if (papers.length === 0) return [];
+  const embed = o.embed ?? httpEmbed;
+  const queryText = (o.queryText || query || '').trim();
+  if (!queryText) return null;
+  try {
+    const docs = papers.map(p => ({ id: paperEmbeddingId(p), text: paperEmbeddingText(p) || p.id }));
+    let qv: number[] | undefined; let model = '';
+    const vectors: number[][] = [];
+    for (let i = 0; i < docs.length; i += EMBED_CALL_MAX_DOCS) {
+      const r = await embed({ query: i === 0 ? queryText : undefined, documents: docs.slice(i, i + EMBED_CALL_MAX_DOCS) }, o.signal);
+      if (i === 0) { qv = r.query; model = r.model; }
+      if (!Array.isArray(r.documents) || r.documents.length !== Math.min(EMBED_CALL_MAX_DOCS, docs.length - i)) return null;
+      vectors.push(...r.documents);
+    }
+    if (!qv || qv.length === 0) return null;
+    const kw = keywordMatch(papers, query);
+    return papers.map((p, i) => {
+      const meaning = vectors[i]?.length ? calibrateSimilarity(cosineSimilarity(qv!, vectors[i]), model) : 0;
+      const keywordPct = Math.round(kw[i] * 100);
+      const score = Math.round(MEANING_WEIGHT * meaning + (1 - MEANING_WEIGHT) * keywordPct);
+      const out: ResearchPaper = { ...p, semanticScore: score, keywordMatch: keywordPct, rawSemanticSimilarity: meaning, scoreSource: 'semantic' };
+      out.scoreExplanation = explain(out, query, SEMANTIC_METHOD, keywordPct, meaning);
+      return out;
+    });
+  } catch (e: any) {
+    if (e?.name !== 'AbortError') console.warn(`[scoring] Meaning match unavailable (${e?.status ?? e?.message ?? 'error'}); keeping keyword match.`);
+    return null;
   }
-  return computeScores(papers, queryEmbedding, query);
+}
+
+/** Splits text into overlapping 3-sentence passages (stride 2). */
+export const chunkTextIntoPassages = (text: string): string[] => {
+  if (!text || text.length < 50) return text ? [text] : [];
+  const sentences = text.match(/[^.!?]+[.!?]+(?=\s|$)/g) || [text];
+  if (sentences.length <= 3) return [text.trim()];
+  const chunks: string[] = [];
+  for (let i = 0; i < sentences.length; i += 2) {
+    const chunk = sentences.slice(i, i + 3).join(' ').trim();
+    if (chunk.length > 30) chunks.push(chunk);
+    if (i + 3 >= sentences.length) break;
+  }
+  return chunks;
 };
 
+/** Stage 3 (opened paper only): the abstract passages that best match the search term. */
+export async function passageHighlights(paper: ResearchPaper, query: string, o: { embed?: EmbedFn; signal?: AbortSignal } = {}): Promise<SemanticSpan[]> {
+  if (!hasAbstract(paper) || !query.trim()) return [];
+  const passages = chunkTextIntoPassages(paper.abstract).slice(0, 40);
+  if (passages.length === 0) return [];
+  try {
+    const r = await (o.embed ?? httpEmbed)({ query: query.trim(), documents: passages.map(text => ({ text })) }, o.signal);
+    if (!r.query || !r.documents || r.documents.length !== passages.length) return [];
+    return passages
+      .map((text, i) => ({ text, score: calibrateSimilarity(cosineSimilarity(r.query!, r.documents![i]), r.model) }))
+      .filter(p => p.score > 0)
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 2);
+  } catch {
+    return [];
+  }
+}
+
+/** Optional HyDE expansion: one Gemini call, no retries, bounded wait. Returns null when unavailable. */
+export async function hydeQueryText(query: string, timeoutMs = 15_000): Promise<string | null> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const answer = await Promise.race([
+      generateHypotheticalAnswer(query, { retries: 0 }),
+      new Promise<string>(resolve => { timer = setTimeout(() => resolve(query), timeoutMs); }),
+    ]);
+    return answer && answer !== query ? `${query}\n${answer}`.slice(0, PAPER_TEXT_MAX_CHARS) : null;
+  } catch {
+    return null;
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+export interface ProgressiveScoringOptions extends SemanticScoreOptions {
+  /** Run the optional HyDE expansion after the meaning match is on screen. Default false. */
+  hyde?: boolean;
+  /** Test seam for the HyDE call. */
+  hydeText?: (query: string) => Promise<string | null>;
+  /** Called with each improved set of scores: keyword (synchronously), then meaning, then HyDE. */
+  onUpdate: (papers: ResearchPaper[], stage: 'keyword' | 'semantic' | 'hyde') => void;
+}
+
+/**
+ * Keyword scores right away, then upgrade in place. Never throws; a failed stage leaves the previous scores.
+ * Returns the stage that produced the final scores.
+ */
+export async function scoreProgressively(papers: ResearchPaper[], query: string, o: ProgressiveScoringOptions): Promise<'keyword' | 'semantic' | 'hyde'> {
+  if (papers.length === 0) return 'keyword';
+  o.onUpdate(keywordScorePapers(papers, query), 'keyword');
+  const semantic = await semanticScorePapers(papers, query, o);
+  if (!semantic || o.signal?.aborted) return 'keyword';
+  o.onUpdate(semantic, 'semantic');
+  if (!o.hyde) return 'semantic';
+  const expanded = await (o.hydeText ?? hydeQueryText)(query);
+  if (!expanded || o.signal?.aborted) return 'semantic';
+  const hyde = await semanticScorePapers(papers, query, { ...o, queryText: expanded });
+  if (!hyde || o.signal?.aborted) return 'semantic';
+  o.onUpdate(hyde, 'hyde');
+  return 'hyde';
+}
+
+/** One-shot scoring (keyword first, meaning match when available). */
+export const calculatePaperScores = async (papers: ResearchPaper[], query: string): Promise<ResearchPaper[]> =>
+  (await semanticScorePapers(papers, query)) ?? keywordScorePapers(papers, query);

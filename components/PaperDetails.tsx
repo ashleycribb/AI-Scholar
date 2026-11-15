@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect } from 'react';
-import type { ResearchPaper, PaperAnalysis, AuthorProfile, ModelDefinition, CitationStyle, ConnectedPaper, UserSettings } from '../types';
+import type { SemanticSpan, ResearchPaper, PaperAnalysis, AuthorProfile, ModelDefinition, CitationStyle, ConnectedPaper, UserSettings } from '../types';
 import { AddIcon } from './icons/AddIcon';
 import { PdfIcon } from './icons/PdfIcon';
 import { ScholarIcon } from './icons/ScholarIcon';
@@ -24,6 +24,7 @@ import { DatabaseIcon } from './icons/DatabaseIcon';
 import { EvidenceBoard } from './EvidenceBoard';
 import { mcpService } from '../services/mcpService';
 import * as apiService from '../services/apiService';
+import { passageHighlights } from '../services/embeddingService';
 import * as citationService from '../services/citationService';
 import * as scholarBridgeService from '../services/scholarBridgeService';
 import { LoadingSpinner } from './LoadingSpinner';
@@ -280,6 +281,19 @@ const PaperDetailsInner: React.FC<PaperDetailsProps> = (props) => {
 
     // MCP Sync State
     const [mcpSyncStatus, setMcpSyncStatus] = useState<'idle' | 'syncing' | 'synced' | 'error'>('idle');
+
+    // Passage-level matches are computed only for the paper that is open (one small /api/embed call),
+    // never for the whole result list.
+    const [passageMatches, setPassageMatches] = useState<SemanticSpan[]>([]);
+    useEffect(() => {
+        setPassageMatches([]);
+        if (!searchQuery.trim() || !paper.abstract) return;
+        const ac = new AbortController();
+        passageHighlights(paper, searchQuery, { signal: ac.signal })
+            .then(spans => { if (!ac.signal.aborted) setPassageMatches(spans); })
+            .catch(() => {});
+        return () => ac.abort();
+    }, [paper.id, paper.abstract, searchQuery]);
     const [mcpMessage, setMcpMessage] = useState<string | null>(null);
     const [auditRefreshKey, setAuditRefreshKey] = useState(0);
 
@@ -848,14 +862,14 @@ const PaperDetailsInner: React.FC<PaperDetailsProps> = (props) => {
                         </div>
 
                         {/* Semantic Hits (Passage Highlights) */}
-                        {paper.semanticHighlights && paper.semanticHighlights.length > 0 && (
+                        {passageMatches.length > 0 && (
                             <div className="bg-amber-50 border border-amber-100 p-4 rounded-xl shadow-sm">
                                 <h4 className="text-xs font-black uppercase tracking-widest text-amber-700 mb-3 flex items-center gap-2">
                                     <SparklesIcon className="w-4 h-4" />
-                                    Semantic Matches (Top Passages)
+                                    Passages closest to your search term
                                 </h4>
                                 <div className="space-y-3">
-                                    {paper.semanticHighlights.map((hit, idx) => (
+                                    {passageMatches.map((hit, idx) => (
                                         <div key={idx} className="p-3 bg-white rounded-lg border border-amber-200 text-sm text-foreground relative shadow-sm">
                                             <p className="leading-relaxed">"{hit.text}"</p>
                                             <div className="absolute top-0 right-0 -mt-2 -mr-2 bg-amber-100 text-amber-800 text-[10px] font-bold px-2 py-0.5 rounded-full border border-amber-200 shadow-sm">

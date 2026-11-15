@@ -319,13 +319,16 @@ export const calculatePaperScores = async (papers: ResearchPaper[], query: strin
   return embeddingService.calculatePaperScores(papers, query);
 };
 
-export const precomputeQueryEmbedding = async (query: string) => {
-    return embeddingService.precomputeQueryEmbedding(query);
-};
+/** Immediate keyword match (0-100) for every paper. */
+export const keywordScorePapers = (papers: ResearchPaper[], query: string) => embeddingService.keywordScorePapers(papers, query);
 
-export const computeScores = async (papers: ResearchPaper[], queryEmbedding: number[], queryFallback?: string) => {
-    return embeddingService.computeScores(papers, queryEmbedding, queryFallback);
-};
+/** Keyword match at once, then meaning + keyword match in place (see embeddingService.scoreProgressively). */
+export const scorePapersProgressively = (papers: ResearchPaper[], query: string, opts: embeddingService.ProgressiveScoringOptions) =>
+  embeddingService.scoreProgressively(papers, query, opts);
+
+/** Meaning + keyword match via the server's /api/embed; null when unavailable (keep the keyword scores). */
+export const semanticScorePapers = (papers: ResearchPaper[], query: string, opts?: embeddingService.SemanticScoreOptions) =>
+  embeddingService.semanticScorePapers(papers, query, opts);
 
 export const fetchMetadataByDOI = async (doi: string): Promise<Metadata> => {
     return metadataService.fetchMetadataByDOI(doi);

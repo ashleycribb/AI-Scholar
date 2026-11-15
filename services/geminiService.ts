@@ -151,7 +151,7 @@ export const extractKeywordsFromText = async (text: string): Promise<string[]> =
  * Generates a hypothetical answer (abstract) for the user's query.
  * This is used for HyDE (Hypothetical Document Embeddings).
  */
-export const generateHypotheticalAnswer = async (query: string): Promise<string> => {
+export const generateHypotheticalAnswer = async (query: string, opts: { retries?: number } = {}): Promise<string> => {
   const systemInstruction = `Act as an expert academic researcher. Generate a high-quality, dense hypothetical abstract for a peer-reviewed paper that provides a comprehensive answer to the user's research question.
 
 The abstract should:
@@ -167,7 +167,7 @@ The goal is to generate a document that is semantically similar to real relevant
       model: "gemini-3-flash-preview",
       contents: query,
       config: { systemInstruction },
-    }));
+    }), opts.retries ?? 5);
     return response.text || query; // Fallback to query if generation fails
   } catch (error) {
     console.error("Error generating hypothetical answer:", error);

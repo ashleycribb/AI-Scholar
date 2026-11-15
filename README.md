@@ -38,6 +38,24 @@ Optional server env: `GEMINI_PROXY_PER_CLIENT_PER_MIN` (default 60) and `GEMINI_
 (default 600) for generate, `GEMINI_PROXY_ALLOWED_ORIGINS` (comma-separated extra origins, e.g.
 `chrome-extension://<id>`; the extension also needs `chrome.storage.local.set({geminiProxyUrl: "https://<app-url>"})`).
 
+### Search-result scoring (`POST /api/embed`)
+
+Result cards show a **match to your search term** (never a quality rating) in two steps:
+1. **Keyword match** (BM25+, in the browser) on every card as soon as results arrive.
+2. **Meaning + keyword match**: one `POST /api/embed` call with the raw query and one text per paper
+   (title + abstract, first 2000 characters). The server embeds them with a local open model,
+   `BAAI/bge-small-en-v1.5` (384 dims, ~130 MB, `@huggingface/transformers` on ONNX Runtime), and the browser
+   computes cosine similarity fresh for every query. Cards upgrade in place; if the call fails, keyword scores stay.
+
+The server caches **paper vectors only** (model + DOI/OpenAlex id, re-embedded if the text changes); relevance is
+never cached. Passage highlights are computed only for the paper you open. HyDE query expansion (a Gemini-written
+hypothetical abstract) is off by default (`UserSettings.enableHydeQueryExpansion`) and never blocks scoring.
+
+Memory: about 380 MB RSS with the model loaded and a 50-paper batch embedded (`EMBED_LOCAL_BATCH=1`), so give the
+server at least 1 GiB. `EMBED_PROVIDER=gemini` switches back to `gemini-embedding-2-preview` through the server key.
+`scripts/bench-semantic-scoring.ts` times the 50-paper fixture; `scripts/calibrate-embeddings.ts` re-derives the
+score range after a model change (`MATCH_CALIBRATION` in `services/embeddingService.ts`).
+
 ### LLM provider layer (`server/llm/`)
 
 The proxy does not call Gemini directly. It calls an `LLMService`, which talks to providers through one

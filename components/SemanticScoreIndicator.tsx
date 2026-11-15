@@ -95,23 +95,23 @@ export const SemanticScoreIndicator: React.FC<SemanticScoreIndicatorProps> = ({
         if (roundedScore >= 80) {
             barColorClass = 'bg-indigo-600';
             textColorClass = 'text-indigo-700';
-            label = 'High Match';
+            label = 'Strong match';
         } else if (roundedScore >= 60) {
             barColorClass = 'bg-indigo-500';
             textColorClass = 'text-indigo-600';
-            label = 'Relevant';
+            label = 'Good match';
         } else if (roundedScore >= 40) {
             barColorClass = 'bg-blue-400';
             textColorClass = 'text-blue-600';
-            label = 'Possible Match';
+            label = 'Partial match';
         } else if (roundedScore > 10) {
             barColorClass = 'bg-slate-400';
             textColorClass = 'text-slate-600';
-            label = 'Low Match';
+            label = 'Weak match';
         } else {
             barColorClass = 'bg-slate-200';
             textColorClass = 'text-slate-400';
-            label = 'Low Relevance';
+            label = 'Little match';
         }
     }
 
@@ -120,16 +120,14 @@ export const SemanticScoreIndicator: React.FC<SemanticScoreIndicatorProps> = ({
             ? paper.scoreExplanation
             : buildPaperScoreExplanation(paper, searchQuery, paper.scoreExplanation?.method || 'Embedding similarity + keyword boost'))
         : {
-            method: 'Embedding similarity + keyword boost',
+            method: 'Match to your search term',
             matchedTerms: searchQuery
                 ? searchQuery.split(/\s+/).filter(t => t.length > 2).slice(0, 4).map(t => ({ term: t, locations: ['abstract'] }))
                 : [],
             topPassage: '',
             inputs: [
-                { label: 'Semantic similarity', value: isLoadingScore ? 'Calculating…' : `${roundedScore}%`, weight: '40%', isLoading: isLoadingScore },
-                { label: 'Keyword match', value: isLoadingScore ? 'Calculating…' : `${searchQuery ? 'Matched query terms' : '0.0 pts'}`, weight: '54%', isLoading: isLoadingScore },
-                { label: 'Recency', value: isLoadingScore ? 'Calculating…' : 'Computed from publication year', weight: '6%', isLoading: isLoadingScore },
-                { label: 'Citations', value: 'Calculating…', weight: 'Tie-breaker / sort', isLoading: true }
+                { label: 'Match to search term', value: isLoadingScore ? 'Calculating…' : `${roundedScore}%`, weight: '100%', isLoading: isLoadingScore },
+                { label: 'Citations, venue, recency', value: 'Not used: this is a match to your search term, not a quality rating', weight: '0%' }
             ]
         };
 
@@ -193,11 +191,19 @@ export const SemanticScoreIndicator: React.FC<SemanticScoreIndicatorProps> = ({
                         </div>
                     )
                 ) : (
-                    <div className="flex items-center gap-1.5" title="Relevance score based on semantic similarity, keyword match, and recency">
+                    <div
+                        className="flex items-center gap-1.5"
+                        title={paper?.scoreSource === 'keyword'
+                            ? 'Match to your search term (keywords so far; meaning match is being added). Not a quality rating.'
+                            : 'Match to your search term (meaning + keywords). Not a quality rating.'}
+                    >
                         <SparklesIcon className={`w-3.5 h-3.5 ${textColorClass}`} />
                         <span className={`text-[10px] font-black uppercase tracking-widest ${textColorClass}`}>
                             {roundedScore}% {label}
                         </span>
+                        {paper?.scoreSource === 'keyword' && (
+                            <span className="text-[9px] font-semibold text-slate-500 normal-case">keywords</span>
+                        )}
                     </div>
                 )}
 
@@ -215,7 +221,7 @@ export const SemanticScoreIndicator: React.FC<SemanticScoreIndicatorProps> = ({
                             setShowPopover(prev => !prev);
                         }}
                         className="inline-flex items-center gap-1 px-2 py-0.5 rounded border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-[10px] font-semibold transition-colors"
-                        title="Explain how this relevance score was computed"
+                        title="Explain how this match to your search term was computed"
                     >
                         <HelpCircle className="w-3 h-3 text-indigo-600" />
                         <span>Why this score</span>

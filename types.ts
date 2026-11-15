@@ -52,6 +52,9 @@ export interface UserSettings {
   isSerpApiEnabled?: boolean;
   // Snapshot Save Settings
   autoSaveSnapshot?: boolean;
+  // Search scoring: expand the query with a Gemini-written hypothetical abstract (HyDE) after the first
+  // scores are on screen. Off by default; never blocks scoring.
+  enableHydeQueryExpansion?: boolean;
   // Institutional & ORCID Researcher Identity
   orcidId?: string;
   departmentName?: string;
@@ -139,8 +142,10 @@ export interface ResearchPaper {
   pdfURL?: string;
   openalex_id?: string;
   citations?: number;
-  semanticScore?: number; // 0-100 score based on vector similarity
-  rawSemanticSimilarity?: number; // 0-100 normalized embedding/lexical similarity before rerank
+  semanticScore?: number; // 0-100 match to the search term (keyword match first, upgraded to meaning + keyword match). Never a quality rating.
+  scoreSource?: 'keyword' | 'semantic'; // which stage produced semanticScore
+  keywordMatch?: number; // 0-100 BM25+ keyword match to the search term
+  rawSemanticSimilarity?: number; // 0-100 calibrated embedding (meaning) match to the search term
   rawKeywordScore?: number; // 0-9 keyword/phrase/proximity/title points
   rawRecencyScore?: number; // 0-1 recency points
   semanticHighlights?: SemanticSpan[]; // Top matching passages

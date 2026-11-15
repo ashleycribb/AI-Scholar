@@ -208,7 +208,7 @@ export const PaperCard: React.FC<PaperCardProps> = ({ paper, isSelected, onSelec
                 <div className="mb-6 p-4 bg-slate-50 rounded-xl border border-slate-100 group-hover:bg-white group-hover:border-slate-200 transition-all">
                     <div className="flex items-center gap-2 mb-2">
                         <SparklesIcon className="w-3.5 h-3.5 text-slate-900" />
-                        <span className="micro-label">Relevance Insight</span>
+                        <span className="micro-label">Closest passage to your search</span>
                     </div>
                     <p className="text-sm text-slate-600 leading-relaxed">
                         "...<HighlightedText text={topHighlight.text} keywords={titleKeywords} />..."

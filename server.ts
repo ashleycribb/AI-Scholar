@@ -6,6 +6,8 @@ import fs from "fs";
 import { WebSocketServer } from "ws";
 import http from "http";
 import { createGeminiProxyRouter } from "./server/geminiProxy";
+import { createEmbedRouter, createEmbedderFromEnv } from "./server/embed/embedRoute";
+import { createLLMService } from "./server/llm";
 import { createLocalVerifyRouter } from "./server/localVerify";
 import { WorkspaceMcpServer } from "./services/mcp-server-impl";
 import { 
@@ -52,6 +54,18 @@ async function startServer() {
   // Gemini proxy: mounted before the global JSON parser and wildcard CORS below so it
   // enforces its own body limit and same-origin policy. The API key stays server-side.
   app.use("/api/gemini", createGeminiProxyRouter());
+
+  // Search-result embeddings (POST /api/embed): a local open model by default (EMBED_PROVIDER=local), so scoring
+  // never spends Gemini quota. Same-origin only, own rate limit and body cap. Loads the model in the background
+  // at startup so the first search does not wait for it (EMBED_WARMUP=0 to skip).
+  const embedder = createEmbedderFromEnv((process.env.EMBED_PROVIDER || "local").toLowerCase() === "gemini" ? createLLMService() : undefined);
+  app.use("/api/embed", createEmbedRouter({ embedder }));
+  if (process.env.EMBED_WARMUP !== "0" && "warmup" in embedder) {
+    const t0 = Date.now();
+    void (embedder as { warmup(): Promise<void> }).warmup()
+      .then(() => console.log(`[embed] ${embedder.model} ready in ${Date.now() - t0} ms`))
+      .catch(() => console.warn("[embed] model warmup failed; it will be retried on the first request"));
+  }
 
   // Email magic-link sign-in and server-side sessions. Mounted before the global JSON
   // parser and wildcard CORS so it applies its own body limits and stays same-origin only.
