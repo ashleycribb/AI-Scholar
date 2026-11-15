@@ -415,11 +415,12 @@ export async function putState(
   data: any,
   etag?: string | null,
   customCreds?: LrsCredentials
-): Promise<{ etag: string | null }> {
+): Promise<{ etag: string | null; skipped?: boolean }> {
   const creds = customCreds || await getLrsCredentials();
   if (!(await lrsAuthAvailable(creds))) {
-    // Skip LRS sync quietly when there is neither a configured service token nor (for this app's own server) a signed-in session
-    return { etag: null };
+    // Nothing is sent when there is neither a configured service token nor (for this app's own server) a signed-in
+    // session. `skipped` tells the caller nothing was saved, so it must not report the copy as saved.
+    return { etag: null, skipped: true };
   }
   const baseEndpoint = normalizeLrsEndpoint(creds.endpoint);
 
@@ -446,12 +447,7 @@ export async function putState(
     const newEtag = res.headers.get('ETag');
     return { etag: newEtag };
   } catch (err: any) {
-    if (err instanceof LrsError && (err.status === 401 || err.status === 403)) {
-      return { etag: null };
-    }
-    if (err?.status === 401 || err?.message?.includes('401')) {
-      return { etag: null };
-    }
+    // A refused save (401/403), a conflict (409) or a server error is not a save: the caller shows "Not saved".
     throw err;
   }
 }

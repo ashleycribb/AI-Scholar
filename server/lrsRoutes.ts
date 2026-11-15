@@ -11,10 +11,36 @@ import {
   getSqlLrsCount,
   getSqlLrsStatements,
   getXapiState,
+  insertSqlLrsStatements,
+  LrsWriteError,
   putXapiState,
   queryConformingStatements,
 } from "./lrsDatabase";
 import { clampLimit, readScopeFor, resolveDeleteTargets, scopedStateId, stateOwner } from "./lrsAccess";
+import { randomUUID } from "node:crypto";
+import type { Principal } from "./routePolicy";
+
+/** xAPI `authority`: who vouched for the statement, taken from the server-side session or service token. */
+export function authorityFor(p: Principal | undefined): Record<string, unknown> | null {
+  if (!p) return null;
+  if (p.kind === "session") return { objectType: "Agent", mbox: `mailto:${p.email.toLowerCase()}` };
+  return { objectType: "Agent", account: { homePage: "https://ashecribb.dev/xapi/service-tokens", name: `service:${p.name}` } };
+}
+
+/** Store statements or answer with an error. Never acknowledges a statement that was not written. */
+function storeOrFail(res: Response, statements: any[], principal: Principal | undefined): string[] | null {
+  try {
+    return insertSqlLrsStatements(statements, authorityFor(principal));
+  } catch (err: any) {
+    if (err instanceof LrsWriteError) {
+      res.status(err.status).json({ message: err.message, error: err.message });
+    } else {
+      console.error("[S3A LRS] Statement write failed:", err);
+      res.status(500).json({ message: "Statements were not stored (server storage error)", error: "statements_not_stored" });
+    }
+    return null;
+  }
+}
 
 export function registerLrsRoutes(app: Express): void {
   // --- Authoritative S3A LRS xAPI 1.0.3 Protocol Endpoints ---
@@ -63,11 +89,13 @@ export function registerLrsRoutes(app: Express): void {
         }
       }
 
-      // Consolidate storage on S3A as single source of truth (no SQLite or DuckDB writes)
-      storedIds.push(stmt.id);
     }
 
-    console.log(`[S3A LRS] Acknowledged ${storedIds.length} statements via xAPI 1.0.3 (S3A authoritative)`);
+    // Append-only, all-or-nothing write to the server statement log; ids are returned only after it commits.
+    const ids = storeOrFail(res, statements, (req as any).principal);
+    if (!ids) return;
+    storedIds.push(...ids);
+    console.log(`[S3A LRS] Stored ${storedIds.length} statements via xAPI 1.0.3`);
     res.status(200).json(storedIds);
   });
 
@@ -127,7 +155,13 @@ export function registerLrsRoutes(app: Express): void {
     }
     // State documents are per user: one signed-in user cannot read or overwrite another's.
     const ifMatch = req.headers["if-match"] as string | undefined;
-    const result = putXapiState(activityId, scopedStateId(owner, stateId), req.body, ifMatch);
+    let result: { etag: string; conflict?: boolean };
+    try {
+      result = putXapiState(activityId, scopedStateId(owner, stateId), req.body, ifMatch);
+    } catch (err) {
+      console.error("[xAPI State] Save failed:", err);
+      return res.status(500).json({ message: "State document was not saved (server storage error)", error: "state_not_saved" });
+    }
 
     if (result.conflict) {
       return res.status(409).json({ message: "State conflict: ETag mismatch" });
@@ -231,10 +265,10 @@ export function registerLrsRoutes(app: Express): void {
     if (!stmt || !stmt.actor || !stmt.verb || !stmt.object) {
       return res.status(400).json({ error: "Invalid xAPI statement format." });
     }
-    stmt.stored = new Date().toISOString();
-    stmt.lrsTarget = "s3a-snapshot";
-    // S3A snapshot is single source of truth; SQLite writes removed
-    res.status(201).json({ status: "success", id: stmt.id, lrs: "s3a-snapshot", note: "S3A snapshot is single source of truth" });
+    // Same append-only log as POST /xapi/statements; the LRS assigns an id when the client sent none (xAPI allows this).
+    const ids = storeOrFail(res, [{ ...stmt, id: stmt.id || randomUUID() }], (req as any).principal);
+    if (!ids) return;
+    res.status(201).json({ status: "stored", id: ids[0], lrs: "sql-lrs" });
   });
 
   // DuckDB Optional Read-Only Analytics Export
@@ -278,10 +312,10 @@ export function registerLrsRoutes(app: Express): void {
     if (!stmt || !stmt.actor || !stmt.verb || !stmt.object) {
       return res.status(400).json({ error: "Invalid xAPI statement format." });
     }
-    stmt.stored = new Date().toISOString();
-    stmt.lrsTarget = "s3a-snapshot";
-    // S3A snapshot is single source of truth; DuckDB writes removed
-    res.status(201).json({ status: "success", id: stmt.id, lrs: "s3a-snapshot", sessionUuid: stmt.context?.sessionUuid });
+    // DuckDB is a read-only analytics copy; writes go to the same append-only SQLite statement log.
+    const ids = storeOrFail(res, [{ ...stmt, id: stmt.id || randomUUID() }], (req as any).principal);
+    if (!ids) return;
+    res.status(201).json({ status: "stored", id: ids[0], lrs: "sql-lrs", sessionUuid: stmt.context?.sessionUuid });
   });
 
 }

@@ -37,6 +37,7 @@ import {
 } from './s3aOutboxService';
 
 import { getStatements } from './lrsClient';
+import { reportFailed, reportSaved } from './saveStatus';
 import { authService, generateUuidV7 } from './authService';
 import { 
   getResearchLoggingConsent, 
@@ -537,13 +538,21 @@ async function persistSnapshotToIdb(bytes: Uint8Array, uuidHex: string): Promise
     store.put(bytes, IDB_KEY);
     store.put(uuidHex, IDB_UUID_KEY);
     store.put({ humanSteps, aiSteps, papersCount, isOfflineCopy, dataSource, totalStatementsCount, unmappedVerbsCount, recent5Statements, verbResolutionLog }, 'metadata');
-    return new Promise((resolve, reject) => {
-      tx.oncomplete = () => resolve();
-      tx.onerror = () => reject(tx.error);
-    });
+    await txDone(tx);
+    reportSaved('session-cache');
   } catch (e) {
     console.warn('[S3A WASM] Failed to persist offline cache to IndexedDB:', e);
+    reportFailed('session-cache', 'The S3A session could not be written to this browser\'s storage.', () => { void persistSnapshotToIdb(bytes, uuidHex); });
   }
+}
+
+/** Resolves when an IndexedDB transaction commits; rejects on error or abort (e.g. quota exceeded). */
+function txDone(tx: IDBTransaction): Promise<void> {
+  return new Promise((resolve, reject) => {
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+    tx.onabort = () => reject(tx.error || new Error('IndexedDB transaction aborted'));
+  });
 }
 
 export async function saveSnapshotToIdbBySessionId(
@@ -572,12 +581,11 @@ export async function saveSnapshotToIdbBySessionId(
     };
     store.put(mergedMeta, `meta_${sessionId}`);
     store.put(mergedMeta, 'metadata');
-    return new Promise((resolve, reject) => {
-      tx.oncomplete = () => resolve();
-      tx.onerror = () => reject(tx.error);
-    });
+    await txDone(tx);
+    reportSaved('session-cache');
   } catch (e) {
     console.warn('[S3A WASM] Failed to save snapshot under session ID to IndexedDB:', e);
+    reportFailed('session-cache', 'The S3A session could not be written to this browser\'s storage.', () => { void saveSnapshotToIdbBySessionId(sessionId, bytes, meta); });
   }
 }
 
