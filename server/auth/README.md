@@ -94,7 +94,7 @@ caller as `req.principal` (`{ kind: "session", email, role }` or `{ kind: "servi
 | GET | `/api/sources/registry` | public | Approved/discovered sources, approval tokens removed |
 | GET,POST | `/api/sources/approve-token` | public | Emailed approval link: the single-use token is the credential |
 | POST | `/api/library-mcp/prospectus` | public | Pure document generator, stores nothing |
-| POST | `/xapi/statements` | any signed-in · token `xapi:write` | Write statements (acknowledge only today) |
+| POST | `/xapi/statements` | any signed-in · token `xapi:write` | Write statements (append-only SQLite log) |
 | GET | `/xapi/statements` | any signed-in · token `xapi:read` | Read statements; participants see only their own |
 | GET | `/xapi/activities/state` | any signed-in · token `xapi:read` | State document, namespaced per user |
 | PUT | `/xapi/activities/state` | any signed-in · token `xapi:write` | State document, namespaced per user |
@@ -106,9 +106,9 @@ caller as `req.principal` (`{ kind: "session", email, role }` or `{ kind: "servi
 | GET | `/xapi/**` | public | Static xAPI profile/schema JSON from public/xapi (after the dynamic routes above) |
 | GET | `/api/lrs/status` | any signed-in | Counts and engine info |
 | GET | `/api/lrs/sql-lrs/statements` | any signed-in · token `xapi:read` | Scope from the session role; ?role= and ?userName= are ignored |
-| POST | `/api/lrs/sql-lrs/statements` | any signed-in · token `xapi:write` | Write a statement (acknowledge only today) |
+| POST | `/api/lrs/sql-lrs/statements` | any signed-in · token `xapi:write` | Write a statement (append-only SQLite log) |
 | GET | `/api/lrs/duckdb-lrs/statements` | any signed-in · token `xapi:read` | Scope from the session role; participants must name a sessionUuid |
-| POST | `/api/lrs/duckdb-lrs/statements` | any signed-in · token `xapi:write` | Write a statement (acknowledge only today) |
+| POST | `/api/lrs/duckdb-lrs/statements` | any signed-in · token `xapi:write` | Write a statement (append-only SQLite log) |
 | GET | `/api/analytics/duckdb-export` | researcher / committee (+admin) | Full analytics export |
 | POST | `/api/provenance/**` | researcher / committee (+admin) | Record claims / evidence |
 | GET | `/api/provenance/**` | researcher / committee (+admin) | Claim provenance and research graph |

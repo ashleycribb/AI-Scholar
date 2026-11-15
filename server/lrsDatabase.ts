@@ -40,7 +40,50 @@ const SCHEMA_SQL = `
     updated_at TEXT,
     PRIMARY KEY (activity_id, state_id)
   );
+
+  -- Statements are append-only: once stored they are never edited in place (xAPI 1.0.3 statement immutability).
+  -- "Delete my data" may still remove a person's rows.
+  CREATE TRIGGER IF NOT EXISTS xapi_statements_append_only
+  BEFORE UPDATE ON xapi_statements
+  BEGIN
+    SELECT RAISE(ABORT, 'xapi_statements is append-only');
+  END;
 `;
+
+/** A write the LRS refused or could not complete. `status` is the HTTP status the route should answer with. */
+export class LrsWriteError extends Error {
+  readonly status: number;
+  constructor(status: number, message: string) {
+    super(message);
+    this.name = 'LrsWriteError';
+    this.status = status;
+  }
+}
+
+/** JSON with object keys sorted, so two equal statements compare equal regardless of key order. */
+function canonicalJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
+  if (value && typeof value === 'object') {
+    const obj = value as Record<string, unknown>;
+    return `{${Object.keys(obj).sort().filter(k => obj[k] !== undefined).map(k => `${JSON.stringify(k)}:${canonicalJson(obj[k])}`).join(',')}}`;
+  }
+  return JSON.stringify(value);
+}
+
+/** The part of a statement the client controls: `stored` and `authority` are set by the LRS. */
+function statementIdentity(stmt: any): string {
+  const { stored: _s, authority: _a, ...rest } = stmt || {};
+  return canonicalJson(rest);
+}
+
+const ISO_TIMESTAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})$/;
+
+/** UTC ISO-8601 with a Z, or null when the value is not a usable timestamp. */
+export function toUtcIso(value: unknown): string | null {
+  if (typeof value !== 'string' || !ISO_TIMESTAMP.test(value)) return null;
+  const t = Date.parse(value);
+  return Number.isFinite(t) ? new Date(t).toISOString() : null;
+}
 
 /** Matches one actor identifier exactly (no wildcards): column values or the actor fields inside the stored payload. */
 const ACTOR_MATCH_SQL = `(
@@ -49,8 +92,9 @@ const ACTOR_MATCH_SQL = `(
   OR (CASE WHEN json_valid(payload) THEN LOWER(json_extract(payload, '$.actor.mbox')) END) = LOWER(?)
   OR (CASE WHEN json_valid(payload) THEN LOWER(json_extract(payload, '$.actor.name')) END) = LOWER(?)
   OR (CASE WHEN json_valid(payload) THEN LOWER(json_extract(payload, '$.actor.account.name')) END) = LOWER(?)
+  OR (CASE WHEN json_valid(payload) THEN LOWER(json_extract(payload, '$.authority.mbox')) END) = LOWER(?)
 )`;
-const actorMatchParams = (actor: string) => [actor, actor, actor, actor, actor];
+const actorMatchParams = (actor: string) => [actor, actor, actor, actor, actor, actor];
 const matchAny = (actors: string[]) => ({
   sql: actors.map(() => ACTOR_MATCH_SQL).join(' OR '),
   params: actors.flatMap(actorMatchParams),
@@ -70,7 +114,69 @@ export class SqlLrsStore {
   readonly db: DatabaseSync;
   constructor(db: DatabaseSync) {
     this.db = db;
+    // Durable writes: WAL plus a full fsync on commit, so an acknowledged statement survives a crash.
+    try { this.db.exec(`PRAGMA journal_mode = WAL; PRAGMA synchronous = FULL;`); } catch { /* :memory: databases ignore WAL */ }
     this.db.exec(SCHEMA_SQL);
+  }
+
+  /**
+   * Stores statements append-only, all or nothing, and returns their ids in order.
+   * A repeated id with the same content is accepted without writing it again (idempotent retry);
+   * a repeated id with different content is a 409 conflict. Any database failure throws, so the
+   * route can answer with an error instead of acknowledging statements it did not keep.
+   */
+  insertStatements(statements: any[], authority: Record<string, unknown> | null, now: Date = new Date()): string[] {
+    const stored = now.toISOString();
+    const select = this.db.prepare(`SELECT payload FROM xapi_statements WHERE id = ?`);
+    const insert = this.db.prepare(`
+      INSERT INTO xapi_statements (id, timestamp, stored, actor_name, actor_mbox, verb_id, verb_name, object_id, object_name, payload)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+    const ids: string[] = [];
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      for (const raw of statements) {
+        const id = String(raw.id);
+        const existing = select.get(id) as { payload: string } | undefined;
+        if (existing) {
+          let same = false;
+          try {
+            const prev = JSON.parse(existing.payload);
+            // A statement sent without a timestamp got the stored time; compare against that, not a missing field.
+            const incoming = { ...raw, timestamp: raw.timestamp === undefined ? prev.timestamp : toUtcIso(raw.timestamp) };
+            same = statementIdentity(prev) === statementIdentity(incoming);
+          } catch { same = false; }
+          if (!same) throw new LrsWriteError(409, `Statement ${id} already exists with different content`);
+          ids.push(id);
+          continue;
+        }
+        const timestamp = raw.timestamp === undefined ? stored : toUtcIso(raw.timestamp);
+        if (!timestamp) throw new LrsWriteError(400, `Statement ${id} has an invalid timestamp`);
+        const stmt = { ...raw, timestamp, stored, ...(authority ? { authority } : {}) };
+        const display = stmt.verb?.display;
+        const verbName = typeof display === 'string' ? display : (display && typeof display === 'object' ? String(Object.values(display)[0] ?? '') : '');
+        const objName = stmt.object?.definition?.name;
+        const objectName = typeof objName === 'string' ? objName : (objName && typeof objName === 'object' ? String(Object.values(objName)[0] ?? '') : '');
+        insert.run(
+          id,
+          timestamp,
+          stored,
+          stmt.actor?.name ?? stmt.actor?.account?.name ?? null,
+          stmt.actor?.mbox ?? null,
+          stmt.verb?.id ?? null,
+          verbName || null,
+          stmt.object?.id ?? null,
+          objectName || null,
+          JSON.stringify(stmt),
+        );
+        ids.push(id);
+      }
+      this.db.exec('COMMIT');
+    } catch (err) {
+      try { this.db.exec('ROLLBACK'); } catch { /* already rolled back */ }
+      throw err;
+    }
+    return ids;
   }
 
   getStatements(filter: { limit?: number; actor?: string; scope: LrsScope }): any[] {
@@ -127,8 +233,9 @@ export class SqlLrsStore {
     }
   }
 
+  /** Saves a state document. Throws on any database failure: there is no made-up ETag for a write that did not happen. */
   putState(activityId: string, stateId: string, data: any, ifMatch?: string | null): { etag: string; conflict?: boolean } {
-    try {
+    {
       const existing = this.db.prepare(`SELECT etag FROM xapi_states WHERE activity_id = ? AND state_id = ?`).get(activityId, stateId) as { etag: string } | undefined;
       if (ifMatch && existing && existing.etag !== ifMatch) {
         return { etag: existing.etag, conflict: true };
@@ -139,9 +246,6 @@ export class SqlLrsStore {
         VALUES (?, ?, ?, ?, ?)
       `).run(activityId, stateId, newEtag, JSON.stringify(data), new Date().toISOString());
       return { etag: newEtag };
-    } catch (err) {
-      console.error('[xAPI State] Error putting state:', err);
-      return { etag: `"${Date.now()}"` };
     }
   }
 
@@ -193,9 +297,12 @@ export function useSqlLrsStore(store: SqlLrsStore | null): SqlLrsStore | null {
   return previous;
 }
 
-export function insertSqlLrsStatement(_stmt: any): void {
-  // S3A WASM Snapshot is the single source of truth.
-  // SQLite statement writing is disabled to consolidate storage on S3A.
+/**
+ * Appends statements to the server's statement log (SQLite, durable). Throws LrsWriteError (409/400) or the
+ * database error; callers must turn a throw into an error response, never an acknowledgement.
+ */
+export function insertSqlLrsStatements(statements: any[], authority: Record<string, unknown> | null): string[] {
+  return sqlLrs().insertStatements(statements, authority);
 }
 
 /**
@@ -285,12 +392,6 @@ function deleteDuckDbByActors(actors: string[]): void {
   } catch (err: any) {
     console.warn('[DuckDB Analytics] Delete by actor failed:', err?.message);
   }
-}
-
-export function insertDuckDbStatement(_stmt: any): Promise<void> {
-  // S3A WASM Snapshot is the single source of truth.
-  // DuckDB writes are removed to consolidate storage on S3A.
-  return Promise.resolve();
 }
 
 export function getDuckDbStatements(filter: {

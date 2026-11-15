@@ -63,7 +63,7 @@ export const ROUTE_POLICY: Rule[] = [
   pub("library-prospectus", ["POST"], "/api/library-mcp/prospectus", "Pure document generator, stores nothing"),
 
   // --- xAPI / LRS ---
-  signedIn("xapi-statements-post", ["POST"], "/xapi/statements", ANY, "xapi:write", "Write statements (acknowledge only today)"),
+  signedIn("xapi-statements-post", ["POST"], "/xapi/statements", ANY, "xapi:write", "Write statements (append-only SQLite log)"),
   signedIn("xapi-statements-get", ["GET"], "/xapi/statements", ANY, "xapi:read", "Read statements; participants see only their own"),
   signedIn("xapi-state-get", ["GET"], "/xapi/activities/state", ANY, "xapi:read", "State document, namespaced per user"),
   signedIn("xapi-state-put", ["PUT"], "/xapi/activities/state", ANY, "xapi:write", "State document, namespaced per user"),
@@ -75,9 +75,9 @@ export const ROUTE_POLICY: Rule[] = [
   pub("xapi-static", ["GET"], "/xapi/**", "Static xAPI profile/schema JSON from public/xapi (after the dynamic routes above)"),
   signedIn("lrs-status", ["GET"], "/api/lrs/status", ANY, undefined, "Counts and engine info"),
   signedIn("lrs-sql-get", ["GET"], "/api/lrs/sql-lrs/statements", ANY, "xapi:read", "Scope from the session role; ?role= and ?userName= are ignored"),
-  signedIn("lrs-sql-post", ["POST"], "/api/lrs/sql-lrs/statements", ANY, "xapi:write", "Write a statement (acknowledge only today)"),
+  signedIn("lrs-sql-post", ["POST"], "/api/lrs/sql-lrs/statements", ANY, "xapi:write", "Write a statement (append-only SQLite log)"),
   signedIn("lrs-duck-get", ["GET"], "/api/lrs/duckdb-lrs/statements", ANY, "xapi:read", "Scope from the session role; participants must name a sessionUuid"),
-  signedIn("lrs-duck-post", ["POST"], "/api/lrs/duckdb-lrs/statements", ANY, "xapi:write", "Write a statement (acknowledge only today)"),
+  signedIn("lrs-duck-post", ["POST"], "/api/lrs/duckdb-lrs/statements", ANY, "xapi:write", "Write a statement (append-only SQLite log)"),
   signedIn("analytics-export", ["GET"], "/api/analytics/duckdb-export", RESEARCH_STAFF, undefined, "Full analytics export"),
 
   // --- research data ---

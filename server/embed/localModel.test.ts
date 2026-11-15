@@ -1,7 +1,7 @@
 /**
  * The real local model (BAAI/bge-small-en-v1.5 via @huggingface/transformers) end to end through POST /api/embed,
  * on 50 real OpenAlex abstracts. The first run downloads the model (~130 MB) to EMBED_MODEL_CACHE_DIR or the
- * transformers cache; model load is excluded from the timing. Set SKIP_LOCAL_MODEL_TESTS=1 to skip offline.
+ * transformers cache; model load and the first (warm-up) inference are excluded from the timing. Set SKIP_LOCAL_MODEL_TESTS=1 to skip offline.
  */
 import { test, expect, describe, beforeAll, afterAll } from "bun:test";
 import express from "express";
@@ -23,6 +23,10 @@ describe.skipIf(skip)("local embedding model", () => {
   beforeAll(async () => {
     const embedder = createLocalEmbedder();
     await embedder.warmup(); // download + load, not timed
+    // Warm the inference path too (ONNX Runtime allocates and optimizes on the first run). Called on the embedder
+    // directly with unrelated text, so the route's embedding cache stays cold for the 50 fixture papers below.
+    await embedder.embed(["warm-up passage about unrelated weather patterns", "a second warm-up passage"], "passage");
+    await embedder.embed(["warm-up query"], "query");
     const app = express();
     app.use("/api/embed", createEmbedRouter({ embedder }));
     await new Promise<void>(r => { const srv = app.listen(0, "127.0.0.1", () => { url = `http://127.0.0.1:${(srv.address() as AddressInfo).port}`; close = () => srv.close(); r(); }); });

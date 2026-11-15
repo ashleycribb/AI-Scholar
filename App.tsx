@@ -33,6 +33,9 @@ import { Header } from './components/Header';
 import { InitialSearchScreen } from './components/InitialSearchScreen';
 import { SearchForm } from './components/SearchForm';
 import { ResearcherWorkspace } from './components/ResearcherWorkspace';
+import { SaveStatusBanner } from './components/SaveStatusBanner';
+import { reportFailed } from './services/saveStatus';
+import { saveAccountCopy, saveQueueChanges } from './services/workspaceSaves';
 import { appendWorkspaceRecords, diffQueue, loadWorkspace, requestPersistentStorage, snapshotPaper } from './services/localWorkspaceLog';
 import { ExportSnapshotModal } from './components/ExportSnapshotModal';
 import { ResultsDisplay } from './components/ResultsDisplay';
@@ -374,22 +377,22 @@ const App: React.FC = () => {
   // Append queue changes to the local log, one write at a time. The recorded
   // baseline only advances after IndexedDB confirms, so a failed write is
   // retried with the next change instead of being silently dropped.
-  useEffect(() => {
-    if (!localQueueReady) return;
+  // A failure shows "Not saved" + Retry (components/SaveStatusBanner.tsx) until a write confirms.
+  const flushQueueToLocalLog = useCallback(() => {
     queueWriteChainRef.current = queueWriteChainRef.current.then(async () => {
       const target = latestQueueRef.current;
-      const entries = diffQueue(recordedQueueRef.current, target);
-      if (entries.length === 0) return;
-      try {
-        await appendWorkspaceRecords(entries);
+      const written = await saveQueueChanges(recordedQueueRef.current, target, () => flushQueueToLocalLog());
+      if (written) {
         recordedQueueRef.current = target;
-        localRecordCountRef.current += entries.length;
-      } catch (err) {
-        console.warn('[Local queue] Save failed:', err);
-        setToastMessage('Not saved: the selection queue change could not be saved on this computer.');
+        localRecordCountRef.current += written;
       }
     });
-  }, [workspacePapers, localQueueReady]);
+  }, []);
+
+  useEffect(() => {
+    if (!localQueueReady) return;
+    flushQueueToLocalLog();
+  }, [workspacePapers, localQueueReady, flushQueueToLocalLog]);
 
   // --- S3A LRS WORKSPACE DOCUMENT STATE (secondary copy for signed-in users; ETag & Debounced 2s PUT) ---
   const workspaceEtagRef = useRef<string | null>(null);
@@ -425,7 +428,7 @@ const App: React.FC = () => {
                 localRecordCountRef.current += toImport.length;
               } catch (err) {
                 console.warn('[Local queue] Could not save the server copy on this computer:', err);
-                setToastMessage('Not saved: papers restored from your account could not be saved on this computer.');
+                reportFailed('local-queue', 'Papers restored from your account could not be written to this browser\'s storage.', () => flushQueueToLocalLog());
               }
               // Restaged from the server copy: not a new inclusion decision.
               toImport.forEach(p => stagePaperInS3ASession(p, { recordInclusionStatement: false }));
@@ -446,30 +449,27 @@ const App: React.FC = () => {
       });
   }, [user, localQueueReady]);
 
+  // Save the account copy (server state document). Only a confirmed 2xx counts as saved; a refusal, conflict or
+  // server error shows "Not saved" + Retry. Retry after a conflict re-reads the current ETag first: this computer's
+  // queue is the source of truth, the server holds a copy of it.
+  const latestProjectsRef = useRef(projects);
+  latestProjectsRef.current = projects;
+  const saveServerCopy = useCallback(async (opts: { refreshEtag?: boolean } = {}) => {
+    const res = await saveAccountCopy(
+      { papers: latestQueueRef.current, projects: latestProjectsRef.current },
+      workspaceEtagRef.current,
+      { refreshEtag: opts.refreshEtag, onRetry: refreshEtag => { saveServerCopy({ refreshEtag }); } },
+    );
+    if (res.state === 'saved') workspaceEtagRef.current = res.etag;
+  }, []);
+
   // Save workspace layout with putState after changes (debounced 2s)
   useEffect(() => {
     if (!user || isInitialWorkspaceLoadRef.current) return;
     if (workspaceDebounceTimerRef.current) {
       clearTimeout(workspaceDebounceTimerRef.current);
     }
-    workspaceDebounceTimerRef.current = setTimeout(() => {
-      const payload = {
-        papers: workspacePapers,
-        projects,
-        lastModified: new Date().toISOString()
-      };
-      putState(SCHOLAR_WORKSPACE_ACTIVITY_ID, SCHOLAR_WORKSPACE_STATE_ID, payload, workspaceEtagRef.current)
-        .then(res => {
-          if (res && res.etag) {
-            workspaceEtagRef.current = res.etag;
-          }
-        })
-        .catch(err => {
-          if (err?.status !== 401 && !err?.message?.includes('401')) {
-            console.warn('[Workspace LRS State] Save warning:', err);
-          }
-        });
-    }, 2000);
+    workspaceDebounceTimerRef.current = setTimeout(() => { saveServerCopy(); }, 2000);
 
     return () => {
       if (workspaceDebounceTimerRef.current) {
@@ -2711,6 +2711,7 @@ const App: React.FC = () => {
         />
 
         <Toast message={toastMessage} onClose={() => setToastMessage(null)} />
+        <SaveStatusBanner />
 
         <S3AInspectorModal
             isOpen={showS3AInspector}
