@@ -1603,30 +1603,30 @@ function updateRecentStatements(stmt: S3AStatement) {
 // emitStatement(verb, object, extras)
 // -------------------------------------------------------------
 
+/** A verb the S3A engine does not know. Thrown, never silently mapped to another verb. */
+export class UnknownVerbError extends Error {
+  readonly verb: string;
+  constructor(verb: string) {
+    super(`Unknown xAPI verb "${verb}": not in the S3A engine verb table; nothing was recorded`);
+    this.name = 'UnknownVerbError';
+    this.verb = verb;
+  }
+}
+
 export async function emitStatement(
   verb: string,
   object: S3AStatementObject,
   extras?: S3AStatementExtras
 ): Promise<string> {
-  // 1. Consent is optional and never gates features.
-  // Without consent, or if recording is inactive, no research-log statements are written for either the human or the AI.
-  const consented = await getResearchLoggingConsent();
-  const active = await isRecordingActive();
-  if (!consented || !active) {
-    return '';
-  }
-
+  // 1. Every verb must resolve through the engine's own verb table (verb_id_for_iri). An unknown verb is a bug in
+  //    the caller: it throws instead of being recorded as something it is not (it used to become 'experienced').
+  //    Checked before the consent gate so a wrong verb fails in every session, not only in consented ones.
   await initS3AWasm();
-  const session = getDualSessionState();
-
-  // 2. AI steps use ai-answered only
   const actorType: 'human' | 'agent' = extras?.actor === 'agent' ? 'agent' : 'human';
   let verbToResolve = verb;
   if (actorType === 'agent' || verb === 'answered') {
     verbToResolve = 'ai-answered';
   }
-
-  // 3. Remove fallback mapping: every verb must resolve through verb_id_for_iri
   let rawVerbId: number | undefined;
   try {
     rawVerbId = verb_id_for_iri(verbToResolve);
@@ -1636,19 +1636,26 @@ export async function emitStatement(
   } catch {
     rawVerbId = undefined;
   }
-
-
-  let resolvedVerbId: number;
-  let wasMapped: boolean;
-
-  if (rawVerbId !== undefined && rawVerbId >= 1 && rawVerbId <= 23) {
-    resolvedVerbId = rawVerbId;
-    wasMapped = true;
-  } else {
-    wasMapped = false;
+  if (rawVerbId === undefined || rawVerbId < 1 || rawVerbId > 23) {
     unmappedVerbsCount++;
-    resolvedVerbId = 1;
+    logVerbResolution({ verb, initialIri: '', verbId: -1, wasmVerbName: '', wasmIri: '', wasMapped: false, originalVerb: verb, timestamp: new Date().toISOString() });
+    const err = new UnknownVerbError(verb);
+    console.error('[S3A WASM]', err.message);
+    throw err;
   }
+  const resolvedVerbId: number = rawVerbId;
+  const wasMapped = true;
+
+  // 2. Study tracking only. Consent never gates the researcher's own records: selections, keep/drop decisions and
+  //    notes are kept in the local workspace log (services/localWorkspaceLog.ts) whether or not consent is given.
+  //    Without consent, or if recording is inactive, no research-log statements are written for the human or the AI.
+  const consented = await getResearchLoggingConsent();
+  const active = await isRecordingActive();
+  if (!consented || !active) {
+    return '';
+  }
+
+  const session = getDualSessionState();
 
   let wasmIri = '';
   try {
