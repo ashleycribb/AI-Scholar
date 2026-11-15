@@ -3,6 +3,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { canonicalWorkId } from '../utils/workIds';
 import type { GoldStandardPaper, UserStudyData, ResearchPaper, VerificationResult } from '../types';
 import * as verificationService from '../services/verificationService';
+import { formatVacs } from '../utils/verificationDisplay';
 import { LoadingSpinner } from './LoadingSpinner';
 import { VerificationModal } from './VerificationModal'; // Re-using parts of this for display
 
@@ -131,7 +132,7 @@ export const EvaluationMode: React.FC<EvaluationModeProps> = ({ dataset, onCompl
                         <div className="flex justify-between items-center bg-muted/50 p-4 rounded-lg border">
                             <div><h3 className="text-lg font-bold text-foreground">VACS Result</h3></div>
                             <div className="text-right">
-                                <div className={`text-4xl font-bold ${ vacsResult.verdict === 'Verified' ? 'text-green-600' : 'text-yellow-600'}`}>{vacsResult.vacs}</div>
+                                <div className={`text-4xl font-bold ${ vacsResult.verdict === 'Verified' ? 'text-green-600' : 'text-yellow-600'}`}>{formatVacs(vacsResult.vacs)}</div>
                             </div>
                         </div>
                     </div>

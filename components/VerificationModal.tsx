@@ -5,6 +5,7 @@ import { ErrorMessage } from './ErrorMessage';
 import { LoadingSpinner } from './LoadingSpinner';
 import { ShieldCheckIcon } from './icons/ShieldCheckIcon';
 import * as verificationService from '../services/verificationService';
+import { formatPercentScore, formatVacs, isKnownScore } from '../utils/verificationDisplay';
 
 interface VerificationModalProps {
   isOpen: boolean;
@@ -27,18 +28,75 @@ const VerdictDisplay: React.FC<{ verdict: VerificationResult['verdict'] }> = ({ 
     );
 };
 
-const BreakdownBar: React.FC<{ label: string; score: number }> = ({ label, score }) => {
-    const percentage = Math.round(score * 100);
+export const BreakdownBar: React.FC<{ label: string; score: number | null | undefined }> = ({ label, score }) => {
+    const available = isKnownScore(score);
+    const percentage = available ? Math.round(score * 100) : null;
     return (
         <div>
             <div className="flex justify-between items-center mb-1">
                 <span className="text-sm font-medium text-foreground">{label}</span>
-                <span className="text-sm font-bold text-primary">{percentage}%</span>
+                <span className="text-sm font-bold text-primary">{formatPercentScore(score)}</span>
             </div>
             <div className="w-full bg-muted rounded-full h-2.5">
-                <div className="bg-primary h-2.5 rounded-full" style={{ width: `${percentage}%` }}></div>
+                {available ? <div className="bg-primary h-2.5 rounded-full" style={{ width: `${percentage}%` }}></div> : null}
             </div>
         </div>
+    );
+};
+
+/** Result body extracted so tests can render unknown counts as 'Not available'. */
+export const VerificationResultView: React.FC<{ result: VerificationResult }> = ({ result }) => {
+    return (
+                 <div className="space-y-6">
+                    <div className="flex justify-between items-center bg-muted/50 p-4 rounded-lg border">
+                        <div>
+                            <h3 className="text-lg font-bold text-foreground">Verification Complete</h3>
+                            <p className="text-sm text-muted-foreground">VACS (Veracity, Accuracy, Credibility Score)</p>
+                        </div>
+                        <div className="text-right">
+                             <div className={`text-4xl font-bold ${
+                                result.verdict === 'Verified' ? 'text-green-600' :
+                                result.verdict === 'Questionable' ? 'text-red-600' :
+                                'text-yellow-600'
+                            }`}>{formatVacs(result.vacs)}</div>
+                            <VerdictDisplay verdict={result.verdict} />
+                        </div>
+                    </div>
+
+                    <div>
+                        <h4 className="font-semibold text-foreground mb-3">Score Breakdown</h4>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <BreakdownBar label="Credibility" score={result.breakdown.credibility} />
+                            <BreakdownBar label="Evidence" score={result.breakdown.evidence} />
+                            <BreakdownBar label="Reproducibility" score={result.breakdown.reproducibility} />
+                            <BreakdownBar label="Citation Context" score={result.breakdown.citations} />
+                            <BreakdownBar label="Temporal" score={result.breakdown.temporal} />
+                        </div>
+                    </div>
+                    
+                    <div>
+                        <h4 className="font-semibold text-foreground mb-2">Rationale</h4>
+                        <ul className="list-disc list-inside space-y-1 text-sm text-muted-foreground">
+                            {result.rationale.map((item, i) => <li key={i}>{item}</li>)}
+                        </ul>
+                    </div>
+
+                    {result.evidence.length > 0 && (
+                         <div>
+                            <h4 className="font-semibold text-foreground mb-2">Supporting Evidence Found</h4>
+                            <div className="space-y-3 max-h-48 overflow-y-auto pr-2">
+                                {result.evidence.map((span, i) => (
+                                    <blockquote key={i} className="border-l-4 border-primary bg-primary/10 p-3 rounded-r-lg">
+                                        <p className="text-sm text-foreground italic">"{span.passage}"</p>
+                                        <cite className="text-xs text-primary/80 block mt-2 not-italic">
+                                            Source Confidence: {formatPercentScore(span.score)}
+                                        </cite>
+                                    </blockquote>
+                                ))}
+                            </div>
+                        </div>
+                    )}
+                 </div>
     );
 };
 
@@ -94,57 +152,7 @@ export const VerificationModal: React.FC<VerificationModalProps> = ({ isOpen, on
             return <ErrorMessage message={error} />;
         }
         if (result) {
-            return (
-                 <div className="space-y-6">
-                    <div className="flex justify-between items-center bg-muted/50 p-4 rounded-lg border">
-                        <div>
-                            <h3 className="text-lg font-bold text-foreground">Verification Complete</h3>
-                            <p className="text-sm text-muted-foreground">VACS (Veracity, Accuracy, Credibility Score)</p>
-                        </div>
-                        <div className="text-right">
-                             <div className={`text-4xl font-bold ${
-                                result.verdict === 'Verified' ? 'text-green-600' :
-                                result.verdict === 'Questionable' ? 'text-red-600' :
-                                'text-yellow-600'
-                            }`}>{result.vacs}</div>
-                            <VerdictDisplay verdict={result.verdict} />
-                        </div>
-                    </div>
-
-                    <div>
-                        <h4 className="font-semibold text-foreground mb-3">Score Breakdown</h4>
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                            <BreakdownBar label="Credibility" score={result.breakdown.credibility} />
-                            <BreakdownBar label="Evidence" score={result.breakdown.evidence} />
-                            <BreakdownBar label="Reproducibility" score={result.breakdown.reproducibility} />
-                            <BreakdownBar label="Citation Context" score={result.breakdown.citations} />
-                        </div>
-                    </div>
-                    
-                    <div>
-                        <h4 className="font-semibold text-foreground mb-2">Rationale</h4>
-                        <ul className="list-disc list-inside space-y-1 text-sm text-muted-foreground">
-                            {result.rationale.map((item, i) => <li key={i}>{item}</li>)}
-                        </ul>
-                    </div>
-
-                    {result.evidence.length > 0 && (
-                         <div>
-                            <h4 className="font-semibold text-foreground mb-2">Supporting Evidence Found</h4>
-                            <div className="space-y-3 max-h-48 overflow-y-auto pr-2">
-                                {result.evidence.map((span, i) => (
-                                    <blockquote key={i} className="border-l-4 border-primary bg-primary/10 p-3 rounded-r-lg">
-                                        <p className="text-sm text-foreground italic">"{span.passage}"</p>
-                                        <cite className="text-xs text-primary/80 block mt-2 not-italic">
-                                            Source Confidence: {Math.round((span.score || 0) * 100)}%
-                                        </cite>
-                                    </blockquote>
-                                ))}
-                            </div>
-                        </div>
-                    )}
-                 </div>
-            );
+            return <VerificationResultView result={result} />;
         }
         
         return (
