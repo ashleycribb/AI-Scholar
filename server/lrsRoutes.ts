@@ -213,7 +213,7 @@ export function registerLrsRoutes(app: Express): void {
         yetSqlLrs: {
           status: "active",
           totalStatements: sqlCount,
-          dbEngine: "Yet SQL LRS (SQLite Engine: local_engine/sql_lrs.sqlite)",
+          dbEngine: "Yet SQL LRS (SQLite Engine: sql_lrs.sqlite in the server data directory)",
           endpoint: "/api/lrs/sql-lrs/statements",
           githubRepo: "https://github.com/yetanalytics/lrsql"
         },
@@ -227,7 +227,7 @@ export function registerLrsRoutes(app: Express): void {
         duckDbVerticalLrs: {
           status: "active",
           totalStatements: duckDbStats.totalStatements,
-          dbEngine: "DuckDB Vertical Columnar Engine (local_engine/tensor_lrs.duckdb)",
+          dbEngine: "DuckDB Vertical Columnar Engine (tensor_lrs.duckdb in the server data directory)",
           activeSessionsCount: duckDbStats.activeSessionsCount,
           endpoint: "/api/lrs/duckdb-lrs/statements",
           githubRepo: "https://github.com/duckdb/duckdb"

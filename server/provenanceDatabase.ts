@@ -3,9 +3,9 @@ import fs from 'fs';
 import { randomUUID } from 'crypto';
 import { DatabaseSync } from 'node:sqlite';
 
-const localEngineDir = path.join(process.cwd(), 'local_engine');
-if (!fs.existsSync(localEngineDir)) fs.mkdirSync(localEngineDir, { recursive: true });
-const db = new DatabaseSync(path.join(localEngineDir, 'research_provenance.sqlite'));
+import { dataFile, SERVER_DATA_FILES } from './dataDir';
+
+const db = new DatabaseSync(dataFile(SERVER_DATA_FILES.provenance));
 
 db.exec(`
 CREATE TABLE IF NOT EXISTS claims (

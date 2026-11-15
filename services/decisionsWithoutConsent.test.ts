@@ -11,14 +11,7 @@ import type { ResearchPaper } from '../types';
 
 const wasmModule = require('./wasm/s3a_wasm_snapshot.js');
 wasmModule.initSync({ module: fs.readFileSync(path.resolve('public/s3a_wasm_snapshot_bg.wasm')) });
-mock.module('https://cdn.jsdelivr.net/gh/ashleycribb/s3a-wasm-dist@v0.1.56/v0.1.56/s3a_wasm_snapshot.js', () => ({
-  default: async () => {},
-  WasmAgentSnapshot: wasmModule.WasmAgentSnapshot,
-  new_session: wasmModule.new_session,
-  from_bytes: wasmModule.from_bytes,
-  iri_for_verb_id: wasmModule.iri_for_verb_id,
-  verb_id_for_iri: wasmModule.verb_id_for_iri,
-}));
+// The engine is bundled (services/wasm); initSync above instantiates the same module the service imports.
 
 const s3a = await import('./s3aWasmService');
 const { getResearchLoggingConsent } = await import('./lrsCredentialsService');

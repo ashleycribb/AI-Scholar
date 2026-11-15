@@ -5,12 +5,9 @@ import type { DiscoveredSource, SourceProposalResult, LibraryMcpProspectusConfig
 import { randomBytes } from 'node:crypto';
 import { issueApprovalToken, approvalTokenValid, clearApprovalToken } from './approvalTokens';
 
-const localEngineDir = path.join(process.cwd(), 'local_engine');
-if (!fs.existsSync(localEngineDir)) {
-  fs.mkdirSync(localEngineDir, { recursive: true });
-}
+import { dataFile, SERVER_DATA_FILES } from './dataDir';
 
-let REGISTRY_FILE = path.join(localEngineDir, 'source_registry.json');
+let REGISTRY_FILE = dataFile(SERVER_DATA_FILES.sourceRegistry);
 export const DEFAULT_EMAIL_RECIPIENT = 'ashley.e.cribb@gmail.com';
 
 const INITIAL_DISCOVERED_SOURCES: DiscoveredSource[] = [

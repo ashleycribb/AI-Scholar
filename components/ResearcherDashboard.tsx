@@ -14,7 +14,8 @@ import {
   recordCommitteeDecision,
   listCommitteeDecisions,
   verifyCommitteeDecision,
-  EPHEMERAL_REVIEWER_KEY_NOTICE
+  EPHEMERAL_REVIEWER_KEY_NOTICE,
+  toConsentState,
 } from '../services/s3aWasmService';
 import { saveParticipantStudyId } from '../services/lrsCredentialsService';
 import { 
@@ -449,7 +450,7 @@ export const ResearcherDashboard: React.FC<ResearcherDashboardProps> = ({
         try {
           // Parse using WASM snapshot from_bytes
           const snapshot = await parseParticipantSnapshot(bytes);
-          consentState = snapshot.consent_state();
+          consentState = toConsentState(snapshot.consent_state());
           recordingActive = snapshot.recording_active();
           studyId = (snapshot as any)._studyId || (snapshot as any).study_id || 'STUDY-S3A-2026';
         } catch (parseErr: any) {
