@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { 
     Layers, 
     Table, 
@@ -43,6 +43,8 @@ import { checkS3ALocalHealth } from '../services/s3aBridgeService';
 import { emitStatement } from '../services/s3aWasmService';
 import { SourceCheckBadge } from './SourceCheckBadge';
 import { FrequentlyCitedPanel } from './FrequentlyCitedPanel';
+import { NoteSaveStatus, saveNoteLocally, type NoteSaveState } from './NoteSaveStatus';
+import { loadWorkspace, noteIdForProject } from '../services/localWorkspaceLog';
 
 export type WorkspaceTab = 'overview' | 'papers' | 'frequently-cited' | 'evidence' | 'notes' | 'ai-assistant' | 'snapshots';
 export type EvidenceSubTab = 'matrix' | 'claims' | 'pdf_claims' | 'collaboration' | 'protocol';
@@ -95,51 +97,73 @@ export const ResearcherWorkspace: React.FC<ResearcherWorkspaceProps> = ({
         return defaultNotes;
     });
     const [notesCopied, setNotesCopied] = useState(false);
-    const [isNotePersisted, setIsNotePersisted] = useState<boolean>(() => {
-        try {
-            return localStorage.getItem(`note_persisted_${projectName || 'default'}`) === 'true';
-        } catch {
-            return false;
-        }
-    });
-    const [lastSavedNotesText, setLastSavedNotesText] = useState<string>('');
-    const [noteSaveStatus, setNoteSaveStatus] = useState<string | null>(null);
+
+    // Notes are stored on this computer as append-only records (services/localWorkspaceLog.ts).
+    // "Saved" is shown only after the IndexedDB write confirms; failures show "Not saved" + Retry.
+    const noteId = noteIdForProject(projectName);
+    const defaultNotesRef = useRef<string>(researchNotes);
+    const notesEditedRef = useRef<boolean>(false);
+    const [isNotePersisted, setIsNotePersisted] = useState<boolean>(false);
+    const [lastSavedNotesText, setLastSavedNotesText] = useState<string | null>(null);
+    const [noteSaveState, setNoteSaveState] = useState<NoteSaveState>('idle');
+    const savedLabelTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+    useEffect(() => {
+        let mounted = true;
+        loadWorkspace()
+            .then(ws => {
+                const note = ws.notes[noteId];
+                if (!mounted || !note) return;
+                setIsNotePersisted(true);
+                setLastSavedNotesText(note.text);
+                // Don't overwrite text the researcher started typing before the load finished.
+                if (!notesEditedRef.current) setResearchNotes(note.text);
+            })
+            .catch(err => {
+                console.warn('[Local notes] Could not load saved notes:', err);
+                if (mounted) setNoteSaveState('error');
+            });
+        return () => {
+            mounted = false;
+            if (savedLabelTimerRef.current) clearTimeout(savedLabelTimerRef.current);
+        };
+    }, [noteId]);
 
     const handleSaveResearchNotes = async (manual = false) => {
-        if (!isNotePersisted) {
-            // Missing emit point: "created" when a new note is first saved
-            await emitStatement('created', {
-                id: `urn:notes:${encodeURIComponent(projectName || 'research-notes')}`,
-                name: `Research Notes: ${projectName || 'Literature Synthesis'}`,
-                type: 'research-notes'
-            }, { 
-                actor: 'human', 
-                noteLength: researchNotes.length, 
-                first_saved: true 
-            }).catch(() => {});
-
-            setIsNotePersisted(true);
-            try { localStorage.setItem(`note_persisted_${projectName || 'default'}`, 'true'); } catch {}
-            if (manual) {
-                setNoteSaveStatus('Note created & saved in S3A');
-                setTimeout(() => setNoteSaveStatus(null), 2500);
-            }
-        } else if (researchNotes !== lastSavedNotesText) {
-            await emitStatement('edited', {
-                id: `urn:notes:${encodeURIComponent(projectName || 'research-notes')}`,
-                name: `Research Notes: ${projectName || 'Literature Synthesis'}`,
-                type: 'research-notes'
-            }, { 
-                actor: 'human', 
-                noteLength: researchNotes.length 
-            }).catch(() => {});
-
-            if (manual) {
-                setNoteSaveStatus('Notes updated & saved');
-                setTimeout(() => setNoteSaveStatus(null), 2500);
-            }
+        // Autosave on blur skips the untouched starter template; a manual save always writes.
+        if (!manual && !isNotePersisted && researchNotes === defaultNotesRef.current) return;
+        const wasPersisted = isNotePersisted;
+        setNoteSaveState('saving');
+        const result = await saveNoteLocally({
+            noteId,
+            text: researchNotes,
+            exists: wasPersisted,
+            lastSavedText: lastSavedNotesText,
+        });
+        if (result.state === 'error') {
+            console.warn('[Local notes] Save failed:', result.error);
+            setNoteSaveState('error');
+            return;
         }
-        setLastSavedNotesText(researchNotes);
+        if (result.state === 'unchanged') {
+            setNoteSaveState('idle');
+            return;
+        }
+        setIsNotePersisted(true);
+        setLastSavedNotesText(result.record.text);
+        setNoteSaveState('saved');
+        if (savedLabelTimerRef.current) clearTimeout(savedLabelTimerRef.current);
+        savedLabelTimerRef.current = setTimeout(() => setNoteSaveState(s => (s === 'saved' ? 'idle' : s)), 2500);
+
+        // Secondary: study statement (consent-gated inside emitStatement). The local write above is the record.
+        await emitStatement(wasPersisted ? 'edited' : 'created', {
+            id: `urn:notes:${encodeURIComponent(projectName || 'research-notes')}`,
+            name: `Research Notes: ${projectName || 'Literature Synthesis'}`,
+            type: 'research-notes'
+        }, wasPersisted
+            ? { actor: 'human', noteLength: result.record.text.length }
+            : { actor: 'human', noteLength: result.record.text.length, first_saved: true }
+        ).catch(() => {});
     };
 
     // AI Assistant state (Scholar Explorer Assistant)
@@ -1274,6 +1298,7 @@ ${exportNotes.length > 0 ? exportNotes.map(n => `### [${n.tag}] ${n.author} (${n
                                                             type="button"
                                                             onClick={() => {
                                                                 const tag = `\n\n> "${sentence}" [${pdfAuthor}, ${activePdfPaper.year || 'n.d.'}, abstract]`;
+                                                                notesEditedRef.current = true;
                                                                 setResearchNotes(prev => prev + tag);
                                                             }}
                                                             className="text-xs text-indigo-600 hover:text-indigo-900 font-semibold"
@@ -1458,15 +1483,12 @@ ${exportNotes.length > 0 ? exportNotes.map(n => `### [${n.tag}] ${n.author} (${n
                                 {notesCopied ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5 text-slate-500" />}
                                 <span>{notesCopied ? 'Copied' : 'Copy Notes'}</span>
                             </button>
-                            <button
-                                type="button"
-                                onClick={() => handleSaveResearchNotes(true)}
-                                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg transition-colors shadow-2xs"
-                                title="Save research note to S3A (emits 'created' on first save, 'edited' on update)"
-                            >
-                                <Check className="w-3.5 h-3.5" />
-                                <span>{noteSaveStatus || (isNotePersisted ? 'Save Note' : 'Create & Save Note')}</span>
-                            </button>
+                            <NoteSaveStatus
+                                state={noteSaveState}
+                                exists={isNotePersisted}
+                                onSave={() => handleSaveResearchNotes(true)}
+                                onRetry={() => handleSaveResearchNotes(true)}
+                            />
                             <button
                                 type="button"
                                 onClick={handleDownloadNotes}
@@ -1481,7 +1503,7 @@ ${exportNotes.length > 0 ? exportNotes.map(n => `### [${n.tag}] ${n.author} (${n
                     <div className="bg-white border border-slate-200/80 rounded-xl p-4 shadow-2xs">
                         <textarea
                             value={researchNotes}
-                            onChange={(e) => setResearchNotes(e.target.value)}
+                            onChange={(e) => { notesEditedRef.current = true; setResearchNotes(e.target.value); }}
                             onBlur={() => handleSaveResearchNotes(false)}
                             rows={16}
                             className="w-full font-mono text-xs leading-relaxed text-slate-800 bg-slate-50/50 p-4 border border-slate-200 rounded-lg focus:outline-none focus:border-slate-400 focus:bg-white transition-all resize-y"

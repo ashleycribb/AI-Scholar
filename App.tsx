@@ -33,6 +33,7 @@ import { Header } from './components/Header';
 import { InitialSearchScreen } from './components/InitialSearchScreen';
 import { SearchForm } from './components/SearchForm';
 import { ResearcherWorkspace } from './components/ResearcherWorkspace';
+import { appendWorkspaceRecords, diffQueue, loadWorkspace, requestPersistentStorage, snapshotPaper } from './services/localWorkspaceLog';
 import { ExportSnapshotModal } from './components/ExportSnapshotModal';
 import { ResultsDisplay } from './components/ResultsDisplay';
 import { PaperDetails } from './components/PaperDetails';
@@ -329,7 +330,68 @@ const App: React.FC = () => {
   const [workspacePapers, setWorkspacePapers] = useState<ResearchPaper[]>([]);
   const [projects, setProjects] = useState<Project[]>([{ id: 'default', name: 'General Research', color: 'blue' }]);
 
-  // --- S3A LRS WORKSPACE DOCUMENT STATE (ETag & Debounced 2s PUT) ---
+  // --- LOCAL-FIRST SELECTION QUEUE (source of truth; services/localWorkspaceLog.ts) ---
+  // The queue is rebuilt on load from an append-only IndexedDB log on this computer,
+  // signed in or not. Every later change is appended as queue.add / queue.remove.
+  const [localQueueReady, setLocalQueueReady] = useState(false);
+  const localRecordCountRef = useRef<number>(0);
+  const recordedQueueRef = useRef<ResearchPaper[]>([]);
+  const latestQueueRef = useRef<ResearchPaper[]>([]);
+  latestQueueRef.current = workspacePapers;
+  const queueWriteChainRef = useRef<Promise<void>>(Promise.resolve());
+
+  useEffect(() => {
+    let cancelled = false;
+    requestPersistentStorage().then(result => {
+      if (result !== 'granted') {
+        // A refusal is normal: data is still saved locally, the browser may just evict it under storage pressure.
+        console.info(`[Local queue] Persistent storage not granted (${result}); saved data is best-effort.`);
+      }
+    });
+    loadWorkspace()
+      .then(ws => {
+        if (cancelled) return;
+        localRecordCountRef.current = ws.recordCount;
+        recordedQueueRef.current = ws.queue;
+        // Restage restored papers into the WASM session so a later .s3a export
+        // includes them. Not a new inclusion decision: no xAPI / Pass 1 statements.
+        ws.queue.forEach(p => stagePaperInS3ASession(p, { recordInclusionStatement: false }));
+        setWorkspacePapers(prev => {
+          const ids = new Set(ws.queue.map(p => p.id));
+          return [...ws.queue, ...prev.filter(p => !ids.has(p.id))];
+        });
+        setLocalQueueReady(true);
+      })
+      .catch(err => {
+        if (cancelled) return;
+        console.warn('[Local queue] Could not load the queue saved on this computer:', err);
+        setToastMessage('Could not open the selection queue saved on this computer. Changes may not be saved.');
+        setLocalQueueReady(true);
+      });
+    return () => { cancelled = true; };
+  }, []);
+
+  // Append queue changes to the local log, one write at a time. The recorded
+  // baseline only advances after IndexedDB confirms, so a failed write is
+  // retried with the next change instead of being silently dropped.
+  useEffect(() => {
+    if (!localQueueReady) return;
+    queueWriteChainRef.current = queueWriteChainRef.current.then(async () => {
+      const target = latestQueueRef.current;
+      const entries = diffQueue(recordedQueueRef.current, target);
+      if (entries.length === 0) return;
+      try {
+        await appendWorkspaceRecords(entries);
+        recordedQueueRef.current = target;
+        localRecordCountRef.current += entries.length;
+      } catch (err) {
+        console.warn('[Local queue] Save failed:', err);
+        setToastMessage('Not saved: the selection queue change could not be saved on this computer.');
+      }
+    });
+  }, [workspacePapers, localQueueReady]);
+
+  // --- S3A LRS WORKSPACE DOCUMENT STATE (secondary copy for signed-in users; ETag & Debounced 2s PUT) ---
   const workspaceEtagRef = useRef<string | null>(null);
   const isInitialWorkspaceLoadRef = useRef<boolean>(true);
   const workspaceDebounceTimerRef = useRef<any>(null);
@@ -339,18 +401,35 @@ const App: React.FC = () => {
       isInitialWorkspaceLoadRef.current = false;
       return;
     }
-    // Load workspace state from S3A LRS on open
+    if (!localQueueReady) return;
+    // Load the server copy. Local is the source of truth: server papers are only
+    // imported when this computer has no local records yet (first use on this device).
     getState(SCHOLAR_WORKSPACE_ACTIVITY_ID, SCHOLAR_WORKSPACE_STATE_ID)
       .then(res => {
         if (res && res.data) {
           workspaceEtagRef.current = res.etag;
-          if (Array.isArray(res.data.papers) && res.data.papers.length > 0) {
-            setWorkspacePapers(res.data.papers);
-            // Restage restored papers into the WASM session so a later .s3a
-            // export includes them. This is not a new inclusion decision, so
-            // do not record xAPI / Pass 1 statements.
-            res.data.papers.forEach((p: ResearchPaper) => {
-              stagePaperInS3ASession(p, { recordInclusionStatement: false });
+          if (Array.isArray(res.data.papers) && res.data.papers.length > 0 && localRecordCountRef.current === 0) {
+            const serverPapers: ResearchPaper[] = res.data.papers;
+            queueWriteChainRef.current = queueWriteChainRef.current.then(async () => {
+              const current = latestQueueRef.current;
+              const toImport = serverPapers.filter(p => !current.some(c => c.id === p.id));
+              if (toImport.length === 0) return;
+              try {
+                await appendWorkspaceRecords(toImport.map(p => ({
+                  type: 'queue.add' as const,
+                  paperId: p.id,
+                  paper: snapshotPaper(p),
+                  origin: 'server-state-import' as const,
+                })));
+                recordedQueueRef.current = [...recordedQueueRef.current, ...toImport];
+                localRecordCountRef.current += toImport.length;
+              } catch (err) {
+                console.warn('[Local queue] Could not save the server copy on this computer:', err);
+                setToastMessage('Not saved: papers restored from your account could not be saved on this computer.');
+              }
+              // Restaged from the server copy: not a new inclusion decision.
+              toImport.forEach(p => stagePaperInS3ASession(p, { recordInclusionStatement: false }));
+              setWorkspacePapers(prev => [...prev, ...toImport.filter(p => !prev.some(e => e.id === p.id))]);
             });
           }
           if (Array.isArray(res.data.projects) && res.data.projects.length > 0) {
@@ -365,7 +444,7 @@ const App: React.FC = () => {
         }
         isInitialWorkspaceLoadRef.current = false;
       });
-  }, [user]);
+  }, [user, localQueueReady]);
 
   // Save workspace layout with putState after changes (debounced 2s)
   useEffect(() => {
