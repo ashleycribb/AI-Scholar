@@ -43,3 +43,6 @@ jobs:
 
       - name: Build browser extension
         run: npm run build-extension
+
+      - name: No third-party CDN in built output
+        run: npm run check:no-cdn

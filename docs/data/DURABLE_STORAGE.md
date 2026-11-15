@@ -82,8 +82,10 @@ Known limits:
   engine's `apply_delta`. The engine's WebAssembly API (v0.1.56; v0.1.75 has the same surface) has no call that adds
   an edge, so this cannot be replaced by an engine call until the engine exposes one (the Rust graph has `add_edge`,
   but it is not exported to WebAssembly).
-- The page still loads Tailwind (cdn.tailwindcss.com), jsPDF (cdnjs) and citation-js (jsDelivr) from CDNs, and
-  fonts from Google Fonts. Checked in headless Chrome against the built server with those hosts blocked: the page
-  renders and the bundled S3A engine initialises. By construction, Tailwind styling is then absent, "download as
-  PDF" (`window.jspdf` in ReportModal) cannot work, and citation formatting (`window.Cite`) falls back to the
-  model; those three were not exercised in the browser.
+- No third-party CDN (data fix 10). Tailwind 3.4.17 is compiled at build time (PostCSS, `tailwind.config.js`), the
+  Inter / Playfair Display / JetBrains Mono fonts come from `@fontsource` packages, and jsPDF 2.5.1 and citation-js
+  0.7.6 (core, plugin-csl, plugin-ris) are npm imports; all are served from the app's own origin.
+  `npm run check:no-cdn` (also a CI step) fails if any built HTML/CSS in `dist/` or `dist-extension/` loads a script,
+  stylesheet or font from another origin. Checked in headless Chrome against the production build with every host but
+  localhost unresolvable: the page renders with the bundled stylesheet. PDF download and citation-js formatting were
+  not clicked through in the browser; citation-js APA output was checked under Node.

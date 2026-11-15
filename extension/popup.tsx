@@ -3,6 +3,7 @@ declare const chrome: any;
 
 import React, { useState, useEffect } from 'react';
 import ReactDOM from 'react-dom/client';
+import './popup.css';
 import type { LocalPaper } from './lib/types';
 import { scrapePageMetadata } from './lib/scraper';
 import { parsePopupMessage } from '../services/extensionMessages';
