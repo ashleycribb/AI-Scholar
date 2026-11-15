@@ -3,6 +3,7 @@ import { LoadingSpinner } from './LoadingSpinner';
 import { ErrorMessage } from './ErrorMessage';
 import { FormattedReport } from './FormattedReport';
 import { ExportIcon } from './icons/ExportIcon';
+import { jsPDF } from 'jspdf';
 
 interface ReportModalProps {
   isOpen: boolean;
@@ -10,12 +11,6 @@ interface ReportModalProps {
   isLoading: boolean;
   content: string | null;
   error: string | null;
-}
-
-declare global {
-    interface Window {
-        jspdf: any;
-    }
 }
 
 export const ReportModal: React.FC<ReportModalProps> = ({ isOpen, onClose, isLoading, content, error }) => {
@@ -26,7 +21,6 @@ export const ReportModal: React.FC<ReportModalProps> = ({ isOpen, onClose, isLoa
   const handleExport = () => {
     if (!content) return;
     
-    const { jsPDF } = window.jspdf;
     const doc = new jsPDF();
     const pageHeight = doc.internal.pageSize.height;
     const margin = 15;

@@ -5,40 +5,12 @@ import { exportToBibTeX } from '../utils/sourceExport';
 import * as geminiService from './geminiService';
 import * as crossrefService from './crossrefService';
 
-let citeConstructorPromise: Promise<any> | null = null;
-
-const getCiteConstructor = (): Promise<any> => {
-    if (citeConstructorPromise) {
-        return citeConstructorPromise;
-    }
-
-    citeConstructorPromise = new Promise((resolve, reject) => {
-        const POLLING_INTERVAL_MS = 100;
-        const MAX_WAIT_MS = 3000;
-        let totalWait = 0;
-
-        const pollForCite = setInterval(() => {
-            // @ts-ignore
-            const GlobalCite = window.Cite;
-            const isReady = typeof GlobalCite === 'function' &&
-                            GlobalCite.plugins?.output?.has('ris') &&
-                            GlobalCite.plugins?.csl?.templates?.has('apa');
-
-            if (isReady) {
-                clearInterval(pollForCite);
-                resolve(GlobalCite);
-            } else {
-                totalWait += POLLING_INTERVAL_MS;
-                if (totalWait >= MAX_WAIT_MS) {
-                    clearInterval(pollForCite);
-                    console.warn("Citation.js failed to load within timeout. Falling back to AI.");
-                    resolve(null);
-                }
-            }
-        }, POLLING_INTERVAL_MS);
-    });
-
-    return citeConstructorPromise;
+// citation-js is bundled from npm (pinned 0.7.6), not loaded from a CDN.
+const getCiteConstructor = async (): Promise<any> => {
+    const core: any = await import('@citation-js/core');
+    await import('@citation-js/plugin-csl');
+    await import('@citation-js/plugin-ris');
+    return core.Cite;
 };
 
 /**
