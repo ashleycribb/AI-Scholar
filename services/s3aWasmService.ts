@@ -8,6 +8,8 @@
  */
 
 import init, { WasmAgentSnapshot, new_session, from_bytes } from "https://cdn.jsdelivr.net/gh/ashleycribb/s3a-wasm-dist@v0.1.56/v0.1.56/s3a_wasm_snapshot.js";
+import { extractCleanOpenAlexId, scholarPackPaperKey } from '../utils/scholarPackKey';
+export { extractCleanOpenAlexId, scholarPackPaperKey };
 
 export const S3A_ENGINE_VERSION = "v0.1.56";
 import type { ResearchPaper } from "../types";
@@ -291,15 +293,6 @@ let sessionRecordErrors: string[] = [];
 // Track papers skipped because they had no OpenAlex ID
 let sessionSkippedPaperWarnings: string[] = [];
 
-export function extractCleanOpenAlexId(rawId?: string): string {
-  if (!rawId || typeof rawId !== 'string') return '';
-  const trimmed = rawId.trim();
-  const match = trimmed.match(/(?:https?:\/\/openalex\.org\/)?(W[1-9][0-9]*)$/i);
-  if (match && match[1]) {
-    return match[1].toUpperCase();
-  }
-  return '';
-}
 
 export function getSessionRecordErrors(): string[] {
   return [...sessionRecordErrors];
@@ -1991,6 +1984,8 @@ if (typeof window !== 'undefined') {
 
 export interface S3AExportOptions {
   projectOrSessionName?: string;
+  /** Default true. False returns the bytes without starting a browser download (the export bundle zips them). */
+  download?: boolean;
 }
 
 /**
@@ -2059,7 +2054,7 @@ export async function exportS3ASession(options: S3AExportOptions = {}): Promise<
   const filename = `scholar-${sanitizedName}-${dateStr}.s3a`;
 
   // Save as Blob with type "application/octet-stream" when running in browser
-  if (typeof document !== 'undefined') {
+  if (options.download !== false && typeof document !== 'undefined') {
     const blob = new Blob([bytes], { type: 'application/octet-stream' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -2604,6 +2599,7 @@ export interface ScholarPackWriteResult {
  * - Dual UUID: links human researcher (actor_uuid) and AI assistant (agent_uuid).
  * - Consent-gated tracing: Pass 1 human selection statement is emitted ONLY if research logging consent is granted.
  */
+
 export interface WritePaperToScholarPackOptions {
   actorUuid?: string;
   agentUuid?: string;
@@ -2628,9 +2624,7 @@ export async function writePaperToScholarPack(
   const actorUuid = options?.actorUuid || session.actor_uuid;
   const agentUuid = options?.agentUuid || session.agent_uuid;
 
-  const cleanOpenAlex = extractCleanOpenAlexId(paper.openalex_id || paper.id);
-  const cleanDoi = paper.doi ? paper.doi.replace(/^https?:\/\/doi\.org\//i, '').trim() : '';
-  const paperIdentifier = cleanOpenAlex || cleanDoi || paper.id || paper.title;
+  const { cleanOpenAlex, cleanDoi, key: paperIdentifier } = scholarPackPaperKey(paper);
 
   if (!paperIdentifier) {
     const warning = 'Skipped paper: missing identifier.';

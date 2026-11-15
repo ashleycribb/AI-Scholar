@@ -38,6 +38,7 @@ import { reportFailed } from './services/saveStatus';
 import { saveAccountCopy, saveQueueChanges } from './services/workspaceSaves';
 import { derivedRecord, putDerived } from './services/derivedCache';
 import { buildDiscoveryContract } from './services/discoveryContract';
+import { createExportBundle, downloadBytes } from './services/exportBundleDownload';
 import { addToQueue, queueContains, removeFromQueue } from './services/selectionQueue';
 import { aliasKey } from './utils/workIds';
 import { researcherEventsFromLog, type ResearcherEvent } from './services/researcherDecisions';
@@ -1531,20 +1532,10 @@ const App: React.FC = () => {
           }
       }
 
-      // 3. If Local Lab is Offline: Fall back gracefully to generating portable snapshot file (.snapshot.s3a)
-      const stepDuration = Math.max(80, Math.min(250, 1000 / workspacePapers.length));
-
-      for (let i = 0; i < workspacePapers.length; i++) {
-          setCompilationItemIndex(i + 1);
-          setCompilationPaperTitle(workspacePapers[i].title);
-          const percent = Math.round(((i + 1) / workspacePapers.length) * 100);
-          setCompilationProgress(percent);
-          await new Promise(resolve => setTimeout(resolve, stepDuration));
-      }
-
-      setCompilationPaperTitle("Packaging schemas, DOIs, and local intake contracts...");
-      await new Promise(resolve => setTimeout(resolve, 250));
-      setCompilationProgress(100);
+      // Local Lab offline (or hosted): the engine writes the portable .s3a file. Progress shows real steps only.
+      setCompilationItemIndex(workspacePapers.length);
+      setCompilationPaperTitle('Writing the .s3a file with the S3A engine...');
+      setCompilationProgress(50);
 
       try {
           setS3aExportError(null);
@@ -1553,6 +1544,7 @@ const App: React.FC = () => {
               exportFileName || 'scholar_research_session', 
               's3a'
           );
+          setCompilationProgress(100);
           setS3aSessionWarnings(getSkippedPaperWarnings());
           
           if (userSettings.autoSaveSnapshot) {
@@ -1570,6 +1562,32 @@ const App: React.FC = () => {
           setTimeout(() => {
               setIsCompilingSnapshot(false);
           }, 1000);
+      }
+  };
+
+  const [isBuildingBundle, setIsBuildingBundle] = useState(false);
+  /** Open export bundle (.zip): .s3a + events/works JSONL + aliases.csv + references.bib + notes.md + SCHEMA.md + SHA-256 manifest. */
+  const handleDownloadBundle = async () => {
+      if (workspacePapers.length === 0 || isBuildingBundle) return;
+      setIsBuildingBundle(true);
+      setS3aExportError(null);
+      try {
+          const bundle = await createExportBundle({
+              queue: workspacePapers,
+              query: query || scoutTopic || 'research-session',
+              querySettings: { domain: currentSearchOptions.domain || 'all' },
+              services: scoutServices,
+              fileName: exportFileName || undefined,
+          });
+          downloadBytes(bundle.zip, bundle.filename);
+          setS3aSessionWarnings(getSkippedPaperWarnings());
+          setToastMessage(`Downloaded "${bundle.filename}" (${Object.keys(bundle.files).length} files, SHA-256 manifest included).`);
+      } catch (err: any) {
+          const errMsg = `Export bundle not created: ${err?.message || err}`;
+          setS3aExportError(errMsg);
+          setToastMessage(errMsg);
+      } finally {
+          setIsBuildingBundle(false);
       }
   };
 
@@ -2058,6 +2076,15 @@ const App: React.FC = () => {
                                       >
                                           <Zap className="w-3.5 h-3.5 text-emerald-400" />
                                           <span>{isCompilingSnapshot ? `Processing (${compilationItemIndex}/${workspacePapers.length})` : 'Sync / Export to Local Lab'}</span>
+                                      </button>
+                                      <button
+                                          onClick={handleDownloadBundle}
+                                          disabled={isBuildingBundle || workspacePapers.length === 0}
+                                          title="One .zip with the .s3a file, events.jsonl, works.jsonl, aliases.csv, references.bib, notes.md, SCHEMA.md and a SHA-256 manifest"
+                                          className="inline-flex items-center gap-2 px-3.5 py-2 bg-white text-slate-700 hover:bg-slate-50 disabled:opacity-40 border border-slate-200 rounded-lg text-xs font-medium transition-colors shadow-2xs"
+                                      >
+                                          <HardDrive className="w-3.5 h-3.5 text-slate-500" />
+                                          <span>{isBuildingBundle ? 'Building export…' : 'Download full export (.zip)'}</span>
                                       </button>
                                       <label className="inline-flex items-center gap-2 px-3.5 py-2 bg-white text-slate-700 hover:bg-slate-50 disabled:opacity-40 border border-slate-200 rounded-lg text-xs font-medium transition-colors shadow-2xs cursor-pointer">
                                           <HardDrive className="w-3.5 h-3.5 text-slate-500" />

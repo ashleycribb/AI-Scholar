@@ -6,6 +6,9 @@
 export interface S3APaperPayload {
   title: string;
   doi?: string;
+  /** OpenAlex W-id when the work really has one (so a restaged paper keeps the same .s3a key). */
+  openalex_id?: string;
+  citations?: number;
   year?: number | string;
   authors?: string[] | string;
   abstract?: string;

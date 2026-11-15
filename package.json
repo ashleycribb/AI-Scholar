@@ -25,6 +25,7 @@
     "cors": "^2.8.5",
     "duckdb": "^1.4.4",
     "express": "^5.1.0",
+    "fflate": "^0.8.3",
     "langchain": "^1.4.1",
     "lucide-react": "^0.577.0",
     "motion": "^12.38.0",
