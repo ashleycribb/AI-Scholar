@@ -5,6 +5,7 @@
  * allowlist variables below.
  */
 import path from "path";
+import { serverDataDir, SERVER_DATA_FILES } from "../dataDir";
 
 export type Role = "participant" | "researcher" | "committee" | "admin";
 export const ROLES: readonly Role[] = ["participant", "researcher", "committee", "admin"];
@@ -162,7 +163,7 @@ export function loadAuthConfig(env: NodeJS.ProcessEnv = process.env): AuthConfig
     allowParticipantSignup: bool(env.AUTH_ALLOW_PARTICIPANT_SIGNUP, true),
     cookieSecure,
     cookieName: cookieSecure ? "__Host-scholar_sid" : "scholar_sid",
-    dbPath: env.AUTH_DB_PATH || path.join(process.cwd(), "local_engine", "auth.sqlite"),
+    dbPath: env.AUTH_DB_PATH || path.join(serverDataDir(env), SERVER_DATA_FILES.auth),
     emailProvider,
     emailFrom,
     resendApiKey: env.RESEND_API_KEY || undefined,

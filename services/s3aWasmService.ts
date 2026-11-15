@@ -7,11 +7,56 @@
  * Nothing counts as saved until the server acknowledges it.
  */
 
-import init, { WasmAgentSnapshot, new_session, from_bytes } from "https://cdn.jsdelivr.net/gh/ashleycribb/s3a-wasm-dist@v0.1.56/v0.1.56/s3a_wasm_snapshot.js";
+// The S3A engine is bundled with the app (services/wasm, same files as s3a-wasm-dist v0.1.56; see BUILD_INFO.txt),
+// not loaded from a CDN at runtime. The .wasm is served from public/ and checked against a pinned SHA-256 first.
+import init, { WasmAgentSnapshot, new_session, from_bytes, verb_id_for_iri as engineVerbIdForIri } from "./wasm/s3a_wasm_snapshot.js";
 import { extractCleanOpenAlexId, scholarPackPaperKey } from '../utils/scholarPackKey';
 export { extractCleanOpenAlexId, scholarPackPaperKey };
 
 export const S3A_ENGINE_VERSION = "v0.1.56";
+/** sha256(s3a_wasm_snapshot_bg.wasm) published in s3a-wasm-dist v0.1.56 BUILD_INFO.txt. */
+export const S3A_ENGINE_WASM_SHA256 = "ce6f635c28c192a0f5ca4b5c6b331c701bb9ae0d3c86d257bf9fd6bf3a84768e";
+/** Same-origin path of the engine binary (public/s3a_wasm_snapshot_bg.wasm). */
+export const S3A_ENGINE_WASM_URL = "/s3a_wasm_snapshot_bg.wasm";
+
+export class EngineIntegrityError extends Error {
+  constructor(message: string) { super(message); this.name = "EngineIntegrityError"; }
+}
+
+/** Fetches the bundled engine binary and refuses it unless its SHA-256 matches the pinned build. */
+export async function loadVerifiedEngineBytes(
+  fetchImpl: (url: string) => Promise<Response> = url => globalThis.fetch(url),
+  url: string = S3A_ENGINE_WASM_URL,
+): Promise<Uint8Array> {
+  const res = await fetchImpl(url);
+  if (!res.ok) throw new EngineIntegrityError(`The S3A engine file could not be loaded from ${url} (HTTP ${res.status}).`);
+  const bytes = new Uint8Array(await res.arrayBuffer());
+  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", bytes));
+  const hex = Array.from(digest, b => b.toString(16).padStart(2, "0")).join("");
+  if (hex !== S3A_ENGINE_WASM_SHA256) {
+    throw new EngineIntegrityError(`The S3A engine file at ${url} does not match the pinned ${S3A_ENGINE_VERSION} build (sha256 ${hex}).`);
+  }
+  return bytes;
+}
+
+export type EngineConsentState = 'none' | 'granted' | 'withdrawn';
+
+/** The engine reports consent as a string; anything other than the three known states is treated as no consent. */
+export function toConsentState(value: string): EngineConsentState {
+  if (value === 'none' || value === 'granted' || value === 'withdrawn') return value;
+  console.warn(`[S3A WASM] Unknown consent state from the engine: ${value}; treating as none.`);
+  return 'none';
+}
+
+/** True once the engine's WebAssembly is instantiated (any engine call works). */
+function engineReady(): boolean {
+  try {
+    engineVerbIdForIri("viewed");
+    return true;
+  } catch {
+    return false;
+  }
+}
 import type { ResearchPaper } from "../types";
 
 export enum ScholarTool {
@@ -480,7 +525,7 @@ export async function initS3AWasm(): Promise<void> {
 
   wasmInitPromise = (async () => {
     try {
-      await init();
+      if (!engineReady()) await init({ module_or_path: await loadVerifiedEngineBytes() });
       console.log(`[S3A WASM] Initialized WebAssembly runtime (${S3A_ENGINE_VERSION}) successfully.`);
     } catch (err) {
       console.error('[S3A WASM] Failed to initialize WASM engine:', err);
@@ -2163,7 +2208,7 @@ export async function setConsent(granted: boolean, purpose = 1, studyId: string)
   const snapshot = await getActiveSnapshot();
   const active = snapshot.set_consent(granted, purpose, studyId);
   await setResearchLoggingConsent(active);
-  await saveStoredConsentState(snapshot.consent_state());
+  await saveStoredConsentState(toConsentState(snapshot.consent_state()));
   if (granted && studyId) {
     await saveParticipantStudyId(studyId);
   }
@@ -2192,7 +2237,7 @@ export async function isRecordingActive(): Promise<boolean> {
 export async function getConsentState(): Promise<'none' | 'granted' | 'withdrawn'> {
   try {
     const snapshot = await getActiveSnapshot();
-    return snapshot.consent_state();
+    return toConsentState(snapshot.consent_state());
   } catch {
     return 'none';
   }

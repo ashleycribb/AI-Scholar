@@ -7,16 +7,7 @@ const wasmModule = require('./wasm/s3a_wasm_snapshot.js');
 const wasmBytes = fs.readFileSync(path.resolve('public/s3a_wasm_snapshot_bg.wasm'));
 wasmModule.initSync({ module: wasmBytes });
 
-mock.module('https://cdn.jsdelivr.net/gh/ashleycribb/s3a-wasm-dist@v0.1.56/v0.1.56/s3a_wasm_snapshot.js', () => {
-  return {
-    default: async () => {},
-    WasmAgentSnapshot: wasmModule.WasmAgentSnapshot,
-    new_session: wasmModule.new_session,
-    from_bytes: wasmModule.from_bytes,
-    iri_for_verb_id: wasmModule.iri_for_verb_id,
-    verb_id_for_iri: wasmModule.verb_id_for_iri,
-  };
-});
+// The engine is bundled (services/wasm); initSync above instantiates the same module the service imports.
 
 // Dynamic import so mock.module registers before module evaluation
 const {

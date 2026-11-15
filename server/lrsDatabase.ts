@@ -3,13 +3,9 @@ import fs from 'fs';
 import { DatabaseSync } from 'node:sqlite';
 import duckdb from 'duckdb';
 
-const localEngineDir = path.join(process.cwd(), 'local_engine');
-if (!fs.existsSync(localEngineDir)) {
-  fs.mkdirSync(localEngineDir, { recursive: true });
-}
+import { dataFile, SERVER_DATA_FILES } from './dataDir';
 
-// 1. SQLite Database for Yet SQL LRS (Human Interaction Tracking)
-const sqlLrsPath = path.join(localEngineDir, 'sql_lrs.sqlite');
+// 1. SQLite Database for Yet SQL LRS (Human Interaction Tracking), in the server data directory (SCHOLAR_DATA_DIR).
 
 /** Who is asking, as far as data scoping goes. Always derived from the server-side session, never from the request. */
 export type LrsScope =
@@ -286,9 +282,9 @@ export class SqlLrsStore {
   }
 }
 
-// Opened on first use (not at import) so importing this module never touches local_engine/sql_lrs.sqlite.
+// Opened on first use (not at import) so importing this module never touches the data directory.
 let sqlLrsInstance: SqlLrsStore | null = null;
-const sqlLrs = (): SqlLrsStore => (sqlLrsInstance ??= new SqlLrsStore(new DatabaseSync(sqlLrsPath)));
+const sqlLrs = (): SqlLrsStore => (sqlLrsInstance ??= new SqlLrsStore(new DatabaseSync(dataFile(SERVER_DATA_FILES.lrs))));
 
 /** Test seam: swap the store the module-level functions use (e.g. an in-memory database). Returns the previous one. */
 export function useSqlLrsStore(store: SqlLrsStore | null): SqlLrsStore | null {
@@ -358,7 +354,7 @@ export function queryConformingStatements(params: {
 
 // 2. DuckDB Optional Read-Only Analytics Export (Off by default)
 export const ENABLE_DUCKDB_ANALYTICS = process.env.ENABLE_DUCKDB_ANALYTICS === 'true';
-const duckDbPath = path.join(localEngineDir, 'tensor_lrs.duckdb');
+const duckDbPath = ENABLE_DUCKDB_ANALYTICS ? dataFile(SERVER_DATA_FILES.analytics) : '';
 let duckDbInstance: any = null;
 
 if (ENABLE_DUCKDB_ANALYTICS) {

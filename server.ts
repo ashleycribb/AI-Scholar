@@ -1,4 +1,5 @@
 import express from "express";
+import { dataDirNotice } from "./server/dataDir";
 import { createServer as createViteServer } from "vite";
 import path from "path";
 import axios from "axios";
@@ -1003,6 +1004,8 @@ async function startServer() {
 
   httpServer.listen(PORT, "0.0.0.0", () => {
     console.log(`Server running on http://localhost:${PORT}`);
+    const notice = dataDirNotice();
+    (notice.level === "warn" ? console.warn : console.log)(notice.message);
     console.log(`MCP WebSocket Relay listening on ws://localhost:${PORT}/mcp-relay`);
   });
 }

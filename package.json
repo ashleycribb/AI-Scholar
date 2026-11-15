@@ -10,7 +10,10 @@
     "build-extension": "vite build -c vite.extension.config.ts && node copy-extension-assets.js",
     "preview": "vite preview",
     "lint": "tsc --noEmit",
-    "test": "bun test"
+    "test": "bun test",
+    "data:backup": "tsx scripts/data-backup.ts backup",
+    "data:verify": "tsx scripts/data-backup.ts verify",
+    "data:restore": "tsx scripts/data-backup.ts restore"
   },
   "dependencies": {
     "@google/genai": "^1.19.0",
